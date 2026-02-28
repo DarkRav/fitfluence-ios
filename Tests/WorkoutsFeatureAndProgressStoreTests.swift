@@ -11,10 +11,10 @@ final class WorkoutsFeatureAndProgressStoreTests: XCTestCase {
 
         let workoutsClient = MockWorkoutsClient(
             listResults: [.success(workouts)],
-            detailsResults: []
+            detailsResults: [],
         )
         let progressStore = MockWorkoutProgressStore(
-            statuses: ["w1": .inProgress, "w2": .completed]
+            statuses: ["w1": .inProgress, "w2": .completed],
         )
 
         let viewModel = WorkoutsListViewModel(
@@ -22,7 +22,7 @@ final class WorkoutsFeatureAndProgressStoreTests: XCTestCase {
             userSub: "u1",
             workoutsClient: workoutsClient,
             progressStore: progressStore,
-            cacheStore: MemoryCacheStore()
+            cacheStore: MemoryCacheStore(),
         )
 
         await viewModel.onAppear()
@@ -37,7 +37,7 @@ final class WorkoutsFeatureAndProgressStoreTests: XCTestCase {
     func testWorkoutsListViewModelOfflineWithoutCacheShowsError() async {
         let workoutsClient = MockWorkoutsClient(
             listResults: [.failure(.offline)],
-            detailsResults: []
+            detailsResults: [],
         )
 
         let viewModel = WorkoutsListViewModel(
@@ -45,7 +45,7 @@ final class WorkoutsFeatureAndProgressStoreTests: XCTestCase {
             userSub: "u1",
             workoutsClient: workoutsClient,
             progressStore: MockWorkoutProgressStore(statuses: [:]),
-            cacheStore: MemoryCacheStore()
+            cacheStore: MemoryCacheStore(),
         )
 
         await viewModel.onAppear()
@@ -64,7 +64,7 @@ final class WorkoutsFeatureAndProgressStoreTests: XCTestCase {
 
         let workoutsClient = MockWorkoutsClient(
             listResults: [.failure(.offline)],
-            detailsResults: []
+            detailsResults: [],
         )
 
         let viewModel = WorkoutsListViewModel(
@@ -72,7 +72,7 @@ final class WorkoutsFeatureAndProgressStoreTests: XCTestCase {
             userSub: "u1",
             workoutsClient: workoutsClient,
             progressStore: MockWorkoutProgressStore(statuses: ["w1": .inProgress]),
-            cacheStore: cacheStore
+            cacheStore: cacheStore,
         )
 
         await viewModel.onAppear()
@@ -90,7 +90,7 @@ final class WorkoutsFeatureAndProgressStoreTests: XCTestCase {
             userSub: "u1",
             programId: "p1",
             workout: sampleWorkoutDetails,
-            sessionManager: sessionManager
+            sessionManager: sessionManager,
         )
 
         await viewModel.onAppear()
@@ -116,7 +116,7 @@ final class WorkoutsFeatureAndProgressStoreTests: XCTestCase {
             userSub: "u1",
             programId: "p1",
             workout: sampleWorkoutDetails,
-            sessionManager: sessionManager
+            sessionManager: sessionManager,
         )
 
         await viewModel.onAppear()
@@ -150,7 +150,7 @@ final class WorkoutsFeatureAndProgressStoreTests: XCTestCase {
                 "ex-1": StoredExerciseProgress(sets: [
                     StoredSetProgress(isCompleted: true, repsText: "10", weightText: "40", rpeText: "8"),
                 ]),
-            ]
+            ],
         )
 
         await store.save(snapshot)
@@ -178,7 +178,7 @@ final class WorkoutsFeatureAndProgressStoreTests: XCTestCase {
                 "ex-1": StoredExerciseProgress(sets: [
                     StoredSetProgress(isCompleted: true, repsText: "", weightText: "", rpeText: ""),
                 ]),
-            ]
+            ],
         )
         let notStarted = WorkoutProgressSnapshot(
             userSub: "u1",
@@ -191,7 +191,7 @@ final class WorkoutsFeatureAndProgressStoreTests: XCTestCase {
                 "ex-2": StoredExerciseProgress(sets: [
                     StoredSetProgress(isCompleted: false, repsText: "", weightText: "", rpeText: ""),
                 ]),
-            ]
+            ],
         )
 
         await store.save(inProgress)
@@ -218,9 +218,9 @@ final class WorkoutsFeatureAndProgressStoreTests: XCTestCase {
                     targetRpe: 8,
                     restSeconds: 90,
                     notes: nil,
-                    orderIndex: 0
+                    orderIndex: 0,
                 ),
-            ]
+            ],
         )
     }
 }
@@ -234,7 +234,7 @@ private actor MockWorkoutsClient: WorkoutsClientProtocol {
     init(
         listResults: [Result<[WorkoutSummary], APIError>],
         detailsResults: [Result<WorkoutDetailsModel, APIError>],
-        progressStorageMode: WorkoutProgressStorageMode = .localOnly
+        progressStorageMode: WorkoutProgressStorageMode = .localOnly,
     ) {
         self.listResults = listResults
         self.detailsResults = detailsResults
@@ -276,7 +276,7 @@ private actor MockWorkoutProgressStore: WorkoutProgressStore {
     func statuses(
         userSub _: String,
         programId _: String,
-        workoutIds: [String]
+        workoutIds: [String],
     ) async -> [String: WorkoutProgressStatus] {
         Dictionary(uniqueKeysWithValues: workoutIds.map { ($0, statusesValue[$0] ?? .notStarted) })
     }
@@ -289,7 +289,7 @@ private actor MockWorkoutProgressStore: WorkoutProgressStore {
             workoutId: snapshot.workoutId,
             status: snapshot.status,
             currentExerciseIndex: snapshot.currentExerciseIndex,
-            lastUpdated: snapshot.lastUpdated
+            lastUpdated: snapshot.lastUpdated,
         )
     }
 }

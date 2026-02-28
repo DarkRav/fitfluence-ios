@@ -273,7 +273,11 @@ actor WorkoutSessionManager {
         setIndex: Int,
         weight: String,
     ) async -> WorkoutSessionState {
-        await mutate(session, action: .updateWeight(exerciseId: exerciseId, setIndex: setIndex, previous: "")) { target in
+        await mutate(session, action: .updateWeight(
+            exerciseId: exerciseId,
+            setIndex: setIndex,
+            previous: "",
+        )) { target in
             guard let index = target.exercises.firstIndex(where: { $0.exerciseId == exerciseId }),
                   target.exercises[index].sets.indices.contains(setIndex)
             else { return }
@@ -402,7 +406,10 @@ actor WorkoutSessionManager {
         }
     }
 
-    private func sessionState(from snapshot: WorkoutProgressSnapshot, workout: WorkoutDetailsModel) -> WorkoutSessionState {
+    private func sessionState(
+        from snapshot: WorkoutProgressSnapshot,
+        workout: WorkoutDetailsModel,
+    ) -> WorkoutSessionState {
         let exercises = workout.exercises.map { exercise in
             let stored = snapshot.exercises[exercise.id]
             let sets = Array(0 ..< max(1, exercise.sets)).map { index in

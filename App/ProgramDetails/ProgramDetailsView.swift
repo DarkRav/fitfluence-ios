@@ -9,7 +9,9 @@ final class ProgramDetailsViewModel {
         let programId: String
         let workoutId: String
 
-        var id: String { "\(programId)::\(workoutId)" }
+        var id: String {
+            "\(programId)::\(workoutId)"
+        }
     }
 
     let programId: String
@@ -33,7 +35,7 @@ final class ProgramDetailsViewModel {
         userSub: String,
         programsClient: ProgramsClientProtocol?,
         cacheStore: CacheStore = CompositeCacheStore(),
-        networkMonitor: NetworkMonitoring = StaticNetworkMonitor(currentStatus: true)
+        networkMonitor: NetworkMonitoring = StaticNetworkMonitor(currentStatus: true),
     ) {
         self.programId = programId
         self.userSub = userSub
@@ -56,11 +58,10 @@ final class ProgramDetailsViewModel {
         isStartingProgram = true
         defer { isStartingProgram = false }
 
-        let result: Result<ProgramEnrollment, APIError>
-        if let programsClient {
-            result = await programsClient.startProgram(programVersionId: versionID)
+        let result: Result<ProgramEnrollment, APIError> = if let programsClient {
+            await programsClient.startProgram(programVersionId: versionID)
         } else {
-            result = .failure(.invalidURL)
+            .failure(.invalidURL)
         }
 
         switch result {
@@ -94,11 +95,10 @@ final class ProgramDetailsViewModel {
             isShowingCachedData = true
         }
 
-        let result: Result<ProgramDetails, APIError>
-        if let programsClient {
-            result = await programsClient.getProgramDetails(programId: programId)
+        let result: Result<ProgramDetails, APIError> = if let programsClient {
+            await programsClient.getProgramDetails(programId: programId)
         } else {
-            result = .failure(.invalidURL)
+            .failure(.invalidURL)
         }
 
         switch result {
@@ -109,7 +109,7 @@ final class ProgramDetailsViewModel {
             await cacheStore.set(cacheKey, value: details, namespace: userSub, ttl: 60 * 30)
 
         case let .failure(apiError):
-            if (apiError == .offline || !networkMonitor.currentStatus), details != nil {
+            if apiError == .offline || !networkMonitor.currentStatus, details != nil {
                 error = nil
                 isShowingCachedData = true
                 return
@@ -145,7 +145,7 @@ struct ProgramDetailsScreen: View {
                         title: error.title,
                         message: error.message,
                         retryTitle: "Повторить",
-                        onRetry: { Task { await viewModel.retry() } }
+                        onRetry: { Task { await viewModel.retry() } },
                     )
                 } else if let details = viewModel.details {
                     header(details: details)
@@ -177,18 +177,18 @@ struct ProgramDetailsScreen: View {
                     viewModel: WorkoutsListViewModel(
                         programId: viewModel.programId,
                         userSub: viewModel.userSub,
-                        workoutsClient: WorkoutsClient(programsClient: programsClient)
+                        workoutsClient: WorkoutsClient(programsClient: programsClient),
                     ),
                     onWorkoutTap: { workoutID in
                         viewModel.workoutPicked(workoutID)
-                    }
+                    },
                 )
                 .navigationTitle("Тренировки")
             } else {
                 FFErrorState(
                     title: "Тренировки недоступны",
                     message: "Проверьте конфигурацию API-клиента для загрузки тренировок.",
-                    retryTitle: "Назад"
+                    retryTitle: "Назад",
                 ) {
                     viewModel.isWorkoutsPresented = false
                 }
@@ -199,7 +199,7 @@ struct ProgramDetailsScreen: View {
                 userSub: selectedWorkout.userSub,
                 programId: selectedWorkout.programId,
                 workoutId: selectedWorkout.workoutId,
-                apiClient: apiClient
+                apiClient: apiClient,
             )
             .navigationTitle("Тренировка")
         }
@@ -276,7 +276,7 @@ struct ProgramDetailsScreen: View {
                     FFButton(
                         title: "Открыть тренировки",
                         variant: .secondary,
-                        action: { viewModel.openWorkouts() }
+                        action: { viewModel.openWorkouts() },
                     )
 
                     ForEach(workouts.sorted(by: { $0.dayOrder < $1.dayOrder })) { workout in
@@ -310,7 +310,7 @@ struct ProgramDetailsScreen: View {
             FFButton(
                 title: viewModel.isStartingProgram ? "Запускаем программу..." : "Начать программу",
                 variant: viewModel.isStartingProgram ? .disabled : .primary,
-                action: { Task { await viewModel.startProgram() } }
+                action: { Task { await viewModel.startProgram() } },
             )
             .accessibilityLabel("Начать программу")
             .accessibilityHint("Создаст активное прохождение программы для вашего профиля")

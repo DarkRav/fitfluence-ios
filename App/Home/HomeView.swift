@@ -23,7 +23,7 @@ final class HomeViewModel {
     init(
         userSub: String,
         sessionManager: WorkoutSessionManager,
-        cacheStore: CacheStore = CompositeCacheStore()
+        cacheStore: CacheStore = CompositeCacheStore(),
     ) {
         self.userSub = userSub
         self.sessionManager = sessionManager
@@ -68,22 +68,22 @@ final class HomeViewModel {
             let workouts = await cacheStore.get(
                 "workouts.list:\(resolvedSession.programId)",
                 as: [WorkoutSummary].self,
-                namespace: userSub
+                namespace: userSub,
             ) ?? []
             nextWorkout = workouts.sorted(by: { $0.dayOrder < $1.dayOrder }).first
             lastWorkout = workouts.sorted(by: { $0.dayOrder > $1.dayOrder }).first
         } else {
             let cachedFirstPage = await cacheStore.get(
                 "programs.list?q=&page=0",
-                as: CatalogFeature.CachedCatalogPage.self,
-                namespace: userSub
+                as: CatalogViewModel.CachedCatalogPage.self,
+                namespace: userSub,
             )
             if let programId = cachedFirstPage?.cards.first?.id {
                 activeProgramId = programId
                 let workouts = await cacheStore.get(
                     "workouts.list:\(programId)",
                     as: [WorkoutSummary].self,
-                    namespace: userSub
+                    namespace: userSub,
                 ) ?? []
                 nextWorkout = workouts.sorted(by: { $0.dayOrder < $1.dayOrder }).first
                 lastWorkout = workouts.sorted(by: { $0.dayOrder > $1.dayOrder }).first
@@ -205,10 +205,10 @@ struct HomeViewV2: View {
         HomeViewV2(
             viewModel: HomeViewModel(
                 userSub: "athlete-1",
-                sessionManager: WorkoutSessionManager()
+                sessionManager: WorkoutSessionManager(),
             ),
             onPrimaryAction: { _ in },
-            onOpenPlan: {}
+            onOpenPlan: {},
         )
     }
 }

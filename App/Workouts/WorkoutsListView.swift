@@ -21,7 +21,7 @@ final class WorkoutsListViewModel {
         userSub: String,
         workoutsClient: WorkoutsClientProtocol,
         progressStore: WorkoutProgressStore = LocalWorkoutProgressStore(),
-        cacheStore: CacheStore = CompositeCacheStore()
+        cacheStore: CacheStore = CompositeCacheStore(),
     ) {
         self.programId = programId
         self.userSub = userSub
@@ -89,7 +89,7 @@ final class WorkoutsListViewModel {
         workoutStatuses = await progressStore.statuses(
             userSub: userSub,
             programId: programId,
-            workoutIds: workouts.map(\.id)
+            workoutIds: workouts.map(\.id),
         )
     }
 
@@ -111,7 +111,7 @@ struct WorkoutsListScreen: View {
                 FFErrorState(
                     title: error.title,
                     message: error.message,
-                    retryTitle: "Повторить"
+                    retryTitle: "Повторить",
                 ) {
                     Task { await viewModel.retry() }
                 }
@@ -119,7 +119,7 @@ struct WorkoutsListScreen: View {
             } else if viewModel.workouts.isEmpty {
                 FFEmptyState(
                     title: "В этой программе пока нет тренировок",
-                    message: "Как только тренировки появятся, они будут доступны на этом экране."
+                    message: "Как только тренировки появятся, они будут доступны на этом экране.",
                 )
                 .padding(.horizontal, FFSpacing.md)
             } else {
@@ -156,7 +156,7 @@ struct WorkoutsListScreen: View {
     private func workoutCard(
         _ workout: WorkoutSummary,
         status: WorkoutProgressStatus,
-        onTap: @escaping () -> Void
+        onTap: @escaping () -> Void,
     ) -> some View {
         Button(action: onTap) {
             FFCard {

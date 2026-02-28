@@ -1,73 +1,244 @@
-import ComposableArchitecture
+import Observation
 import SwiftUI
 
-struct CatalogView: View {
-    let store: StoreOf<CatalogFeature>
+@Observable
+@MainActor
+final class CatalogViewModel {
+    struct ProgramCard: Codable, Equatable, Identifiable {
+        let id: String
+        let title: String
+        let description: String
+        let influencerName: String?
+        let goals: [String]
+        let coverURL: String?
+        let isPublished: Bool
+    }
+
+    struct CachedCatalogPage: Codable, Equatable {
+        let cards: [ProgramCard]
+        let metadata: PageMetadata
+    }
+
+    private let programsClient: ProgramsClientProtocol?
+    private let cacheStore: CacheStore
+    private let networkMonitor: NetworkMonitoring
+    private let userSub: String
+    private let onUnauthorized: (() -> Void)?
+
+    private var searchTask: Task<Void, Never>?
+
+    var query = ""
+    var programs: [ProgramCard] = []
+    var isLoading = false
+    var isRefreshing = false
+    var isShowingCachedData = false
+    var error: UserFacingError?
+    var currentPage = 0
+    var totalPages = 0
+
+    init(
+        userSub: String,
+        programsClient: ProgramsClientProtocol?,
+        cacheStore: CacheStore = CompositeCacheStore(),
+        networkMonitor: NetworkMonitoring = StaticNetworkMonitor(currentStatus: true),
+        onUnauthorized: (() -> Void)? = nil,
+    ) {
+        self.userSub = userSub
+        self.programsClient = programsClient
+        self.cacheStore = cacheStore
+        self.networkMonitor = networkMonitor
+        self.onUnauthorized = onUnauthorized
+    }
+
+    func onAppear() async {
+        guard programs.isEmpty else { return }
+        isLoading = true
+        error = nil
+        currentPage = 0
+        await loadPage(page: 0, append: false)
+    }
+
+    func refresh() async {
+        isRefreshing = true
+        error = nil
+        currentPage = 0
+        await loadPage(page: 0, append: false)
+        isRefreshing = false
+    }
+
+    func retry() async {
+        isLoading = true
+        error = nil
+        await loadPage(page: currentPage, append: false)
+    }
+
+    func searchQueryChanged(_ value: String) {
+        query = value
+        error = nil
+
+        searchTask?.cancel()
+        searchTask = Task { [weak self] in
+            guard let self else { return }
+            try? await Task.sleep(for: .milliseconds(400))
+            guard !Task.isCancelled else { return }
+            await self.searchSubmit()
+        }
+    }
+
+    func searchSubmit() async {
+        isLoading = true
+        error = nil
+        currentPage = 0
+        await loadPage(page: 0, append: false)
+    }
+
+    func loadNextPageIfNeeded(lastID: String?) async {
+        guard !isLoading else { return }
+        guard totalPages > 0 else { return }
+        guard let lastID, lastID == programs.last?.id else { return }
+        let nextPage = currentPage + 1
+        guard nextPage < totalPages else { return }
+
+        isLoading = true
+        await loadPage(page: nextPage, append: true)
+    }
+
+    private func loadPage(page: Int, append: Bool) async {
+        defer {
+            isLoading = false
+        }
+
+        let key = cacheKey(query: query, page: page)
+        if let cached = await cacheStore.get(key, as: CachedCatalogPage.self, namespace: userSub) {
+            if append {
+                programs.append(contentsOf: cached.cards)
+            } else {
+                programs = cached.cards
+            }
+            currentPage = cached.metadata.page
+            totalPages = cached.metadata.totalPages
+            isShowingCachedData = true
+        }
+
+        let result: Result<PagedProgramResponse, APIError> = if let programsClient {
+            await programsClient.listPublishedPrograms(query: query, page: page, size: 20)
+        } else {
+            .failure(.invalidURL)
+        }
+
+        switch result {
+        case let .success(response):
+            let cards = response.content.map {
+                ProgramCard(
+                    id: $0.id,
+                    title: $0.title,
+                    description: $0.description ?? "Описание пока не добавлено.",
+                    influencerName: $0.influencer?.displayName,
+                    goals: $0.goals ?? [],
+                    coverURL: $0.cover?.url ?? $0.media?.first?.url,
+                    isPublished: $0.status == .published,
+                )
+            }
+
+            if append {
+                programs.append(contentsOf: cards)
+            } else {
+                programs = cards
+            }
+            currentPage = response.metadata.page
+            totalPages = response.metadata.totalPages
+            error = nil
+            isShowingCachedData = false
+            let payload = CachedCatalogPage(cards: cards, metadata: response.metadata)
+            await cacheStore.set(key, value: payload, namespace: userSub, ttl: 60 * 30)
+
+        case let .failure(apiError):
+            if apiError == .unauthorized {
+                onUnauthorized?()
+                return
+            }
+            if apiError == .offline || !networkMonitor.currentStatus, !programs.isEmpty {
+                error = nil
+                isShowingCachedData = true
+                return
+            }
+
+            error = apiError.userFacing(context: .catalog)
+            if !append {
+                programs = []
+            }
+        }
+    }
+
+    private func cacheKey(query: String, page: Int) -> String {
+        "programs.list?q=\(query)&page=\(page)"
+    }
+}
+
+struct CatalogScreen: View {
+    @State var viewModel: CatalogViewModel
     let environment: AppEnvironment
+    let onProgramTap: (String) -> Void
 
     var body: some View {
-        WithViewStore(store, observe: { $0 }) { viewStore in
-            ScrollView {
-                VStack(spacing: FFSpacing.md) {
-                    if viewStore.isShowingCachedData {
-                        cachedDataBadge
-                    }
+        ScrollView {
+            VStack(spacing: FFSpacing.md) {
+                if viewModel.isShowingCachedData {
+                    cachedDataBadge
+                }
 
-                    FFTextField(
-                        label: "Поиск",
-                        placeholder: "Название программы",
-                        text: viewStore.binding(
-                            get: \.query,
-                            send: CatalogFeature.Action.searchQueryChanged,
-                        ),
-                        helperText: "Введите название программы",
+                FFTextField(
+                    label: "Поиск",
+                    placeholder: "Название программы",
+                    text: Binding(
+                        get: { viewModel.query },
+                        set: { viewModel.searchQueryChanged($0) },
+                    ),
+                    helperText: "Введите название программы",
+                )
+                .accessibilityLabel("Поиск программы по названию")
+
+                if viewModel.isLoading, viewModel.programs.isEmpty {
+                    loadingSkeleton
+                } else if let error = viewModel.error {
+                    FFErrorState(
+                        title: error.title,
+                        message: error.message,
+                        retryTitle: "Повторить",
+                        onRetry: { Task { await viewModel.retry() } },
                     )
-                    .accessibilityLabel("Поиск программы по названию")
-
-                    if viewStore.isLoading, viewStore.programs.isEmpty {
-                        loadingSkeleton
-                    } else if let error = viewStore.error {
-                        FFErrorState(
-                            title: error.title,
-                            message: error.message,
-                            retryTitle: "Повторить",
-                            onRetry: { viewStore.send(.retry) },
-                        )
-                    } else if viewStore.programs.isEmpty {
-                        FFEmptyState(
-                            title: "Пока нет опубликованных программ",
-                            message: "Попробуйте изменить запрос или обновить экран позже.",
-                        )
-                    } else {
-                        LazyVStack(spacing: FFSpacing.sm) {
-                            ForEach(viewStore.programs) { program in
-                                programCard(program: program) {
-                                    viewStore.send(.programTapped(program.id))
-                                }
-                                .onAppear {
-                                    if program.id == viewStore.programs.last?.id {
-                                        viewStore.send(.loadNextPage)
-                                    }
-                                }
+                } else if viewModel.programs.isEmpty {
+                    FFEmptyState(
+                        title: "Пока нет опубликованных программ",
+                        message: "Попробуйте изменить запрос или обновить экран позже.",
+                    )
+                } else {
+                    LazyVStack(spacing: FFSpacing.sm) {
+                        ForEach(viewModel.programs) { program in
+                            programCard(program: program) {
+                                onProgramTap(program.id)
                             }
-
-                            if viewStore.isLoading {
-                                FFLoadingState(title: "Загружаем ещё программы")
+                            .onAppear {
+                                Task { await viewModel.loadNextPageIfNeeded(lastID: program.id) }
                             }
+                        }
+
+                        if viewModel.isLoading {
+                            FFLoadingState(title: "Загружаем ещё программы")
                         }
                     }
                 }
-                .padding(.horizontal, FFSpacing.md)
-                .padding(.top, FFSpacing.md)
-                .padding(.bottom, FFSpacing.lg)
             }
-            .background(FFColors.background)
-            .refreshable {
-                viewStore.send(.refresh)
-            }
-            .onAppear {
-                viewStore.send(.onAppear)
-            }
+            .padding(.horizontal, FFSpacing.md)
+            .padding(.top, FFSpacing.md)
+            .padding(.bottom, FFSpacing.lg)
+        }
+        .background(FFColors.background)
+        .refreshable {
+            await viewModel.refresh()
+        }
+        .task {
+            await viewModel.onAppear()
         }
     }
 
@@ -86,7 +257,7 @@ struct CatalogView: View {
         }
     }
 
-    private func programCard(program: CatalogFeature.ProgramCard, onTap: @escaping () -> Void) -> some View {
+    private func programCard(program: CatalogViewModel.ProgramCard, onTap: @escaping () -> Void) -> some View {
         Button(action: onTap) {
             FFCard {
                 VStack(alignment: .leading, spacing: FFSpacing.sm) {

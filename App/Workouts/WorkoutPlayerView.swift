@@ -95,7 +95,9 @@ final class WorkoutPlayerViewModel {
         self.sessionManager = sessionManager
     }
 
-    var title: String { workout.title }
+    var title: String {
+        workout.title
+    }
 
     var currentExerciseIndex: Int {
         session?.currentExerciseIndex ?? 0
@@ -124,7 +126,11 @@ final class WorkoutPlayerViewModel {
 
     func toggleSetComplete(setIndex: Int) async {
         guard let currentExercise, let session else { return }
-        self.session = await sessionManager.toggleSetComplete(session, exerciseId: currentExercise.id, setIndex: setIndex)
+        self.session = await sessionManager.toggleSetComplete(
+            session,
+            exerciseId: currentExercise.id,
+            setIndex: setIndex,
+        )
         if let rest = currentExercise.restSeconds {
             restTimer.start(seconds: rest)
         }
@@ -170,9 +176,9 @@ final class WorkoutPlayerViewModel {
 
     func finish() async {
         guard let session else { return }
-        let completedExercises = session.exercises.filter { exercise in
+        let completedExercises = session.exercises.count(where: { exercise in
             !exercise.isSkipped && exercise.sets.contains(where: \.isCompleted)
-        }.count
+        })
         completionSummary = CompletionSummary(
             workoutTitle: workout.title,
             completedExercises: completedExercises,
@@ -189,12 +195,14 @@ final class WorkoutPlayerViewModel {
         keyPath: WritableKeyPath<SessionSetState, String>,
         step: Double,
     ) async {
-        guard let currentExercise, let exerciseState = currentExerciseState, exerciseState.sets.indices.contains(setIndex) else {
+        guard let currentExercise, let exerciseState = currentExerciseState,
+              exerciseState.sets.indices.contains(setIndex)
+        else {
             return
         }
         let currentValue = Double(exerciseState.sets[setIndex][keyPath: keyPath]) ?? 0
         let next = max(0, currentValue + step)
-        let nextString: String = if abs(step).truncatingRemainder(dividingBy: 1) > 0 {
+        let nextString = if abs(step).truncatingRemainder(dividingBy: 1) > 0 {
             String(format: "%.1f", next)
         } else {
             String(Int(next))
@@ -341,11 +349,15 @@ struct WorkoutPlayerViewV2: View {
                                 Text("Подход \(index + 1)")
                                     .font(FFTypography.body.weight(.semibold))
                                 HStack(spacing: FFSpacing.xs) {
-                                    numericChip(title: "−2.5") { Task { await viewModel.decrementWeight(setIndex: index) } }
+                                    numericChip(title: "−2.5") {
+                                        Task { await viewModel.decrementWeight(setIndex: index) }
+                                    }
                                     Text("Вес \(set.weightText.isEmpty ? "0" : set.weightText)")
                                         .font(FFTypography.caption)
                                         .foregroundStyle(FFColors.textSecondary)
-                                    numericChip(title: "+2.5") { Task { await viewModel.incrementWeight(setIndex: index) } }
+                                    numericChip(title: "+2.5") {
+                                        Task { await viewModel.incrementWeight(setIndex: index) }
+                                    }
                                 }
                                 HStack(spacing: FFSpacing.xs) {
                                     numericChip(title: "−1") { Task { await viewModel.decrementReps(setIndex: index) } }

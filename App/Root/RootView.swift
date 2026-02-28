@@ -154,7 +154,12 @@ private struct AthleteShellView: View {
             .tag(ShellTab.today)
 
             NavigationStack {
-                PlanTabContent(store: store, environment: environment, apiClient: apiClient)
+                PlanTabContent(
+                    store: store,
+                    environment: environment,
+                    apiClient: apiClient,
+                    userSub: me.subject ?? "anonymous",
+                )
             }
             .tabItem {
                 Label("План", systemImage: "list.bullet.rectangle")
@@ -189,23 +194,50 @@ private struct PlanTabContent: View {
     let store: StoreOf<RootFeature>
     let environment: AppEnvironment
     let apiClient: APIClientProtocol?
+    let userSub: String
+
+    @State private var viewModel: CatalogViewModel
 
     private struct ViewState: Equatable {
         var isProgramDetailsPresented: Bool
         var selectedProgram: RootFeature.State.SelectedProgram?
     }
 
+    init(
+        store: StoreOf<RootFeature>,
+        environment: AppEnvironment,
+        apiClient: APIClientProtocol?,
+        userSub: String,
+    ) {
+        self.store = store
+        self.environment = environment
+        self.apiClient = apiClient
+        self.userSub = userSub
+        _viewModel = State(
+            initialValue: CatalogViewModel(
+                userSub: userSub,
+                programsClient: apiClient as? ProgramsClientProtocol,
+                onUnauthorized: {
+                    store.send(.logoutTapped)
+                },
+            ),
+        )
+    }
+
     var body: some View {
         WithViewStore(
             store,
-            observe: { ViewState(isProgramDetailsPresented: $0.selectedProgram != nil, selectedProgram: $0.selectedProgram) },
+            observe: { ViewState(
+                isProgramDetailsPresented: $0.selectedProgram != nil,
+                selectedProgram: $0.selectedProgram,
+            ) },
         ) { viewStore in
-            CatalogView(
-                store: store.scope(
-                    state: \.catalog,
-                    action: \.catalog,
-                ),
+            CatalogScreen(
+                viewModel: viewModel,
                 environment: environment,
+                onProgramTap: { programID in
+                    store.send(.openProgram(programId: programID, userSub: userSub))
+                },
             )
             .navigationTitle("План")
             .navigationDestination(
@@ -244,7 +276,9 @@ private struct TodayHubView: View {
     private struct WorkoutRoute: Identifiable, Hashable {
         let programId: String
         let workoutId: String
-        var id: String { "\(programId)::\(workoutId)" }
+        var id: String {
+            "\(programId)::\(workoutId)"
+        }
     }
 
     var body: some View {
@@ -361,7 +395,10 @@ struct WorkoutLaunchView: View {
             details = cached
             error = nil
         } else if error == nil {
-            error = UserFacingError(title: "Нет данных тренировки", message: "Откройте тренировку из плана при подключении к сети.")
+            error = UserFacingError(
+                title: "Нет данных тренировки",
+                message: "Откройте тренировку из плана при подключении к сети.",
+            )
         }
     }
 }

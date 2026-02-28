@@ -34,7 +34,6 @@ struct RootFeature {
         var hasBootstrapped = false
         var isOnline = true
         var sessionState: RootSessionState = .authenticating
-        var catalog = CatalogFeature.State()
         var selectedProgram: SelectedProgram?
         var onboarding: OnboardingFeature.State?
     }
@@ -47,7 +46,7 @@ struct RootFeature {
         case networkStatusChanged(Bool)
         case sessionResolved(RootSessionState)
         case onboarding(OnboardingFeature.Action)
-        case catalog(CatalogFeature.Action)
+        case openProgram(programId: String, userSub: String)
         case programDetailsDismissed
     }
 
@@ -57,14 +56,6 @@ struct RootFeature {
 
     var body: some ReducerOf<Self> {
         CombineReducers {
-            Scope(state: \.catalog, action: \.catalog) { [apiClient, cacheStore, networkMonitor] in
-                CatalogFeature(
-                    programsClient: apiClient as? ProgramsClientProtocol,
-                    cacheStore: cacheStore,
-                    networkMonitor: networkMonitor,
-                )
-            }
-
             Reduce { state, action in
                 switch action {
                 case .onAppear:
@@ -119,11 +110,7 @@ struct RootFeature {
                     }
 
                 case .logoutTapped:
-                    let namespace: String = if case let .authenticated(context) = state.sessionState {
-                        context.me.subject ?? state.catalog.cacheNamespace
-                    } else {
-                        state.catalog.cacheNamespace
-                    }
+                    let namespace = cacheNamespace(for: state)
                     state.sessionState = .authenticating
                     state.selectedProgram = nil
                     return .run { [sessionManager, cacheStore] send in
@@ -131,9 +118,6 @@ struct RootFeature {
                         let nextState = await sessionManager.logout()
                         await send(.sessionResolved(nextState))
                     }
-
-                case .catalog(.programsResponse(.failure(.unauthorized), _)):
-                    return forceLogout(&state)
 
                 case let .networkStatusChanged(status):
                     state.isOnline = status
@@ -146,27 +130,13 @@ struct RootFeature {
                     } else {
                         state.onboarding = nil
                     }
-                    if case let .authenticated(context) = nextState {
-                        let userSub = context.me.subject ?? "anonymous"
-                        state.catalog.cacheNamespace = userSub
-                    } else if case .unauthenticated = nextState {
-                        state.catalog.cacheNamespace = "anonymous"
-                    }
                     return .none
 
-                case let .catalog(.delegate(.openProgram(programID))):
-                    let userSub: String = if case let .authenticated(context) = state.sessionState {
-                        context.me.subject ?? "anonymous"
-                    } else {
-                        "anonymous"
-                    }
+                case let .openProgram(programID, userSub):
                     state.selectedProgram = State.SelectedProgram(
                         programId: programID,
                         userSub: userSub,
                     )
-                    return .none
-
-                case .catalog:
                     return .none
 
                 case .programDetailsDismissed:
@@ -195,22 +165,11 @@ struct RootFeature {
         }
     }
 
-    private func forceLogout(_ state: inout State) -> Effect<Action> {
-        let namespace: String = if case let .authenticated(context) = state.sessionState {
-            context.me.subject ?? state.catalog.cacheNamespace
-        } else {
-            state.catalog.cacheNamespace
+    private func cacheNamespace(for state: State) -> String {
+        if case let .authenticated(context) = state.sessionState {
+            return context.me.subject ?? "anonymous"
         }
-
-        state.sessionState = .authenticating
-        state.selectedProgram = nil
-        state.onboarding = nil
-
-        return .run { [sessionManager, cacheStore] send in
-            await cacheStore.clearAll(namespace: namespace)
-            let nextState = await sessionManager.logout()
-            await send(.sessionResolved(nextState))
-        }
+        return "anonymous"
     }
 }
 
