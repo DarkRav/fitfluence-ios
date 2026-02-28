@@ -50,6 +50,32 @@ final class RestTimerModel {
         start(seconds: initialSeconds)
     }
 
+    func add(seconds: Int) {
+        guard seconds > 0 else { return }
+        if !isVisible {
+            start(seconds: seconds)
+            return
+        }
+
+        task?.cancel()
+        initialSeconds += seconds
+        remainingSeconds += seconds
+        isVisible = true
+        isRunning = true
+        task = Task { [weak self] in
+            guard let self else { return }
+            while !Task.isCancelled, self.remainingSeconds > 0, self.isRunning {
+                try? await Task.sleep(for: .seconds(1))
+                if Task.isCancelled || !self.isRunning { break }
+                self.remainingSeconds -= 1
+            }
+            if self.remainingSeconds == 0 {
+                self.isVisible = false
+                self.isRunning = false
+            }
+        }
+    }
+
     func skip() {
         task?.cancel()
         task = nil
@@ -62,6 +88,15 @@ final class RestTimerModel {
 @Observable
 @MainActor
 final class WorkoutPlayerViewModel {
+    struct ExerciseProgressItem: Equatable, Identifiable {
+        let id: String
+        let title: String
+        let completedSets: Int
+        let totalSets: Int
+        let isCurrent: Bool
+        let isSkipped: Bool
+    }
+
     struct CompletionSummary: Equatable, Sendable {
         let workoutTitle: String
         let completedExercises: Int
@@ -80,6 +115,7 @@ final class WorkoutPlayerViewModel {
     var restTimer = RestTimerModel()
     var isLoading = false
     var isExitConfirmationPresented = false
+    var isFinishEarlyConfirmationPresented = false
     var isFinished = false
     var toastMessage: String?
     var completionSummary: CompletionSummary?
@@ -119,6 +155,30 @@ final class WorkoutPlayerViewModel {
     var progressLabel: String {
         let current = min(workout.exercises.count, currentExerciseIndex + 1)
         return "Упражнение \(max(1, current)) из \(max(1, workout.exercises.count))"
+    }
+
+    var isLastExercise: Bool {
+        workout.exercises.isEmpty || currentExerciseIndex >= workout.exercises.count - 1
+    }
+
+    var primaryBottomTitle: String {
+        isLastExercise ? "Завершить тренировку" : "Следующее упражнение"
+    }
+
+    var progressItems: [ExerciseProgressItem] {
+        workout.exercises.map { exercise in
+            let state = session?.exercises.first(where: { $0.exerciseId == exercise.id })
+            let completed = state?.sets.filter(\.isCompleted).count ?? 0
+            let total = state?.sets.count ?? max(1, exercise.sets)
+            return ExerciseProgressItem(
+                id: exercise.id,
+                title: exercise.name,
+                completedSets: completed,
+                totalSets: total,
+                isCurrent: exercise.id == currentExercise?.id,
+                isSkipped: state?.isSkipped ?? false,
+            )
+        }
     }
 
     func onAppear() async {
@@ -180,6 +240,53 @@ final class WorkoutPlayerViewModel {
         guard let session else { return }
         self.session = await sessionManager.undo(session)
         toastMessage = "Последнее действие отменено"
+    }
+
+    func jumpToExercise(_ exerciseID: String) async {
+        guard let targetIndex = workout.exercises.firstIndex(where: { $0.id == exerciseID }),
+              let session else { return }
+        self.session = await sessionManager.moveExercise(session, to: targetIndex)
+    }
+
+    func copyPreviousSet(setIndex: Int) async {
+        guard setIndex > 0,
+              let currentExercise,
+              let exerciseState = currentExerciseState,
+              exerciseState.sets.indices.contains(setIndex),
+              exerciseState.sets.indices.contains(setIndex - 1),
+              let session
+        else {
+            return
+        }
+
+        let previous = exerciseState.sets[setIndex - 1]
+        self.session = await sessionManager.updateSetReps(
+            session,
+            exerciseId: currentExercise.id,
+            setIndex: setIndex,
+            reps: previous.repsText,
+        )
+        if let updated = self.session {
+            self.session = await sessionManager.updateSetWeight(
+                updated,
+                exerciseId: currentExercise.id,
+                setIndex: setIndex,
+                weight: previous.weightText,
+            )
+        }
+        toastMessage = "Скопированы значения из прошлого подхода"
+    }
+
+    func addRest(seconds: Int) {
+        restTimer.add(seconds: seconds)
+    }
+
+    func primaryBottomAction() async {
+        if isLastExercise {
+            await finish()
+        } else {
+            await nextExercise()
+        }
     }
 
     func finish() async {
@@ -267,6 +374,14 @@ struct WorkoutPlayerViewV2: View {
         } message: {
             Text("Прогресс сохранится на устройстве.")
         }
+        .alert("Завершить раньше?", isPresented: $viewModel.isFinishEarlyConfirmationPresented) {
+            Button("Отмена", role: .cancel) {}
+            Button("Завершить", role: .destructive) {
+                Task { await viewModel.finish() }
+            }
+        } message: {
+            Text("Текущий прогресс сохранится в историю тренировки.")
+        }
         .onChange(of: viewModel.isFinished) { _, isFinished in
             if isFinished, let summary = viewModel.completionSummary {
                 onFinish(summary)
@@ -332,6 +447,36 @@ struct WorkoutPlayerViewV2: View {
                             Task { await viewModel.undoLastChange() }
                         }
                     }
+                    VStack(alignment: .leading, spacing: FFSpacing.xs) {
+                        Text("Прогресс")
+                            .font(FFTypography.caption.weight(.semibold))
+                            .foregroundStyle(FFColors.textSecondary)
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: FFSpacing.xs) {
+                                ForEach(viewModel.progressItems) { item in
+                                    Button {
+                                        Task { await viewModel.jumpToExercise(item.id) }
+                                    } label: {
+                                        VStack(alignment: .leading, spacing: 2) {
+                                            Text(item.title)
+                                                .font(FFTypography.caption)
+                                                .lineLimit(1)
+                                            Text("\(item.completedSets)/\(item.totalSets)")
+                                                .font(FFTypography.caption.weight(.semibold))
+                                        }
+                                        .foregroundStyle(item.isCurrent ? FFColors.background : FFColors.textPrimary)
+                                        .padding(.horizontal, FFSpacing.sm)
+                                        .padding(.vertical, FFSpacing.xs)
+                                        .frame(minHeight: 44)
+                                        .background(item.isCurrent ? FFColors.accent : FFColors.gray700)
+                                        .clipShape(RoundedRectangle(cornerRadius: FFTheme.Radius.control))
+                                        .opacity(item.isSkipped ? 0.45 : 1)
+                                    }
+                                    .buttonStyle(.plain)
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -374,6 +519,14 @@ struct WorkoutPlayerViewV2: View {
                                         .foregroundStyle(FFColors.textSecondary)
                                     numericChip(title: "+1") { Task { await viewModel.incrementReps(setIndex: index) } }
                                 }
+                                if index > 0 {
+                                    Button("Копировать прошлый подход") {
+                                        Task { await viewModel.copyPreviousSet(setIndex: index) }
+                                    }
+                                    .font(FFTypography.caption.weight(.semibold))
+                                    .foregroundStyle(FFColors.accent)
+                                    .frame(minHeight: 44)
+                                }
                             }
                             Spacer()
                         }
@@ -397,6 +550,8 @@ struct WorkoutPlayerViewV2: View {
                             variant: .secondary,
                             action: { viewModel.restTimer.pauseOrResume() },
                         )
+                        FFButton(title: "+15", variant: .secondary) { viewModel.addRest(seconds: 15) }
+                        FFButton(title: "+30", variant: .secondary) { viewModel.addRest(seconds: 30) }
                         FFButton(title: "Сброс", variant: .secondary) { viewModel.restTimer.reset() }
                         FFButton(title: "Пропустить", variant: .destructive) { viewModel.restTimer.skip() }
                     }
@@ -407,11 +562,11 @@ struct WorkoutPlayerViewV2: View {
                     FFButton(title: "Назад", variant: .secondary) {
                         Task { await viewModel.prevExercise() }
                     }
-                    FFButton(title: "Следующее упражнение", variant: .primary) {
-                        Task { await viewModel.nextExercise() }
+                    FFButton(title: viewModel.primaryBottomTitle, variant: .primary) {
+                        Task { await viewModel.primaryBottomAction() }
                     }
-                    FFButton(title: "Завершить", variant: .primary) {
-                        Task { await viewModel.finish() }
+                    FFButton(title: "Завершить раньше", variant: .secondary) {
+                        viewModel.isFinishEarlyConfirmationPresented = true
                     }
                 }
             }

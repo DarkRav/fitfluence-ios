@@ -133,6 +133,58 @@ final class WorkoutsFeatureAndProgressStoreTests: XCTestCase {
         XCTAssertEqual(snapshot?.isFinished, true)
     }
 
+    func testWorkoutPlayerViewModelCopyPreviousAndJump() async {
+        let progressStore = MockWorkoutProgressStore(statuses: [:])
+        let sessionManager = WorkoutSessionManager(progressStore: progressStore)
+        let viewModel = WorkoutPlayerViewModel(
+            userSub: "u1",
+            programId: "p1",
+            workout: WorkoutDetailsModel(
+                id: "w2",
+                title: "Тренировка B",
+                dayOrder: 1,
+                coachNote: nil,
+                exercises: [
+                    WorkoutExercise(
+                        id: "ex-1",
+                        name: "Присед",
+                        sets: 2,
+                        repsMin: 6,
+                        repsMax: 8,
+                        targetRpe: nil,
+                        restSeconds: 90,
+                        notes: nil,
+                        orderIndex: 0,
+                    ),
+                    WorkoutExercise(
+                        id: "ex-2",
+                        name: "Жим",
+                        sets: 2,
+                        repsMin: 8,
+                        repsMax: 10,
+                        targetRpe: nil,
+                        restSeconds: 90,
+                        notes: nil,
+                        orderIndex: 1,
+                    ),
+                ],
+            ),
+            sessionManager: sessionManager,
+        )
+
+        await viewModel.onAppear()
+        await viewModel.incrementReps(setIndex: 0)
+        await viewModel.incrementReps(setIndex: 0)
+        await viewModel.incrementWeight(setIndex: 0)
+        await viewModel.copyPreviousSet(setIndex: 1)
+
+        XCTAssertEqual(viewModel.currentExerciseState?.sets[1].repsText, "2")
+        XCTAssertEqual(viewModel.currentExerciseState?.sets[1].weightText, "2.5")
+
+        await viewModel.jumpToExercise("ex-2")
+        XCTAssertEqual(viewModel.currentExercise?.id, "ex-2")
+    }
+
     func testLocalProgressStoreSaveAndLoad() async throws {
         let suiteName = "fitfluence.tests.progress.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
