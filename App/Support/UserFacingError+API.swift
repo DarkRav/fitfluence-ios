@@ -16,14 +16,6 @@ enum UserFacingErrorContext {
     case workoutPlayer
 }
 
-extension UserFacingError {
-    init(kind: UserFacingErrorKind, title: String, message: String) {
-        self.kind = kind
-        self.title = title
-        self.message = message
-    }
-}
-
 extension APIError {
     func userFacing(context: UserFacingErrorContext) -> UserFacingError {
         switch self {

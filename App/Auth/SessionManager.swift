@@ -12,6 +12,12 @@ struct UserFacingError: Equatable, Sendable {
     var kind: UserFacingErrorKind = .unknown
     let title: String
     let message: String
+
+    init(kind: UserFacingErrorKind = .unknown, title: String, message: String) {
+        self.kind = kind
+        self.title = title
+        self.message = message
+    }
 }
 
 protocol SessionManaging: Sendable {
