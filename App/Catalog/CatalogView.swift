@@ -9,6 +9,10 @@ struct CatalogView: View {
         WithViewStore(store, observe: { $0 }) { viewStore in
             ScrollView {
                 VStack(spacing: FFSpacing.md) {
+                    if viewStore.isShowingCachedData {
+                        cachedDataBadge
+                    }
+
                     FFTextField(
                         label: "Поиск",
                         placeholder: "Название программы",
@@ -64,6 +68,14 @@ struct CatalogView: View {
             .onAppear {
                 viewStore.send(.onAppear)
             }
+        }
+    }
+
+    private var cachedDataBadge: some View {
+        FFCard {
+            Text("Оффлайн. Показаны сохранённые данные.")
+                .font(FFTypography.caption.weight(.semibold))
+                .foregroundStyle(FFColors.primary)
         }
     }
 

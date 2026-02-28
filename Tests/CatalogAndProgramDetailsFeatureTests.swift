@@ -12,7 +12,11 @@ final class CatalogAndProgramDetailsFeatureTests: XCTestCase {
         )
 
         let store = TestStore(initialState: CatalogFeature.State()) {
-            CatalogFeature(programsClient: mockClient)
+            CatalogFeature(
+                programsClient: mockClient,
+                cacheStore: MemoryCacheStore(),
+                networkMonitor: StaticNetworkMonitor(currentStatus: true),
+            )
         }
 
         await store.send(.onAppear) {
@@ -20,6 +24,8 @@ final class CatalogAndProgramDetailsFeatureTests: XCTestCase {
             $0.error = nil
             $0.currentPage = 0
         }
+
+        await store.receive(.cachedPageResponse(nil, append: false))
 
         await store.receive(.programsResponse(.success(samplePage(title: "Сила и тонус")), append: false)) {
             $0.isLoading = false
@@ -49,7 +55,11 @@ final class CatalogAndProgramDetailsFeatureTests: XCTestCase {
         )
 
         let store = TestStore(initialState: CatalogFeature.State()) {
-            CatalogFeature(programsClient: mockClient)
+            CatalogFeature(
+                programsClient: mockClient,
+                cacheStore: MemoryCacheStore(),
+                networkMonitor: StaticNetworkMonitor(currentStatus: true),
+            )
         }
 
         await store.send(.onAppear) {
@@ -57,6 +67,8 @@ final class CatalogAndProgramDetailsFeatureTests: XCTestCase {
             $0.error = nil
             $0.currentPage = 0
         }
+
+        await store.receive(.cachedPageResponse(nil, append: false))
 
         await store.receive(.programsResponse(.failure(.offline), append: false)) {
             $0.isLoading = false
@@ -79,7 +91,11 @@ final class CatalogAndProgramDetailsFeatureTests: XCTestCase {
         )
 
         let store = TestStore(initialState: CatalogFeature.State()) {
-            CatalogFeature(programsClient: mockClient)
+            CatalogFeature(
+                programsClient: mockClient,
+                cacheStore: MemoryCacheStore(),
+                networkMonitor: StaticNetworkMonitor(currentStatus: true),
+            )
         }
 
         await store.send(.searchQueryChanged("пе")) {
@@ -98,6 +114,7 @@ final class CatalogAndProgramDetailsFeatureTests: XCTestCase {
             $0.error = nil
             $0.currentPage = 0
         }
+        await store.receive(.cachedPageResponse(nil, append: false))
         await store.receive(.programsResponse(.success(samplePage(title: "Первая")), append: false)) {
             $0.isLoading = false
             $0.isRefreshing = false

@@ -5,16 +5,18 @@ import Foundation
 struct CatalogFeature {
     @ObservableState
     struct State: Equatable {
+        var cacheNamespace = "anonymous"
         var query = ""
         var programs: [ProgramCard] = []
         var isLoading = false
         var isRefreshing = false
+        var isShowingCachedData = false
         var error: UserFacingError?
         var currentPage = 0
         var totalPages = 0
     }
 
-    struct ProgramCard: Equatable, Identifiable {
+    struct ProgramCard: Codable, Equatable, Identifiable {
         let id: String
         let title: String
         let description: String
@@ -22,6 +24,11 @@ struct CatalogFeature {
         let goals: [String]
         let coverURL: String?
         let isPublished: Bool
+    }
+
+    struct CachedCatalogPage: Codable, Equatable {
+        let cards: [ProgramCard]
+        let metadata: PageMetadata
     }
 
     enum Action: Equatable, BindableAction {
@@ -33,6 +40,7 @@ struct CatalogFeature {
         case loadNextPage
         case retry
         case programTapped(String)
+        case cachedPageResponse(CachedCatalogPage?, append: Bool)
         case programsResponse(Result<PagedProgramResponse, APIError>, append: Bool)
         case delegate(Delegate)
     }
@@ -47,9 +55,17 @@ struct CatalogFeature {
     }
 
     private let programsClient: ProgramsClientProtocol?
+    private let cacheStore: CacheStore
+    private let networkMonitor: NetworkMonitoring
 
-    init(programsClient: ProgramsClientProtocol?) {
+    init(
+        programsClient: ProgramsClientProtocol?,
+        cacheStore: CacheStore = CompositeCacheStore(),
+        networkMonitor: NetworkMonitoring = StaticNetworkMonitor(currentStatus: true),
+    ) {
         self.programsClient = programsClient
+        self.cacheStore = cacheStore
+        self.networkMonitor = networkMonitor
     }
 
     var body: some ReducerOf<Self> {
@@ -65,13 +81,19 @@ struct CatalogFeature {
                 state.isLoading = true
                 state.error = nil
                 state.currentPage = 0
-                return loadProgramsEffect(query: state.query, page: 0, append: false)
+                return .concatenate(
+                    loadCachedPageEffect(namespace: state.cacheNamespace, query: state.query, page: 0, append: false),
+                    loadProgramsEffect(query: state.query, page: 0, append: false),
+                )
 
             case .refresh:
                 state.isRefreshing = true
                 state.error = nil
                 state.currentPage = 0
-                return loadProgramsEffect(query: state.query, page: 0, append: false)
+                return .concatenate(
+                    loadCachedPageEffect(namespace: state.cacheNamespace, query: state.query, page: 0, append: false),
+                    loadProgramsEffect(query: state.query, page: 0, append: false),
+                )
 
             case let .searchQueryChanged(value):
                 state.query = value
@@ -86,7 +108,10 @@ struct CatalogFeature {
                 state.isLoading = true
                 state.error = nil
                 state.currentPage = 0
-                return loadProgramsEffect(query: state.query, page: 0, append: false)
+                return .concatenate(
+                    loadCachedPageEffect(namespace: state.cacheNamespace, query: state.query, page: 0, append: false),
+                    loadProgramsEffect(query: state.query, page: 0, append: false),
+                )
 
             case .loadNextPage:
                 guard !state.isLoading else { return .none }
@@ -95,15 +120,43 @@ struct CatalogFeature {
                 guard nextPage < state.totalPages else { return .none }
 
                 state.isLoading = true
-                return loadProgramsEffect(query: state.query, page: nextPage, append: true)
+                return .concatenate(
+                    loadCachedPageEffect(
+                        namespace: state.cacheNamespace,
+                        query: state.query,
+                        page: nextPage,
+                        append: true,
+                    ),
+                    loadProgramsEffect(query: state.query, page: nextPage, append: true),
+                )
 
             case .retry:
                 state.isLoading = true
                 state.error = nil
-                return loadProgramsEffect(query: state.query, page: state.currentPage, append: false)
+                return .concatenate(
+                    loadCachedPageEffect(
+                        namespace: state.cacheNamespace,
+                        query: state.query,
+                        page: state.currentPage,
+                        append: false,
+                    ),
+                    loadProgramsEffect(query: state.query, page: state.currentPage, append: false),
+                )
 
             case let .programTapped(programID):
                 return .send(.delegate(.openProgram(programID)))
+
+            case let .cachedPageResponse(cachedPage, append):
+                guard let cachedPage else { return .none }
+                if append {
+                    state.programs.append(contentsOf: cachedPage.cards)
+                } else {
+                    state.programs = cachedPage.cards
+                }
+                state.currentPage = cachedPage.metadata.page
+                state.totalPages = cachedPage.metadata.totalPages
+                state.isShowingCachedData = true
+                return .none
 
             case let .programsResponse(result, append):
                 state.isLoading = false
@@ -131,8 +184,23 @@ struct CatalogFeature {
                     state.currentPage = response.metadata.page
                     state.totalPages = response.metadata.totalPages
                     state.error = nil
+                    state.isShowingCachedData = false
+                    let namespace = state.cacheNamespace
+                    let key = cacheKey(query: state.query, page: response.metadata.page)
+                    let payload = CachedCatalogPage(cards: cards, metadata: response.metadata)
+                    return .run { [cacheStore] _ in
+                        await cacheStore.set(key, value: payload, namespace: namespace, ttl: 60 * 30)
+                    }
 
                 case let .failure(apiError):
+                    if apiError == .offline || !networkMonitor.currentStatus {
+                        if !state.programs.isEmpty {
+                            state.error = nil
+                            state.isShowingCachedData = true
+                            return .none
+                        }
+                    }
+
                     state.error = apiError.userFacingError
                     if !append {
                         state.programs = []
@@ -147,6 +215,14 @@ struct CatalogFeature {
         }
     }
 
+    private func loadCachedPageEffect(namespace: String, query: String, page: Int, append: Bool) -> Effect<Action> {
+        .run { [cacheStore] send in
+            let key = cacheKey(query: query, page: page)
+            let cached = await cacheStore.get(key, as: CachedCatalogPage.self, namespace: namespace)
+            await send(.cachedPageResponse(cached, append: append))
+        }
+    }
+
     private func loadProgramsEffect(query: String, page: Int, append: Bool) -> Effect<Action> {
         .run { [programsClient] send in
             let result: Result<PagedProgramResponse, APIError> = if let programsClient {
@@ -157,6 +233,10 @@ struct CatalogFeature {
             await send(.programsResponse(result, append: append))
         }
         .cancellable(id: CancelID.loadPrograms, cancelInFlight: true)
+    }
+
+    private func cacheKey(query: String, page: Int) -> String {
+        "programs.list?q=\(query)&page=\(page)"
     }
 }
 

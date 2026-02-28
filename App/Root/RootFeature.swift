@@ -6,6 +6,7 @@ struct RootFeature {
     private let authService: AuthServiceProtocol
     private let apiClient: APIClientProtocol?
     private let progressStore: WorkoutProgressStore
+    private let cacheStore: CacheStore
     private let networkMonitor: NetworkMonitoring
     private let athleteClient: AthleteProfileClientProtocol?
     private let influencerClient: InfluencerProfileClientProtocol?
@@ -15,12 +16,14 @@ struct RootFeature {
         authService: AuthServiceProtocol,
         apiClient: APIClientProtocol?,
         progressStore: WorkoutProgressStore = LocalWorkoutProgressStore(),
+        cacheStore: CacheStore = CompositeCacheStore(),
         networkMonitor: NetworkMonitoring = StaticNetworkMonitor(currentStatus: true),
     ) {
         self.sessionManager = sessionManager
         self.authService = authService
         self.apiClient = apiClient
         self.progressStore = progressStore
+        self.cacheStore = cacheStore
         self.networkMonitor = networkMonitor
         athleteClient = apiClient as? AthleteProfileClientProtocol
         influencerClient = apiClient as? InfluencerProfileClientProtocol
@@ -77,8 +80,12 @@ struct RootFeature {
                 sessionManager: sessionManager,
             )
         }
-        Scope(state: \.catalog, action: \.catalog) { [apiClient] in
-            CatalogFeature(programsClient: apiClient as? ProgramsClientProtocol)
+        Scope(state: \.catalog, action: \.catalog) { [apiClient, cacheStore, networkMonitor] in
+            CatalogFeature(
+                programsClient: apiClient as? ProgramsClientProtocol,
+                cacheStore: cacheStore,
+                networkMonitor: networkMonitor,
+            )
         }
         .ifLet(\.programDetails, action: \.programDetails) { [apiClient, progressStore] in
             ProgramDetailsFeature(
@@ -157,6 +164,11 @@ struct RootFeature {
                     state.onboarding = OnboardingFeature.State(context: context)
                 } else {
                     state.onboarding = nil
+                }
+                if case let .authenticated(context) = nextState {
+                    state.catalog.cacheNamespace = context.me.subject ?? "anonymous"
+                } else if case .unauthenticated = nextState {
+                    state.catalog.cacheNamespace = "anonymous"
                 }
                 return .none
 
