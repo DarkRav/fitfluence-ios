@@ -7,7 +7,7 @@ struct HTTPResponse {
     let durationMs: Int
 }
 
-protocol HTTPClientProtocol {
+protocol HTTPClientProtocol: Sendable {
     func send(_ request: APIRequest) async throws -> HTTPResponse
 }
 

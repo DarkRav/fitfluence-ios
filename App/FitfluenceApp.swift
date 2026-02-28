@@ -25,7 +25,12 @@ struct FitfluenceApp: App {
         )
 
         let tokenProvider = StoredAuthTokenProvider(tokenStore: tokenStore)
-        apiClient = APIClient.live(environment: environment, session: .shared, tokenProvider: tokenProvider)
+        apiClient = APIClient.live(
+            environment: environment,
+            session: .shared,
+            tokenProvider: tokenProvider,
+            authService: authService,
+        )
 
         sessionManager = SessionManager(
             authService: authService,

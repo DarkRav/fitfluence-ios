@@ -25,6 +25,7 @@
 		5C6A1DDAACA62605B0E42581 /* FFLoadingState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2C571FBEBDFDA288B1E05B14 /* FFLoadingState.swift */; };
 		5E6EF9DDF511ED6E69C44691 /* InfluencerProfileClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 862F48B6CFE0972C4137CDAF /* InfluencerProfileClient.swift */; };
 		659A792308E4E63241F9DE2C /* FFBadge.swift in Sources */ = {isa = PBXBuildFile; fileRef = E190F6607FF86AE368CDC6DC /* FFBadge.swift */; };
+		68E89882A51C1B39345D7DEE /* AuthAndSessionFlowTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4E282B8F338673539A3669DB /* AuthAndSessionFlowTests.swift */; };
 		849A338E87813F3C4CB7BF03 /* Environment.swift in Sources */ = {isa = PBXBuildFile; fileRef = 44A1273CE966730AE3C9922B /* Environment.swift */; };
 		8D8127A6EF2465DFDE792FAD /* OIDCAndTokenStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 329834B4D1A96F4EA44A775F /* OIDCAndTokenStoreTests.swift */; };
 		A7468B42E0564F56E4DEA037 /* APIError.swift in Sources */ = {isa = PBXBuildFile; fileRef = D049FFBF6B3F8E522C058CAA /* APIError.swift */; };
@@ -75,6 +76,7 @@
 		3B0C590AD2E0CF52FB2BE38B /* TokenStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TokenStore.swift; sourceTree = "<group>"; };
 		44A1273CE966730AE3C9922B /* Environment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Environment.swift; sourceTree = "<group>"; };
 		4BB48B9AF4D57EE8E899CC9E /* Stage.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Stage.xcconfig; sourceTree = "<group>"; };
+		4E282B8F338673539A3669DB /* AuthAndSessionFlowTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthAndSessionFlowTests.swift; sourceTree = "<group>"; };
 		59F8273C6875008A5C9A3300 /* NetworkingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NetworkingTests.swift; sourceTree = "<group>"; };
 		5C86524522FD187BCB6065C5 /* OIDCDiscoveryDocument.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OIDCDiscoveryDocument.swift; sourceTree = "<group>"; };
 		65EE21EADAEB1C46C1227CF6 /* FitfluenceTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = FitfluenceTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -244,6 +246,7 @@
 		C61D88E577A786ED0C1385C5 /* Tests */ = {
 			isa = PBXGroup;
 			children = (
+				4E282B8F338673539A3669DB /* AuthAndSessionFlowTests.swift */,
 				94FD710E5EFA916159BCCE7D /* DesignSystemTests.swift */,
 				E1984067FE9FCB6709C5D963 /* MockURLProtocol.swift */,
 				59F8273C6875008A5C9A3300 /* NetworkingTests.swift */,
@@ -399,6 +402,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				68E89882A51C1B39345D7DEE /* AuthAndSessionFlowTests.swift in Sources */,
 				F8D8480922CC1CB246C5C711 /* DesignSystemTests.swift in Sources */,
 				52FBBDB2F37E77D2C7143EBA /* MockURLProtocol.swift in Sources */,
 				BAE62E7712F38E9F49845685 /* NetworkingTests.swift in Sources */,

@@ -16,20 +16,26 @@ final class APIClient: APIClientProtocol, MeClientProtocol, AthleteProfileClient
     InfluencerProfileClientProtocol
 {
     private let httpClient: HTTPClientProtocol
+    private let authService: AuthServiceProtocol?
 
-    init(httpClient: HTTPClientProtocol) {
+    init(httpClient: HTTPClientProtocol, authService: AuthServiceProtocol? = nil) {
         self.httpClient = httpClient
+        self.authService = authService
     }
 
     static func live(
         environment: AppEnvironment,
         session: URLSession = .shared,
         tokenProvider: AuthTokenProvider = NoAuthTokenProvider(),
+        authService: AuthServiceProtocol? = nil,
     ) -> APIClient? {
         guard let baseURL = environment.backendBaseURL else {
             return nil
         }
-        return APIClient(httpClient: HTTPClient(baseURL: baseURL, session: session, tokenProvider: tokenProvider))
+        return APIClient(
+            httpClient: HTTPClient(baseURL: baseURL, session: session, tokenProvider: tokenProvider),
+            authService: authService,
+        )
     }
 
     func healthCheck() async -> Result<HealthResponse, APIError> {
@@ -65,11 +71,26 @@ final class APIClient: APIClientProtocol, MeClientProtocol, AthleteProfileClient
     }
 
     private func decode<T: Decodable>(_ request: APIRequest, as _: T.Type) async -> Result<T, APIError> {
+        await decodeWithRetry(request, allowRetryAfterRefresh: true)
+    }
+
+    private func decodeWithRetry<T: Decodable>(
+        _ request: APIRequest,
+        allowRetryAfterRefresh: Bool,
+    ) async -> Result<T, APIError> {
         do {
             let response = try await httpClient.send(request)
             let decoded = try JSONDecoder().decode(T.self, from: response.data)
             return .success(decoded)
         } catch let apiError as APIError {
+            if case .unauthorized = apiError, allowRetryAfterRefresh, let authService {
+                let refreshed = await authService.refresh()
+                if refreshed {
+                    return await decodeWithRetry(request, allowRetryAfterRefresh: false)
+                }
+                await authService.logout()
+                return .failure(.unauthorized)
+            }
             return .failure(apiError)
         } catch is DecodingError {
             return .failure(.decodingError)
