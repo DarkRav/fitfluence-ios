@@ -13,7 +13,7 @@ struct OnboardingView: View {
                             Text("Создание профиля атлета")
                                 .font(FFTypography.h2)
                                 .foregroundStyle(FFColors.textPrimary)
-                            Text("Укажите имя профиля, чтобы перейти к тренировкам.")
+                            Text("Проверьте имя профиля и продолжайте к тренировкам.")
                                 .font(FFTypography.body)
                                 .foregroundStyle(FFColors.textSecondary)
                         }
@@ -26,7 +26,7 @@ struct OnboardingView: View {
                             get: \.athleteDisplayName,
                             send: OnboardingFeature.Action.athleteDisplayNameChanged,
                         ),
-                        helperText: "Это имя будет видно в вашем профиле",
+                        helperText: "Имя можно изменить позже",
                     )
 
                     FFButton(

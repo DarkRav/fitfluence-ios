@@ -24,7 +24,7 @@ final class AuthAndSessionFlowTests: XCTestCase {
         )
 
         let state = OnboardingFeature.State(context: context)
-        XCTAssertEqual(state.athleteDisplayName, "")
+        XCTAssertEqual(state.athleteDisplayName, "demo")
     }
 
     @MainActor
