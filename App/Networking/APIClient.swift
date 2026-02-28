@@ -42,8 +42,32 @@ final class APIClient: APIClientProtocol, MeClientProtocol, AthleteProfileClient
     }
 
     func healthCheck() async -> Result<HealthResponse, APIError> {
-        let request = APIRequest.get(path: "/actuator/health", requiresAuthorization: false)
-        return await decode(request, as: HealthResponse.self)
+        do {
+            let body = ProgramsSearchRequest(
+                filter: ProgramFilter(search: nil, influencerId: nil, status: .published),
+                page: 0,
+                size: 1,
+            )
+            let payload = try JSONEncoder().encode(body)
+            let request = APIRequest(
+                path: "/v1/programs/published/search",
+                method: .post,
+                queryItems: [],
+                headers: [:],
+                body: payload,
+                requiresAuthorization: false,
+                timeoutInterval: nil,
+            )
+            let result: Result<PagedProgramResponse, APIError> = await decode(request, as: PagedProgramResponse.self)
+            switch result {
+            case let .success(response):
+                return .success(HealthResponse(status: "OK (\(response.metadata.totalElements))"))
+            case let .failure(error):
+                return .failure(error)
+            }
+        } catch {
+            return .failure(.unknown)
+        }
     }
 
     func me() async -> Result<MeResponse, APIError> {

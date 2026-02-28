@@ -12,7 +12,7 @@ struct DiagnosticsView: View {
                         Text("Диагностика API")
                             .font(FFTypography.h2)
                             .foregroundStyle(FFColors.textPrimary)
-                        Text("Проверка выполняет безопасный запрос `/actuator/health`.")
+                        Text("Проверка выполняет безопасный запрос `/v1/programs/published/search`.")
                             .font(FFTypography.body)
                             .foregroundStyle(FFColors.textSecondary)
                     }

@@ -13,7 +13,10 @@ final class NetworkingTests: XCTestCase {
         let client = makeHTTPClient()
 
         do {
-            _ = try await client.send(APIRequest.get(path: "/actuator/health", requiresAuthorization: false))
+            _ = try await client.send(APIRequest.get(
+                path: "/v1/programs/published/search",
+                requiresAuthorization: false,
+            ))
             XCTFail("Expected error")
         } catch let error as APIError {
             XCTAssertEqual(error, .offline)
@@ -27,7 +30,10 @@ final class NetworkingTests: XCTestCase {
         let client = makeHTTPClient()
 
         do {
-            _ = try await client.send(APIRequest.get(path: "/actuator/health", requiresAuthorization: false))
+            _ = try await client.send(APIRequest.get(
+                path: "/v1/programs/published/search",
+                requiresAuthorization: false,
+            ))
             XCTFail("Expected error")
         } catch let error as APIError {
             XCTAssertEqual(error, .timeout)
