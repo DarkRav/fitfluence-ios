@@ -6,6 +6,7 @@ struct RootFeature {
     private let authService: AuthServiceProtocol
     private let apiClient: APIClientProtocol?
     private let progressStore: WorkoutProgressStore
+    private let networkMonitor: NetworkMonitoring
     private let athleteClient: AthleteProfileClientProtocol?
     private let influencerClient: InfluencerProfileClientProtocol?
 
@@ -14,11 +15,13 @@ struct RootFeature {
         authService: AuthServiceProtocol,
         apiClient: APIClientProtocol?,
         progressStore: WorkoutProgressStore = LocalWorkoutProgressStore(),
+        networkMonitor: NetworkMonitoring = StaticNetworkMonitor(currentStatus: true),
     ) {
         self.sessionManager = sessionManager
         self.authService = authService
         self.apiClient = apiClient
         self.progressStore = progressStore
+        self.networkMonitor = networkMonitor
         athleteClient = apiClient as? AthleteProfileClientProtocol
         influencerClient = apiClient as? InfluencerProfileClientProtocol
     }
@@ -26,6 +29,7 @@ struct RootFeature {
     @ObservableState
     struct State: Equatable {
         var hasBootstrapped = false
+        var isOnline = true
         var sessionState: RootSessionState = .authenticating
         var diagnostics = DiagnosticsFeature.State()
         var catalog = CatalogFeature.State()
@@ -48,6 +52,7 @@ struct RootFeature {
         case retryBootstrapTapped
         case loginTapped(LoginEntryMode)
         case logoutTapped
+        case networkStatusChanged(Bool)
         case sessionResolved(RootSessionState)
         case diagnostics(DiagnosticsFeature.Action)
         case onboarding(OnboardingFeature.Action)
@@ -55,6 +60,10 @@ struct RootFeature {
         case programDetails(ProgramDetailsFeature.Action)
         case programDetailsDismissed
         case tabSelected(MainTab)
+    }
+
+    private enum CancelID {
+        case networkMonitoring
     }
 
     var body: some ReducerOf<Self> {
@@ -84,10 +93,18 @@ struct RootFeature {
                 guard !state.hasBootstrapped else { return .none }
                 state.hasBootstrapped = true
                 state.sessionState = .authenticating
-                return .run { [sessionManager] send in
-                    let resolved = await sessionManager.bootstrap()
-                    await send(.sessionResolved(resolved))
-                }
+                return .merge(
+                    .run { [sessionManager] send in
+                        let resolved = await sessionManager.bootstrap()
+                        await send(.sessionResolved(resolved))
+                    },
+                    .run { [networkMonitor] send in
+                        for await status in networkMonitor.statusUpdates() {
+                            await send(.networkStatusChanged(status))
+                        }
+                    }
+                    .cancellable(id: CancelID.networkMonitoring, cancelInFlight: true),
+                )
 
             case .retryBootstrapTapped:
                 state.sessionState = .authenticating
@@ -129,6 +146,10 @@ struct RootFeature {
                     let nextState = await sessionManager.logout()
                     await send(.sessionResolved(nextState))
                 }
+
+            case let .networkStatusChanged(status):
+                state.isOnline = status
+                return .none
 
             case let .sessionResolved(nextState):
                 state.sessionState = nextState

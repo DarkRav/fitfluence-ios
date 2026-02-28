@@ -7,6 +7,7 @@ struct FitfluenceApp: App {
     private let authService: AuthService
     private let apiClient: APIClient?
     private let sessionManager: SessionManaging
+    private let networkMonitor: NetworkMonitoring
 
     init() {
         let tokenStore = KeychainTokenStore()
@@ -36,6 +37,7 @@ struct FitfluenceApp: App {
             authService: authService,
             meClient: apiClient ?? UnavailableMeClient(),
         )
+        networkMonitor = NetworkMonitor()
 
         FFLog.info("Запуск приложения в окружении: \(environment.name)")
         FFLog.info("Backend URL: \(environment.backendBaseURL?.absoluteString ?? "не задан")")
@@ -50,6 +52,7 @@ struct FitfluenceApp: App {
                         sessionManager: sessionManager,
                         authService: authService,
                         apiClient: apiClient,
+                        networkMonitor: networkMonitor,
                     )
                 },
                 environment: environment,

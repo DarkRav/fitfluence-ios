@@ -7,47 +7,53 @@ struct RootView: View {
 
     var body: some View {
         WithViewStore(store, observe: { $0 }) { viewStore in
-            Group {
-                switch viewStore.sessionState {
-                case .unauthenticated:
-                    AuthEntryView {
-                        viewStore.send(.loginTapped(.login))
-                    } onCreateAccount: {
-                        viewStore.send(.loginTapped(.createAccount))
-                    }
+            VStack(spacing: 0) {
+                if !viewStore.isOnline {
+                    OfflineBannerView()
+                }
 
-                case .authenticating:
-                    FFLoadingState(title: "Проверяем сессию")
-                        .padding(.horizontal, FFSpacing.md)
+                Group {
+                    switch viewStore.sessionState {
+                    case .unauthenticated:
+                        AuthEntryView {
+                            viewStore.send(.loginTapped(.login))
+                        } onCreateAccount: {
+                            viewStore.send(.loginTapped(.createAccount))
+                        }
 
-                case let .needsOnboarding(context):
-                    if let onboardingStore = store.scope(state: \.onboarding, action: \.onboarding) {
-                        OnboardingView(
-                            store: onboardingStore,
-                        )
-                        .padding(.horizontal, FFSpacing.md)
-                    } else {
-                        OnboardingGateView(context: context)
+                    case .authenticating:
+                        FFLoadingState(title: "Проверяем сессию")
                             .padding(.horizontal, FFSpacing.md)
-                    }
 
-                case let .authenticated(userContext):
-                    MainTabsView(
-                        store: store,
-                        environment: environment,
-                        me: userContext.me,
-                        onLogout: { viewStore.send(.logoutTapped) },
-                    )
+                    case let .needsOnboarding(context):
+                        if let onboardingStore = store.scope(state: \.onboarding, action: \.onboarding) {
+                            OnboardingView(
+                                store: onboardingStore,
+                            )
+                            .padding(.horizontal, FFSpacing.md)
+                        } else {
+                            OnboardingGateView(context: context)
+                                .padding(.horizontal, FFSpacing.md)
+                        }
 
-                case let .error(error):
-                    FFErrorState(
-                        title: error.title,
-                        message: error.message,
-                        retryTitle: "Повторить",
-                    ) {
-                        viewStore.send(.retryBootstrapTapped)
+                    case let .authenticated(userContext):
+                        MainTabsView(
+                            store: store,
+                            environment: environment,
+                            me: userContext.me,
+                            onLogout: { viewStore.send(.logoutTapped) },
+                        )
+
+                    case let .error(error):
+                        FFErrorState(
+                            title: error.title,
+                            message: error.message,
+                            retryTitle: "Повторить",
+                        ) {
+                            viewStore.send(.retryBootstrapTapped)
+                        }
+                        .padding(.horizontal, FFSpacing.md)
                     }
-                    .padding(.horizontal, FFSpacing.md)
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -56,6 +62,18 @@ struct RootView: View {
                 viewStore.send(.onAppear)
             }
         }
+    }
+}
+
+private struct OfflineBannerView: View {
+    var body: some View {
+        Text("Нет подключения. Показаны сохранённые данные.")
+            .font(FFTypography.caption.weight(.semibold))
+            .foregroundStyle(FFColors.background)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, FFSpacing.xs)
+            .background(FFColors.primary)
+            .accessibilityLabel("Оффлайн режим")
     }
 }
 

@@ -25,6 +25,7 @@
 		4025B7C04F0147C4EF0AB949 /* ProgramDetailsFeature.swift in Sources */ = {isa = PBXBuildFile; fileRef = E893C9F1C635E60DF987C7E9 /* ProgramDetailsFeature.swift */; };
 		435746BA1AFC22712B75EEF0 /* WorkoutCompletionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = EE8604458F7511FF670AF498 /* WorkoutCompletionView.swift */; };
 		43CA0760499D122198F6FA3B /* OnboardingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1203A36F8050A4BC9C2E299F /* OnboardingView.swift */; };
+		440F3C70D933310A3BCB95A0 /* NetworkMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = C7DAB8925BEFB1102F1A545C /* NetworkMonitor.swift */; };
 		45E466356D6C79571D6512DF /* APIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 93591F37ED661EF6B961A5D3 /* APIClient.swift */; };
 		47666B7411F0CE528FE8B1F4 /* FFErrorState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 151CCFD42F23601C4661B789 /* FFErrorState.swift */; };
 		52FBBDB2F37E77D2C7143EBA /* MockURLProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = E1984067FE9FCB6709C5D963 /* MockURLProtocol.swift */; };
@@ -125,6 +126,7 @@
 		B0CF331419F45FF9802465D8 /* ProgramsClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProgramsClient.swift; sourceTree = "<group>"; };
 		B202B94DE2C375FB67F019B3 /* FFTextField.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFTextField.swift; sourceTree = "<group>"; };
 		B61E587FD4EC525652715208 /* MeClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeClient.swift; sourceTree = "<group>"; };
+		C7DAB8925BEFB1102F1A545C /* NetworkMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NetworkMonitor.swift; sourceTree = "<group>"; };
 		CAEB6BFF14C57697C73E6CD3 /* RootFeature.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootFeature.swift; sourceTree = "<group>"; };
 		CDD647AE3A6E7E155C2AFB28 /* WorkoutCompletionFeature.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkoutCompletionFeature.swift; sourceTree = "<group>"; };
 		CFFBFA6A796BD76A36FB04F2 /* WorkoutsListFeature.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkoutsListFeature.swift; sourceTree = "<group>"; };
@@ -271,6 +273,7 @@
 			children = (
 				44A1273CE966730AE3C9922B /* Environment.swift */,
 				B0CE9CC0E1302819C8010358 /* Logging.swift */,
+				C7DAB8925BEFB1102F1A545C /* NetworkMonitor.swift */,
 				967F2EF94A530FC0D94A6D5C /* PreviewMocks.swift */,
 			);
 			path = Support;
@@ -472,6 +475,7 @@
 				5E6EF9DDF511ED6E69C44691 /* InfluencerProfileClient.swift in Sources */,
 				06931F2CD054F4E2CB1A73B4 /* Logging.swift in Sources */,
 				B1D4335E51D0FCAC21C8DB80 /* MeClient.swift in Sources */,
+				440F3C70D933310A3BCB95A0 /* NetworkMonitor.swift in Sources */,
 				BC078A680755A39631921FB9 /* OIDCDiscoveryDocument.swift in Sources */,
 				1AB57DA5730C1782367D6BE4 /* OnboardingFeature.swift in Sources */,
 				43CA0760499D122198F6FA3B /* OnboardingView.swift in Sources */,
