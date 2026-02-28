@@ -148,6 +148,13 @@ struct RootFeature {
                     await send(.sessionResolved(nextState))
                 }
 
+            case .catalog(.programsResponse(.failure(.unauthorized), _)),
+                 .programDetails(.detailsResponse(.failure(.unauthorized))),
+                 .programDetails(.startProgramResponse(.failure(.unauthorized))),
+                 .programDetails(.workoutsList(.response(.failure(.unauthorized)))),
+                 .programDetails(.workoutPlayer(.detailsResponse(.failure(.unauthorized)))):
+                return forceLogout(&state)
+
             case let .networkStatusChanged(status):
                 state.isOnline = status
                 return .none
@@ -255,6 +262,24 @@ struct RootFeature {
                 cacheStore: cacheStore,
                 networkMonitor: networkMonitor,
             )
+        }
+    }
+
+    private func forceLogout(_ state: inout State) -> Effect<Action> {
+        let namespace: String = if case let .authenticated(context) = state.sessionState {
+            context.me.subject ?? state.catalog.cacheNamespace
+        } else {
+            state.catalog.cacheNamespace
+        }
+
+        state.sessionState = .authenticating
+        state.programDetails = nil
+        state.onboarding = nil
+
+        return .run { [sessionManager, cacheStore] send in
+            await cacheStore.clearAll(namespace: namespace)
+            let nextState = await sessionManager.logout()
+            await send(.sessionResolved(nextState))
         }
     }
 }

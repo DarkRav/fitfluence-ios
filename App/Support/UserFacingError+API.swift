@@ -41,7 +41,7 @@ extension APIError {
             UserFacingError(
                 kind: .server,
                 title: "Сервис временно недоступен",
-                message: serverMessage(for: context),
+                message: "Попробуйте ещё раз чуть позже.",
             )
         case .decodingError:
             UserFacingError(
@@ -53,7 +53,7 @@ extension APIError {
             UserFacingError(
                 kind: .unknown,
                 title: "Что-то пошло не так",
-                message: unknownMessage(for: context),
+                message: "Не удалось завершить запрос. Попробуйте ещё раз.",
             )
         }
     }
@@ -69,29 +69,4 @@ extension APIError {
         }
     }
 
-    private func serverMessage(for context: UserFacingErrorContext) -> String {
-        switch context {
-        case .catalog:
-            "Не удалось загрузить каталог. Попробуйте позже."
-        case .programDetails:
-            "Не удалось загрузить программу. Попробуйте позже."
-        case .workoutsList:
-            "Не удалось загрузить список тренировок. Попробуйте позже."
-        case .workoutPlayer:
-            "Не удалось загрузить тренировку. Попробуйте позже."
-        }
-    }
-
-    private func unknownMessage(for context: UserFacingErrorContext) -> String {
-        switch context {
-        case .catalog:
-            "Не удалось загрузить каталог."
-        case .programDetails:
-            "Не удалось загрузить программу."
-        case .workoutsList:
-            "Не удалось загрузить тренировки."
-        case .workoutPlayer:
-            "Не удалось открыть тренировку."
-        }
-    }
 }
