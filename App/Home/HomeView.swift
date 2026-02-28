@@ -147,9 +147,25 @@ final class HomeViewModel {
             nextWorkout = workouts.sorted(by: { $0.dayOrder < $1.dayOrder }).first
             lastWorkout = workouts.sorted(by: { $0.dayOrder > $1.dayOrder }).first
         } else {
-            activeProgramId = nil
-            nextWorkout = nil
-            lastWorkout = nil
+            let cachedFirstPage = await cacheStore.get(
+                "programs.list?q=&page=0",
+                as: CatalogFeature.CachedCatalogPage.self,
+                namespace: userSub,
+            )
+            if let programId = cachedFirstPage?.cards.first?.id {
+                activeProgramId = programId
+                let workouts = await cacheStore.get(
+                    "workouts.list:\(programId)",
+                    as: [WorkoutSummary].self,
+                    namespace: userSub,
+                ) ?? []
+                nextWorkout = workouts.sorted(by: { $0.dayOrder < $1.dayOrder }).first
+                lastWorkout = workouts.sorted(by: { $0.dayOrder > $1.dayOrder }).first
+            } else {
+                activeProgramId = nil
+                nextWorkout = nil
+                lastWorkout = nil
+            }
         }
         isLoading = false
     }
