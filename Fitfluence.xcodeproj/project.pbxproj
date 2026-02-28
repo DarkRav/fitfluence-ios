@@ -50,6 +50,7 @@
 		D0381F8271688F1DD55ECF64 /* FFButton.swift in Sources */ = {isa = PBXBuildFile; fileRef = A97D9C4C6794471BA7C75525 /* FFButton.swift */; };
 		D0EDEA7F9D27535EA83A0F26 /* FFEmptyState.swift in Sources */ = {isa = PBXBuildFile; fileRef = E40B5498BB99116B3021C4E4 /* FFEmptyState.swift */; };
 		D69C1CB30BD7205B98ECCCC3 /* TokenSet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D5DAA77BFBBF8EB1EE9084A /* TokenSet.swift */; };
+		D7932E90DA35D8CD26261D66 /* FFRemoteImage.swift in Sources */ = {isa = PBXBuildFile; fileRef = E4EE124DB6FA8A5986B4A1F8 /* FFRemoteImage.swift */; };
 		DE67CA63B6CB763CE7FF9FD8 /* DiagnosticsFeature.swift in Sources */ = {isa = PBXBuildFile; fileRef = F985AA318869C8870BDA6187 /* DiagnosticsFeature.swift */; };
 		F128A068B4197FBB8CFCD9B0 /* CatalogAndProgramDetailsFeatureTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FE69D7DA6EBA76E277ABD6C7 /* CatalogAndProgramDetailsFeatureTests.swift */; };
 		F12AF47E2E6A7061D391E5F6 /* FFCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4D6772D2C40BCF7FEB3C45C /* FFCard.swift */; };
@@ -117,6 +118,7 @@
 		E190F6607FF86AE368CDC6DC /* FFBadge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFBadge.swift; sourceTree = "<group>"; };
 		E1984067FE9FCB6709C5D963 /* MockURLProtocol.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MockURLProtocol.swift; sourceTree = "<group>"; };
 		E40B5498BB99116B3021C4E4 /* FFEmptyState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFEmptyState.swift; sourceTree = "<group>"; };
+		E4EE124DB6FA8A5986B4A1F8 /* FFRemoteImage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFRemoteImage.swift; sourceTree = "<group>"; };
 		E893C9F1C635E60DF987C7E9 /* ProgramDetailsFeature.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProgramDetailsFeature.swift; sourceTree = "<group>"; };
 		ED3B939F25D70B624ECD73AC /* APILogger.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APILogger.swift; sourceTree = "<group>"; };
 		F4BA13F15E04E7DE0985E8C3 /* SessionManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionManager.swift; sourceTree = "<group>"; };
@@ -271,6 +273,7 @@
 				E40B5498BB99116B3021C4E4 /* FFEmptyState.swift */,
 				151CCFD42F23601C4661B789 /* FFErrorState.swift */,
 				2C571FBEBDFDA288B1E05B14 /* FFLoadingState.swift */,
+				E4EE124DB6FA8A5986B4A1F8 /* FFRemoteImage.swift */,
 				B202B94DE2C375FB67F019B3 /* FFTextField.swift */,
 			);
 			path = Components;
@@ -412,6 +415,7 @@
 				D0EDEA7F9D27535EA83A0F26 /* FFEmptyState.swift in Sources */,
 				47666B7411F0CE528FE8B1F4 /* FFErrorState.swift in Sources */,
 				5C6A1DDAACA62605B0E42581 /* FFLoadingState.swift in Sources */,
+				D7932E90DA35D8CD26261D66 /* FFRemoteImage.swift in Sources */,
 				F540D452CC4979E1CE3FDFED /* FFTextField.swift in Sources */,
 				C091B3E8CBC8FB1F8ABFDC95 /* FitfluenceApp.swift in Sources */,
 				A894EEF1CB87660C0CDB9600 /* HTTPClient.swift in Sources */,

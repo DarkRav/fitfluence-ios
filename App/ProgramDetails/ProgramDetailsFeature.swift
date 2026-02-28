@@ -106,8 +106,8 @@ private extension APIError {
             )
         case .unauthorized:
             UserFacingError(
-                title: "Сессия истекла",
-                message: "Войдите снова, чтобы продолжить.",
+                title: "Сессия истекла. Войдите снова.",
+                message: "Для продолжения нужно повторно авторизоваться.",
             )
         case .forbidden:
             UserFacingError(
@@ -122,7 +122,7 @@ private extension APIError {
         case .decodingError:
             UserFacingError(
                 title: "Ошибка данных",
-                message: "Не удалось обработать ответ сервера.",
+                message: "Не удалось обработать ответ сервера",
             )
         default:
             UserFacingError(

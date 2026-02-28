@@ -56,15 +56,8 @@ struct ProgramDetailsView: View {
         FFCard {
             VStack(alignment: .leading, spacing: FFSpacing.sm) {
                 if let imageURL = resolveImageURL(details.cover?.url ?? details.media?.first?.url) {
-                    AsyncImage(url: imageURL) { phase in
-                        switch phase {
-                        case let .success(image):
-                            image
-                                .resizable()
-                                .scaledToFill()
-                        default:
-                            placeholderImage
-                        }
+                    FFRemoteImage(url: imageURL) {
+                        placeholderImage
                     }
                     .frame(height: 220)
                     .frame(maxWidth: .infinity)
@@ -157,6 +150,7 @@ struct ProgramDetailsView: View {
                 action: { viewStore.send(.startProgramTapped) },
             )
             .accessibilityLabel("Начать программу")
+            .accessibilityHint("Создаст активное прохождение программы для вашего профиля")
         } else {
             FFCard {
                 Text("Скоро можно будет начать программу в приложении.")

@@ -129,11 +129,24 @@ private struct MainTabsView: View {
     let me: MeResponse
     let onLogout: () -> Void
 
+    private struct ViewState: Equatable {
+        var selectedTab: RootFeature.MainTab
+        var isProgramDetailsPresented: Bool
+    }
+
     var body: some View {
-        WithViewStore(store, observe: { $0.selectedMainTab }) { viewStore in
+        WithViewStore(
+            store,
+            observe: {
+                ViewState(
+                    selectedTab: $0.selectedMainTab,
+                    isProgramDetailsPresented: $0.programDetails != nil,
+                )
+            },
+        ) { viewStore in
             TabView(
                 selection: Binding(
-                    get: { viewStore.state },
+                    get: { viewStore.selectedTab },
                     set: { store.send(.tabSelected($0)) },
                 ),
             ) {
@@ -148,7 +161,7 @@ private struct MainTabsView: View {
                     .navigationTitle("Каталог")
                     .navigationDestination(
                         isPresented: Binding(
-                            get: { store.withState { $0.programDetails != nil } },
+                            get: { viewStore.isProgramDetailsPresented },
                             set: { isPresented in
                                 if !isPresented {
                                     store.send(.programDetailsDismissed)

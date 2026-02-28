@@ -46,6 +46,10 @@ struct CatalogView: View {
                                     }
                                 }
                             }
+
+                            if viewStore.isLoading {
+                                FFLoadingState(title: "Загружаем ещё программы")
+                            }
                         }
                     }
                 }
@@ -75,15 +79,8 @@ struct CatalogView: View {
             FFCard {
                 VStack(alignment: .leading, spacing: FFSpacing.sm) {
                     if let imageURL = resolvedImageURL(from: program.coverURL) {
-                        AsyncImage(url: imageURL) { phase in
-                            switch phase {
-                            case let .success(image):
-                                image
-                                    .resizable()
-                                    .scaledToFill()
-                            default:
-                                placeholderImage
-                            }
+                        FFRemoteImage(url: imageURL) {
+                            placeholderImage
                         }
                         .frame(height: 180)
                         .frame(maxWidth: .infinity)
@@ -128,6 +125,7 @@ struct CatalogView: View {
         .buttonStyle(.plain)
         .frame(minHeight: 44)
         .accessibilityLabel("Открыть программу \(program.title)")
+        .accessibilityHint("Откроет детальную страницу программы")
     }
 
     private var placeholderImage: some View {
