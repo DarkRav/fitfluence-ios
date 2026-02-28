@@ -276,6 +276,7 @@ private struct WorkoutLaunchView: View {
     @State private var details: WorkoutDetailsModel?
     @State private var error: UserFacingError?
     @State private var isLoading = false
+    @State private var completionSummary: WorkoutPlayerViewModel.CompletionSummary?
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -291,7 +292,9 @@ private struct WorkoutLaunchView: View {
                         workout: details,
                     ),
                     onExit: { dismiss() },
-                    onFinish: { dismiss() },
+                    onFinish: { summary in
+                        completionSummary = summary
+                    },
                 )
             } else if let error {
                 FFErrorState(
@@ -312,6 +315,13 @@ private struct WorkoutLaunchView: View {
         .navigationBarTitleDisplayMode(.inline)
         .task {
             await load()
+        }
+        .sheet(item: $completionSummary) { summary in
+            WorkoutCompletionViewV2(summary: summary) {
+                completionSummary = nil
+                dismiss()
+            }
+            .presentationDetents([.medium])
         }
     }
 
@@ -344,6 +354,12 @@ private struct WorkoutLaunchView: View {
         } else if error == nil {
             error = UserFacingError(title: "Нет данных тренировки", message: "Откройте тренировку из плана при подключении к сети.")
         }
+    }
+}
+
+extension WorkoutPlayerViewModel.CompletionSummary: Identifiable {
+    var id: String {
+        "\(workoutTitle)-\(completedSets)-\(totalSets)"
     }
 }
 

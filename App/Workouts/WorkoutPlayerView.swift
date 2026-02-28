@@ -457,6 +457,14 @@ final class RestTimerModel {
 @Observable
 @MainActor
 final class WorkoutPlayerViewModel {
+    struct CompletionSummary: Equatable, Sendable {
+        let workoutTitle: String
+        let completedExercises: Int
+        let totalExercises: Int
+        let completedSets: Int
+        let totalSets: Int
+    }
+
     private(set) var session: WorkoutSessionState?
     private let sessionManager: WorkoutSessionManager
     private let workout: WorkoutDetailsModel
@@ -468,6 +476,7 @@ final class WorkoutPlayerViewModel {
     var isExitConfirmationPresented = false
     var isFinished = false
     var toastMessage: String?
+    var completionSummary: CompletionSummary?
 
     init(
         userSub: String,
@@ -556,6 +565,16 @@ final class WorkoutPlayerViewModel {
 
     func finish() async {
         guard let session else { return }
+        let completedExercises = session.exercises.filter { exercise in
+            !exercise.isSkipped && exercise.sets.contains(where: \.isCompleted)
+        }.count
+        completionSummary = CompletionSummary(
+            workoutTitle: workout.title,
+            completedExercises: completedExercises,
+            totalExercises: workout.exercises.count,
+            completedSets: session.completedSetsCount,
+            totalSets: session.totalSetsCount,
+        )
         await sessionManager.finish(session)
         isFinished = true
     }
@@ -597,7 +616,7 @@ final class WorkoutPlayerViewModel {
 struct WorkoutPlayerViewV2: View {
     @State var viewModel: WorkoutPlayerViewModel
     let onExit: () -> Void
-    let onFinish: () -> Void
+    let onFinish: (WorkoutPlayerViewModel.CompletionSummary) -> Void
 
     var body: some View {
         VStack(spacing: 0) {
@@ -628,7 +647,9 @@ struct WorkoutPlayerViewV2: View {
             Text("Прогресс сохранится на устройстве.")
         }
         .onChange(of: viewModel.isFinished) { _, isFinished in
-            if isFinished { onFinish() }
+            if isFinished, let summary = viewModel.completionSummary {
+                onFinish(summary)
+            }
         }
         .overlay(alignment: .top) {
             if let message = viewModel.toastMessage {
@@ -806,6 +827,46 @@ struct WorkoutPlayerViewV2: View {
     }
 }
 
+struct WorkoutCompletionViewV2: View {
+    let summary: WorkoutPlayerViewModel.CompletionSummary
+    let onDone: () -> Void
+
+    var body: some View {
+        VStack(spacing: FFSpacing.md) {
+            FFCard {
+                VStack(alignment: .leading, spacing: FFSpacing.xs) {
+                    Text("Тренировка завершена")
+                        .font(FFTypography.h1)
+                        .foregroundStyle(FFColors.textPrimary)
+                    Text(summary.workoutTitle)
+                        .font(FFTypography.body)
+                        .foregroundStyle(FFColors.textSecondary)
+                }
+            }
+
+            FFCard {
+                VStack(alignment: .leading, spacing: FFSpacing.xs) {
+                    Text("Итог")
+                        .font(FFTypography.h2)
+                        .foregroundStyle(FFColors.textPrimary)
+                    Text("Упражнений: \(summary.completedExercises) из \(summary.totalExercises)")
+                        .font(FFTypography.body)
+                        .foregroundStyle(FFColors.textSecondary)
+                    Text("Подходов: \(summary.completedSets) из \(summary.totalSets)")
+                        .font(FFTypography.body)
+                        .foregroundStyle(FFColors.textSecondary)
+                }
+            }
+
+            FFButton(title: "Готово", variant: .primary, action: onDone)
+            Spacer()
+        }
+        .padding(.horizontal, FFSpacing.md)
+        .padding(.vertical, FFSpacing.md)
+        .background(FFColors.background)
+    }
+}
+
 #Preview("Workout Player V2") {
     NavigationStack {
         WorkoutPlayerViewV2(
@@ -833,7 +894,7 @@ struct WorkoutPlayerViewV2: View {
                 ),
             ),
             onExit: {},
-            onFinish: {},
+            onFinish: { _ in },
         )
     }
 }
