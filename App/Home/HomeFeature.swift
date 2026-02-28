@@ -23,6 +23,9 @@ struct HomeFeature {
             }
 
             if let workoutTitle, !workoutTitle.isEmpty {
+                if session.status == .inProgress, let currentExerciseIndex = session.currentExerciseIndex {
+                    return "\(workoutTitle) · упражнение \(currentExerciseIndex + 1)"
+                }
                 return workoutTitle
             }
 
@@ -91,10 +94,15 @@ struct HomeFeature {
                         as: WorkoutDetailsModel.self,
                         namespace: userSub,
                     )
+                    let workouts = await cacheStore.get(
+                        "workouts.list:\(programId)",
+                        as: [WorkoutSummary].self,
+                        namespace: userSub,
+                    )
                     await send(
                         .titlesLoaded(
                             programTitle: program?.title,
-                            workoutTitle: workout?.title,
+                            workoutTitle: workout?.title ?? workouts?.first(where: { $0.id == workoutId })?.title,
                         ),
                     )
                 }

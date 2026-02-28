@@ -119,7 +119,12 @@ actor LocalWorkoutProgressStore: WorkoutProgressStore {
                 return try? JSONDecoder().decode(WorkoutProgressSnapshot.self, from: data)
             }
             .filter { $0.status == .inProgress || ($0.status == .notStarted && !$0.isFinished) }
-            .sorted(by: { $0.lastUpdated > $1.lastUpdated })
+            .sorted {
+                if $0.status != $1.status {
+                    return $0.status == .inProgress
+                }
+                return $0.lastUpdated > $1.lastUpdated
+            }
 
         guard let snapshot = snapshots.first else { return nil }
         return ActiveWorkoutSession(

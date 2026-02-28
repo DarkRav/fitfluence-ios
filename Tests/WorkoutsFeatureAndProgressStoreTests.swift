@@ -333,6 +333,47 @@ final class WorkoutsFeatureAndProgressStoreTests: XCTestCase {
         XCTAssertEqual(status, .inProgress)
     }
 
+    func testLatestActiveSessionPrefersInProgressOverNewerNotStarted() async throws {
+        let suiteName = "fitfluence.tests.progress.latest.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let store = LocalWorkoutProgressStore(defaults: defaults)
+        let inProgress = WorkoutProgressSnapshot(
+            userSub: "u1",
+            programId: "p1",
+            workoutId: "w1",
+            currentExerciseIndex: 2,
+            isFinished: false,
+            lastUpdated: Date().addingTimeInterval(-60),
+            exercises: [
+                "ex-1": StoredExerciseProgress(sets: [
+                    StoredSetProgress(isCompleted: true, repsText: "", weightText: "", rpeText: ""),
+                ]),
+            ],
+        )
+        let notStarted = WorkoutProgressSnapshot(
+            userSub: "u1",
+            programId: "p1",
+            workoutId: "w2",
+            currentExerciseIndex: 0,
+            isFinished: false,
+            lastUpdated: Date(),
+            exercises: [
+                "ex-2": StoredExerciseProgress(sets: [
+                    StoredSetProgress(isCompleted: false, repsText: "", weightText: "", rpeText: ""),
+                ]),
+            ],
+        )
+
+        await store.save(inProgress)
+        await store.save(notStarted)
+
+        let latest = await store.latestActiveSession(userSub: "u1")
+        XCTAssertEqual(latest?.workoutId, "w1")
+        XCTAssertEqual(latest?.status, .inProgress)
+    }
+
     private var sampleWorkoutDetails: WorkoutDetailsModel {
         WorkoutDetailsModel(
             id: "w1",
