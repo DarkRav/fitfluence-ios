@@ -103,7 +103,7 @@ struct ProgramDetailsFeature {
                             return .none
                         }
                     }
-                    state.error = apiError.userFacingError
+                    state.error = apiError.userFacing(context: .programDetails)
                 }
                 return .none
 
@@ -132,7 +132,7 @@ struct ProgramDetailsFeature {
                 case .success:
                     state.successMessage = "Программа успешно начата."
                 case let .failure(apiError):
-                    state.error = apiError.userFacingError
+                    state.error = apiError.userFacing(context: .programDetails)
                 }
                 return .none
 
@@ -233,42 +233,5 @@ struct ProgramDetailsFeature {
 
     private func cacheKey(programId: String) -> String {
         "program.details:\(programId)"
-    }
-}
-
-private extension APIError {
-    var userFacingError: UserFacingError {
-        switch self {
-        case .offline:
-            UserFacingError(
-                title: "Нет подключения к интернету",
-                message: "Проверьте сеть и попробуйте снова.",
-            )
-        case .unauthorized:
-            UserFacingError(
-                title: "Сессия истекла. Войдите снова.",
-                message: "Для продолжения нужно повторно авторизоваться.",
-            )
-        case .forbidden:
-            UserFacingError(
-                title: "Доступ запрещён",
-                message: "Недостаточно прав для просмотра программы.",
-            )
-        case .serverError:
-            UserFacingError(
-                title: "Сервис временно недоступен",
-                message: "Попробуйте открыть программу чуть позже.",
-            )
-        case .decodingError:
-            UserFacingError(
-                title: "Ошибка данных",
-                message: "Не удалось обработать ответ сервера",
-            )
-        default:
-            UserFacingError(
-                title: "Не удалось загрузить программу",
-                message: "Попробуйте ещё раз через несколько секунд.",
-            )
-        }
     }
 }

@@ -121,7 +121,7 @@ struct WorkoutsListFeature {
                         state.isShowingCachedData = true
                         return .none
                     }
-                    state.error = error.workoutsUserFacingError
+                    state.error = error.userFacing(context: .workoutsList)
                     return .none
                 }
 
@@ -158,32 +158,5 @@ struct WorkoutsListFeature {
 
     private func cacheKey(programId: String) -> String {
         "workouts.list:\(programId)"
-    }
-}
-
-private extension APIError {
-    var workoutsUserFacingError: UserFacingError {
-        switch self {
-        case .offline:
-            UserFacingError(
-                title: "Нет подключения к интернету",
-                message: "Проверьте сеть и попробуйте снова.",
-            )
-        case .serverError, .transportError, .timeout:
-            UserFacingError(
-                title: "Сервис временно недоступен",
-                message: "Попробуйте обновить список тренировок чуть позже.",
-            )
-        case .decodingError:
-            UserFacingError(
-                title: "Ошибка данных",
-                message: "Не удалось обработать ответ сервера",
-            )
-        default:
-            UserFacingError(
-                title: "Не удалось загрузить тренировки",
-                message: "Повторите попытку.",
-            )
-        }
     }
 }

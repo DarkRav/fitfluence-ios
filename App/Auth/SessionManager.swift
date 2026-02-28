@@ -9,6 +9,7 @@ enum RootSessionState: Equatable, Sendable {
 }
 
 struct UserFacingError: Equatable, Sendable {
+    var kind: UserFacingErrorKind = .unknown
     let title: String
     let message: String
 }

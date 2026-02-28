@@ -144,7 +144,7 @@ struct WorkoutPlayerFeature {
                         state.isShowingCachedData = true
                         return .none
                     }
-                    state.error = error.workoutPlayerUserFacingError
+                    state.error = error.userFacing(context: .workoutPlayer)
                     return .none
                 }
 
@@ -321,32 +321,5 @@ struct WorkoutPlayerFeature {
 
     private func cacheKey(programId: String, workoutId: String) -> String {
         "workout.details:\(programId):\(workoutId)"
-    }
-}
-
-private extension APIError {
-    var workoutPlayerUserFacingError: UserFacingError {
-        switch self {
-        case .offline:
-            UserFacingError(
-                title: "Нет подключения к интернету",
-                message: "Проверьте соединение и откройте тренировку снова.",
-            )
-        case .serverError, .transportError, .timeout:
-            UserFacingError(
-                title: "Сервис временно недоступен",
-                message: "Не удалось загрузить детали тренировки.",
-            )
-        case .decodingError:
-            UserFacingError(
-                title: "Ошибка данных",
-                message: "Не удалось обработать ответ сервера",
-            )
-        default:
-            UserFacingError(
-                title: "Ошибка загрузки",
-                message: "Тренировку пока не удалось открыть.",
-            )
-        }
     }
 }

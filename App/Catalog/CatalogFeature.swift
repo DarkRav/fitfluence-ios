@@ -201,7 +201,7 @@ struct CatalogFeature {
                         }
                     }
 
-                    state.error = apiError.userFacingError
+                    state.error = apiError.userFacing(context: .catalog)
                     if !append {
                         state.programs = []
                     }
@@ -237,42 +237,5 @@ struct CatalogFeature {
 
     private func cacheKey(query: String, page: Int) -> String {
         "programs.list?q=\(query)&page=\(page)"
-    }
-}
-
-private extension APIError {
-    var userFacingError: UserFacingError {
-        switch self {
-        case .offline:
-            UserFacingError(
-                title: "Нет подключения к интернету",
-                message: "Проверьте сеть и попробуйте снова.",
-            )
-        case .unauthorized:
-            UserFacingError(
-                title: "Сессия истекла. Войдите снова.",
-                message: "Для продолжения нужно повторно авторизоваться.",
-            )
-        case .forbidden:
-            UserFacingError(
-                title: "Доступ запрещён",
-                message: "У вас нет прав для просмотра каталога.",
-            )
-        case .serverError:
-            UserFacingError(
-                title: "Сервис временно недоступен",
-                message: "Попробуйте открыть каталог чуть позже.",
-            )
-        case .decodingError:
-            UserFacingError(
-                title: "Ошибка данных",
-                message: "Не удалось обработать ответ сервера",
-            )
-        default:
-            UserFacingError(
-                title: "Не удалось загрузить каталог",
-                message: "Попробуйте ещё раз через несколько секунд.",
-            )
-        }
     }
 }
