@@ -41,6 +41,7 @@ struct RootView: View {
                             environment: environment,
                             apiClient: apiClient,
                             me: userContext.me,
+                            isOnline: viewStore.isOnline,
                             onLogout: { viewStore.send(.logoutTapped) },
                         )
 
@@ -110,6 +111,7 @@ private struct MainTabsView: View {
     let environment: AppEnvironment
     let apiClient: APIClientProtocol?
     let me: MeResponse
+    let isOnline: Bool
     let onLogout: () -> Void
 
     var body: some View {
@@ -118,6 +120,7 @@ private struct MainTabsView: View {
             environment: environment,
             apiClient: apiClient,
             me: me,
+            isOnline: isOnline,
             onLogout: onLogout,
         )
     }
@@ -128,6 +131,7 @@ private struct AthleteShellView: View {
     let environment: AppEnvironment
     let apiClient: APIClientProtocol?
     let me: MeResponse
+    let isOnline: Bool
     let onLogout: () -> Void
 
     @State private var selectedTab: ShellTab = .today
@@ -175,15 +179,12 @@ private struct AthleteShellView: View {
             .tag(ShellTab.progress)
 
             NavigationStack {
-                ProfilePlaceholderView(
+                ProfileTabView(
                     me: me,
                     userSub: me.subject ?? "anonymous",
+                    isOnline: isOnline,
                     onLogout: onLogout,
                 )
-                .padding(.horizontal, FFSpacing.md)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-                .background(FFColors.background)
-                .navigationTitle("Профиль")
             }
             .tabItem {
                 Label("Профиль", systemImage: "person.crop.circle")
@@ -473,68 +474,31 @@ private struct ProgressTabView: View {
     }
 }
 
-private struct ProfilePlaceholderView: View {
+private struct ProfileTabView: View {
     let me: MeResponse
     let userSub: String
+    let isOnline: Bool
     let onLogout: () -> Void
-    @State private var storageMB = "0.0"
-    @State private var streakDays = 0
-    @State private var lastWorkoutText = "—"
+    @State private var viewModel: ProfileViewModel
+
+    init(me: MeResponse, userSub: String, isOnline: Bool, onLogout: @escaping () -> Void) {
+        self.me = me
+        self.userSub = userSub
+        self.isOnline = isOnline
+        self.onLogout = onLogout
+        _viewModel = State(
+            initialValue: ProfileViewModel(
+                me: me,
+                userSub: userSub,
+                isOnline: isOnline,
+            ),
+        )
+    }
 
     var body: some View {
-        VStack(spacing: FFSpacing.md) {
-            FFCard {
-                VStack(alignment: .leading, spacing: FFSpacing.xs) {
-                    Text("Пользователь")
-                        .font(FFTypography.h2)
-                        .foregroundStyle(FFColors.textPrimary)
-                    Text(me.email ?? "Email не предоставлен")
-                        .font(FFTypography.body)
-                        .foregroundStyle(FFColors.textSecondary)
-                    Text("ID: \(userSub)")
-                        .font(FFTypography.caption)
-                        .foregroundStyle(FFColors.gray300)
-                }
+        ProfileScreen(viewModel: viewModel, onLogout: onLogout)
+            .onChange(of: isOnline) { _, online in
+                viewModel.updateNetworkStatus(online)
             }
-
-            FFCard {
-                VStack(alignment: .leading, spacing: FFSpacing.xs) {
-                    Text("Синхронизация и данные")
-                        .font(FFTypography.h2)
-                        .foregroundStyle(FFColors.textPrimary)
-                    Text("Синхронизация: онлайн при доступности сети")
-                        .font(FFTypography.body)
-                        .foregroundStyle(FFColors.textSecondary)
-                    Text("Локальное хранилище: \(storageMB) МБ")
-                        .font(FFTypography.caption)
-                        .foregroundStyle(FFColors.textSecondary)
-                    Text("Серия тренировок: \(streakDays) дн")
-                        .font(FFTypography.caption)
-                        .foregroundStyle(FFColors.textSecondary)
-                    Text("Последняя тренировка: \(lastWorkoutText)")
-                        .font(FFTypography.caption)
-                        .foregroundStyle(FFColors.textSecondary)
-                }
-            }
-
-            FFButton(title: "Выйти", variant: .secondary, action: onLogout)
-
-            Spacer()
-        }
-        .padding(.top, FFSpacing.md)
-        .task {
-            let store = LocalTrainingStore()
-            let size = await store.storageSizeBytes(userSub: userSub)
-            storageMB = String(format: "%.2f", Double(size) / (1024 * 1024))
-            let weekStart = Calendar.current.date(from: Calendar.current.dateComponents(
-                [.yearForWeekOfYear, .weekOfYear],
-                from: Date(),
-            )) ?? Date()
-            let summary = await store.weeklySummary(userSub: userSub, weekStart: weekStart)
-            streakDays = summary.streakDays
-            if let last = await store.lastCompleted(userSub: userSub) {
-                lastWorkoutText = last.finishedAt.formatted(date: .abbreviated, time: .shortened)
-            }
-        }
     }
 }
