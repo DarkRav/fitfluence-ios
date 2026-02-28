@@ -177,13 +177,18 @@ private extension APIError {
     var loginFailureMessage: String {
         switch self {
         case .timeout, .offline:
-            "Не удалось связаться с сервером авторизации. Проверьте сеть и адрес Keycloak."
+            return "Не удалось связаться с сервером авторизации. Проверьте сеть и адрес Keycloak."
         case .invalidURL:
-            "Некорректная конфигурация URL авторизации. Проверьте настройки окружения."
+            return "Некорректная конфигурация URL авторизации. Проверьте настройки окружения."
         case .unauthorized, .forbidden:
-            "Клиент авторизации отклонён. Проверьте clientId, redirect URI и настройки в Keycloak."
+            return "Клиент авторизации отклонён. Проверьте clientId, redirect URI и настройки в Keycloak."
+        case let .httpError(statusCode, bodySnippet):
+            if statusCode == 400, bodySnippet?.contains("invalid_scope") == true {
+                return "Сервер авторизации отклонил scopes. Проверьте KEYCLOAK_SCOPES в Dev.xcconfig."
+            }
+            return "Сервер авторизации вернул ошибку \(statusCode). Проверьте настройки клиента в Keycloak."
         default:
-            "Не удалось выполнить вход через Keycloak. Проверьте настройки клиента и HTTPS для auth-сервера."
+            return "Не удалось выполнить вход через Keycloak. Проверьте настройки клиента и HTTPS для auth-сервера."
         }
     }
 }

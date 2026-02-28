@@ -202,6 +202,13 @@ final class AuthService: NSObject, AuthServiceProtocol, @unchecked Sendable {
                         return
                     }
 
+                    if error.domain == OIDOAuthAuthorizationErrorDomain,
+                       error.code == OIDErrorCodeOAuth.invalidScope.rawValue
+                    {
+                        resumeOnce(.failure(.httpError(statusCode: 400, bodySnippet: "invalid_scope")))
+                        return
+                    }
+
                     if error.domain == ASWebAuthenticationSessionErrorDomain,
                        error.code == ASWebAuthenticationSessionError.canceledLogin.rawValue
                     {
