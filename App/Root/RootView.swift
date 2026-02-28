@@ -25,14 +25,12 @@ struct RootView: View {
                         FFLoadingState(title: "Проверяем сессию")
                             .padding(.horizontal, FFSpacing.md)
 
-                    case let .needsOnboarding(context):
+                    case .needsOnboarding:
                         if let onboardingStore = store.scope(state: \.onboarding, action: \.onboarding) {
-                            OnboardingView(
-                                store: onboardingStore,
-                            )
-                            .padding(.horizontal, FFSpacing.md)
+                            OnboardingView(store: onboardingStore)
+                                .padding(.horizontal, FFSpacing.md)
                         } else {
-                            OnboardingGateView(context: context)
+                            FFLoadingState(title: "Подготавливаем профиль")
                                 .padding(.horizontal, FFSpacing.md)
                         }
 
@@ -88,7 +86,7 @@ private struct AuthEntryView: View {
                     Text("Добро пожаловать")
                         .font(FFTypography.h1)
                         .foregroundStyle(FFColors.textPrimary)
-                    Text("Войдите, чтобы продолжить работу в Fitfluence.")
+                    Text("Войдите, чтобы начать тренировки в Fitfluence.")
                         .font(FFTypography.body)
                         .foregroundStyle(FFColors.textSecondary)
                 }
@@ -107,36 +105,6 @@ private struct AuthEntryView: View {
             Spacer()
         }
         .padding(.horizontal, FFSpacing.md)
-        .padding(.top, FFSpacing.lg)
-    }
-}
-
-private struct OnboardingGateView: View {
-    let context: OnboardingContext
-
-    var body: some View {
-        VStack(spacing: FFSpacing.md) {
-            FFCard {
-                VStack(alignment: .leading, spacing: FFSpacing.xs) {
-                    Text("Создание профиля")
-                        .font(FFTypography.h2)
-                        .foregroundStyle(FFColors.textPrimary)
-                    Text("Подготавливаем форму для создания профиля.")
-                        .font(FFTypography.body)
-                        .foregroundStyle(FFColors.textSecondary)
-                    if context.requiredProfiles.requiresAthleteProfile {
-                        FFBadge(status: .draft)
-                    }
-                }
-            }
-
-            FFEmptyState(
-                title: "Нужно завершить создание профиля",
-                message: "Сейчас откроется шаг выбора: атлет или инфлюэнсер.",
-            )
-
-            Spacer()
-        }
         .padding(.top, FFSpacing.lg)
     }
 }
@@ -202,18 +170,6 @@ private struct MainTabsView: View {
                 .tag(RootFeature.MainTab.catalog)
 
                 NavigationStack {
-                    WorkoutsPlaceholderView()
-                        .padding(.horizontal, FFSpacing.md)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-                        .background(FFColors.background)
-                        .navigationTitle("Мои тренировки")
-                }
-                .tabItem {
-                    Label("Мои тренировки", systemImage: "figure.run")
-                }
-                .tag(RootFeature.MainTab.workouts)
-
-                NavigationStack {
                     ProfilePlaceholderView(me: me, onLogout: onLogout)
                         .padding(.horizontal, FFSpacing.md)
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
@@ -224,42 +180,9 @@ private struct MainTabsView: View {
                     Label("Профиль", systemImage: "person.crop.circle")
                 }
                 .tag(RootFeature.MainTab.profile)
-
-                #if DEBUG
-                NavigationStack {
-                    DiagnosticsView(
-                        store: store.scope(
-                            state: \.diagnostics,
-                            action: \.diagnostics,
-                        ),
-                    )
-                    .padding(.horizontal, FFSpacing.md)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-                    .background(FFColors.background)
-                    .navigationTitle("Диагностика")
-                }
-                .tabItem {
-                    Label("Диагностика", systemImage: "waveform.path.ecg")
-                }
-                .tag(RootFeature.MainTab.diagnostics)
-                #endif
             }
             .tint(FFColors.accent)
         }
-    }
-}
-
-private struct WorkoutsPlaceholderView: View {
-    var body: some View {
-        VStack(spacing: FFSpacing.md) {
-            FFLoadingState(title: "Готовим ваши тренировки")
-            FFCard {
-                Text("Пока этот раздел недоступен. Открывайте тренировки из карточки программы в каталоге.")
-                    .font(FFTypography.body)
-                    .foregroundStyle(FFColors.textSecondary)
-            }
-        }
-        .padding(.top, FFSpacing.md)
     }
 }
 

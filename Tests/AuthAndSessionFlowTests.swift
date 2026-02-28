@@ -17,14 +17,14 @@ final class AuthAndSessionFlowTests: XCTestCase {
         XCTAssertFalse(context.requiredProfiles.requiresInfluencerProfile)
     }
 
-    func testOnboardingInitialStepShowsChoiceWhenBothProfilesRequired() {
+    func testOnboardingInitialStateIsAthleteOnly() {
         let context = OnboardingContext(
             me: sampleMe(requiresAthlete: true, requiresInfluencer: true),
             requiredProfiles: RequiredProfiles(requiresAthleteProfile: true, requiresInfluencerProfile: true),
         )
 
         let state = OnboardingFeature.State(context: context)
-        XCTAssertEqual(state.step, .choice)
+        XCTAssertEqual(state.athleteDisplayName, "")
     }
 
     @MainActor
@@ -41,13 +41,11 @@ final class AuthAndSessionFlowTests: XCTestCase {
         ))) {
             OnboardingFeature(
                 athleteClient: athleteClient,
-                influencerClient: nil,
                 sessionManager: manager,
             )
         }
 
         await store.send(.athleteDisplayNameChanged("Alex")) { $0.athleteDisplayName = "Alex" }
-        await store.send(.athleteGoalChanged("Сила")) { $0.athleteGoal = "Сила" }
 
         await store.send(.createAthleteTapped) {
             $0.isSubmitting = true

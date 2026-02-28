@@ -64,7 +64,7 @@ final class SessionManager: SessionManaging, @unchecked Sendable {
         case let .success(me):
             let requiredProfiles = me.requiredProfilesForSession
 
-            if requiredProfiles.requiresAthleteProfile || requiredProfiles.requiresInfluencerProfile {
+            if requiredProfiles.requiresAthleteProfile {
                 return .needsOnboarding(
                     OnboardingContext(me: me, requiredProfiles: requiredProfiles),
                 )

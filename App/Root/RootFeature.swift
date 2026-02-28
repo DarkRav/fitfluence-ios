@@ -9,7 +9,6 @@ struct RootFeature {
     private let cacheStore: CacheStore
     private let networkMonitor: NetworkMonitoring
     private let athleteClient: AthleteProfileClientProtocol?
-    private let influencerClient: InfluencerProfileClientProtocol?
 
     init(
         sessionManager: SessionManaging,
@@ -26,7 +25,6 @@ struct RootFeature {
         self.cacheStore = cacheStore
         self.networkMonitor = networkMonitor
         athleteClient = apiClient as? AthleteProfileClientProtocol
-        influencerClient = apiClient as? InfluencerProfileClientProtocol
     }
 
     @ObservableState
@@ -34,7 +32,6 @@ struct RootFeature {
         var hasBootstrapped = false
         var isOnline = true
         var sessionState: RootSessionState = .authenticating
-        var diagnostics = DiagnosticsFeature.State()
         var catalog = CatalogFeature.State()
         var programDetails: ProgramDetailsFeature.State?
         var selectedMainTab: MainTab = .catalog
@@ -43,11 +40,7 @@ struct RootFeature {
 
     enum MainTab: Hashable {
         case catalog
-        case workouts
         case profile
-        #if DEBUG
-        case diagnostics
-        #endif
     }
 
     enum Action: Equatable {
@@ -57,7 +50,6 @@ struct RootFeature {
         case logoutTapped
         case networkStatusChanged(Bool)
         case sessionResolved(RootSessionState)
-        case diagnostics(DiagnosticsFeature.Action)
         case onboarding(OnboardingFeature.Action)
         case catalog(CatalogFeature.Action)
         case programDetails(ProgramDetailsFeature.Action)
@@ -70,34 +62,17 @@ struct RootFeature {
     }
 
     var body: some ReducerOf<Self> {
-        Scope(state: \.diagnostics, action: \.diagnostics) {
-            DiagnosticsFeature(apiClient: apiClient)
-        }
-        .ifLet(\.onboarding, action: \.onboarding) { [athleteClient, influencerClient, sessionManager] in
-            OnboardingFeature(
-                athleteClient: athleteClient,
-                influencerClient: influencerClient,
-                sessionManager: sessionManager,
-            )
-        }
-        Scope(state: \.catalog, action: \.catalog) { [apiClient, cacheStore, networkMonitor] in
-            CatalogFeature(
-                programsClient: apiClient as? ProgramsClientProtocol,
-                cacheStore: cacheStore,
-                networkMonitor: networkMonitor,
-            )
-        }
-        .ifLet(\.programDetails, action: \.programDetails) { [apiClient, progressStore, cacheStore, networkMonitor] in
-            ProgramDetailsFeature(
-                programsClient: apiClient as? ProgramsClientProtocol,
-                progressStore: progressStore,
-                cacheStore: cacheStore,
-                networkMonitor: networkMonitor,
-            )
-        }
+        CombineReducers {
+            Scope(state: \.catalog, action: \.catalog) { [apiClient, cacheStore, networkMonitor] in
+                CatalogFeature(
+                    programsClient: apiClient as? ProgramsClientProtocol,
+                    cacheStore: cacheStore,
+                    networkMonitor: networkMonitor,
+                )
+            }
 
-        Reduce { state, action in
-            switch action {
+            Reduce { state, action in
+                switch action {
             case .onAppear:
                 guard !state.hasBootstrapped else { return .none }
                 state.hasBootstrapped = true
@@ -156,6 +131,7 @@ struct RootFeature {
                     state.catalog.cacheNamespace
                 }
                 state.sessionState = .authenticating
+                state.programDetails = nil
                 return .run { [sessionManager, cacheStore] send in
                     await cacheStore.clearAll(namespace: namespace)
                     let nextState = await sessionManager.logout()
@@ -175,16 +151,15 @@ struct RootFeature {
                 }
                 if case let .authenticated(context) = nextState {
                     state.catalog.cacheNamespace = context.me.subject ?? "anonymous"
+                    state.selectedMainTab = .catalog
                 } else if case .unauthenticated = nextState {
                     state.catalog.cacheNamespace = "anonymous"
+                    state.selectedMainTab = .catalog
                 }
                 return .none
 
             case let .tabSelected(tab):
                 state.selectedMainTab = tab
-                return .none
-
-            case .diagnostics:
                 return .none
 
             case let .catalog(.delegate(.openProgram(programID))):
@@ -215,8 +190,8 @@ struct RootFeature {
                     state.onboarding = OnboardingFeature.State(context: context)
                 } else {
                     state.onboarding = nil
-                    if case let .authenticated(userContext) = nextState {
-                        state.selectedMainTab = userContext.me.hasInfluencerProfile ? .profile : .catalog
+                    if case .authenticated = nextState {
+                        state.selectedMainTab = .catalog
                     }
                 }
                 return .none
@@ -224,6 +199,21 @@ struct RootFeature {
             case .onboarding:
                 return .none
             }
+            }
+        }
+        .ifLet(\.onboarding, action: \.onboarding) { [athleteClient, sessionManager] in
+            OnboardingFeature(
+                athleteClient: athleteClient,
+                sessionManager: sessionManager,
+            )
+        }
+        .ifLet(\.programDetails, action: \.programDetails) { [apiClient, progressStore, cacheStore, networkMonitor] in
+            ProgramDetailsFeature(
+                programsClient: apiClient as? ProgramsClientProtocol,
+                progressStore: progressStore,
+                cacheStore: cacheStore,
+                networkMonitor: networkMonitor,
+            )
         }
     }
 }
