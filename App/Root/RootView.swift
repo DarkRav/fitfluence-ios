@@ -1,49 +1,56 @@
-import SwiftUI
 import ComposableArchitecture
+import SwiftUI
 
 struct RootView: View {
-    @Bindable var store: StoreOf<RootFeature>
+    let store: StoreOf<RootFeature>
     let environment: AppEnvironment
 
     var body: some View {
-        TabView(selection: $store.selectedTab.sending(\RootFeature.Action.tabSelected)) {
-            NavigationStack {
-                CatalogPlaceholderView(environment: environment)
-                    .padding(.horizontal, FFSpacing.md)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-                    .background(FFColors.background)
-                    .navigationTitle("Каталог")
-            }
-            .tabItem {
-                Label("Каталог", systemImage: "sparkles.rectangle.stack")
-            }
-            .tag(RootFeature.Tab.catalog)
+        WithViewStore(store, observe: { $0 }) { viewStore in
+            TabView(
+                selection: Binding(
+                    get: { viewStore.selectedTab },
+                    set: { viewStore.send(.tabSelected($0)) },
+                ),
+            ) {
+                NavigationStack {
+                    CatalogPlaceholderView(environment: environment)
+                        .padding(.horizontal, FFSpacing.md)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                        .background(FFColors.background)
+                        .navigationTitle("Каталог")
+                }
+                .tabItem {
+                    Label("Каталог", systemImage: "sparkles.rectangle.stack")
+                }
+                .tag(RootFeature.Tab.catalog)
 
-            NavigationStack {
-                WorkoutsPlaceholderView()
-                    .padding(.horizontal, FFSpacing.md)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-                    .background(FFColors.background)
-                    .navigationTitle("Мои тренировки")
-            }
-            .tabItem {
-                Label("Мои тренировки", systemImage: "figure.run")
-            }
-            .tag(RootFeature.Tab.workouts)
+                NavigationStack {
+                    WorkoutsPlaceholderView()
+                        .padding(.horizontal, FFSpacing.md)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                        .background(FFColors.background)
+                        .navigationTitle("Мои тренировки")
+                }
+                .tabItem {
+                    Label("Мои тренировки", systemImage: "figure.run")
+                }
+                .tag(RootFeature.Tab.workouts)
 
-            NavigationStack {
-                ProfilePlaceholderView()
-                    .padding(.horizontal, FFSpacing.md)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-                    .background(FFColors.background)
-                    .navigationTitle("Профиль")
+                NavigationStack {
+                    ProfilePlaceholderView()
+                        .padding(.horizontal, FFSpacing.md)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                        .background(FFColors.background)
+                        .navigationTitle("Профиль")
+                }
+                .tabItem {
+                    Label("Профиль", systemImage: "person.crop.circle")
+                }
+                .tag(RootFeature.Tab.profile)
             }
-            .tabItem {
-                Label("Профиль", systemImage: "person.crop.circle")
-            }
-            .tag(RootFeature.Tab.profile)
+            .tint(FFColors.accent)
         }
-        .tint(FFColors.accent)
     }
 }
 
@@ -92,7 +99,7 @@ private struct ProfilePlaceholderView: View {
             FFErrorState(
                 title: "Профиль пока не настроен",
                 message: "Настройки и персонализация появятся на следующем этапе",
-                retryTitle: "Обновить"
+                retryTitle: "Обновить",
             )
             FFCard {
                 HStack {

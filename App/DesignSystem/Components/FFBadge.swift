@@ -9,33 +9,33 @@ struct FFBadge: View {
         var title: String {
             switch self {
             case .draft:
-                return "Черновик"
+                "Черновик"
             case .published:
-                return "Опубликовано"
+                "Опубликовано"
             case .archived:
-                return "В архиве"
+                "В архиве"
             }
         }
 
         var foreground: Color {
             switch self {
             case .draft:
-                return FFColors.background
+                FFColors.background
             case .published:
-                return FFColors.accent
+                FFColors.accent
             case .archived:
-                return FFColors.gray300
+                FFColors.gray300
             }
         }
 
         var background: Color {
             switch self {
             case .draft:
-                return FFColors.primary
+                FFColors.primary
             case .published:
-                return FFColors.accent.opacity(0.18)
+                FFColors.accent.opacity(0.18)
             case .archived:
-                return FFColors.gray700
+                FFColors.gray700
             }
         }
     }

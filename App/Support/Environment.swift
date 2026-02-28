@@ -11,10 +11,12 @@ struct AppEnvironment: Equatable {
         let rawBaseURL = (dictionary["BaseURL"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
         let rawKeycloakURL = (dictionary["KeycloakURL"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
 
+        let resolvedName = (name?.isEmpty == false ? name : nil) ?? "UNKNOWN"
+
         return AppEnvironment(
-            name: (name?.isEmpty == false ? name : "UNKNOWN"),
+            name: resolvedName,
             baseURL: URL(string: rawBaseURL ?? ""),
-            keycloakURL: URL(string: rawKeycloakURL ?? "")
+            keycloakURL: URL(string: rawKeycloakURL ?? ""),
         )
     }
 }

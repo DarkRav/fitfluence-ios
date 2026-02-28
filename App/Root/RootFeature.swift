@@ -20,7 +20,7 @@ struct RootFeature {
     var body: some ReducerOf<Self> {
         Reduce { state, action in
             switch action {
-            case .tabSelected(let tab):
+            case let .tabSelected(tab):
                 state.selectedTab = tab
                 return .none
             }

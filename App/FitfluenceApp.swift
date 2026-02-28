@@ -1,5 +1,5 @@
-import SwiftUI
 import ComposableArchitecture
+import SwiftUI
 
 @main
 struct FitfluenceApp: App {
@@ -15,7 +15,7 @@ struct FitfluenceApp: App {
                 store: Store(initialState: RootFeature.State()) {
                     RootFeature()
                 },
-                environment: environment
+                environment: environment,
             )
         }
     }

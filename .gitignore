@@ -3,3 +3,6 @@
 DerivedData
 .swiftpm
 Package.resolved
+*.xcuserstate
+xcuserdata/
+**/xcuserdata/

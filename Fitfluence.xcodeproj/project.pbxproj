@@ -25,6 +25,7 @@
 		D0EDEA7F9D27535EA83A0F26 /* FFEmptyState.swift in Sources */ = {isa = PBXBuildFile; fileRef = E40B5498BB99116B3021C4E4 /* FFEmptyState.swift */; };
 		F12AF47E2E6A7061D391E5F6 /* FFCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4D6772D2C40BCF7FEB3C45C /* FFCard.swift */; };
 		F540D452CC4979E1CE3FDFED /* FFTextField.swift in Sources */ = {isa = PBXBuildFile; fileRef = B202B94DE2C375FB67F019B3 /* FFTextField.swift */; };
+		F8D8480922CC1CB246C5C711 /* DesignSystemTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 94FD710E5EFA916159BCCE7D /* DesignSystemTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -51,6 +52,7 @@
 		87E0FAD6B3FC785EE59C774B /* Colors.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Colors.swift; sourceTree = "<group>"; };
 		8B5464E69784604F0C29B39C /* Prod.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Prod.xcconfig; sourceTree = "<group>"; };
 		9244A63DF5237F20107DDA2E /* Dev.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Dev.xcconfig; sourceTree = "<group>"; };
+		94FD710E5EFA916159BCCE7D /* DesignSystemTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DesignSystemTests.swift; sourceTree = "<group>"; };
 		967F2EF94A530FC0D94A6D5C /* PreviewMocks.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PreviewMocks.swift; sourceTree = "<group>"; };
 		A2E5D8994FEA468EC4504CD0 /* Typography.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Typography.swift; sourceTree = "<group>"; };
 		A97D9C4C6794471BA7C75525 /* FFButton.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFButton.swift; sourceTree = "<group>"; };
@@ -145,6 +147,7 @@
 		C61D88E577A786ED0C1385C5 /* Tests */ = {
 			isa = PBXGroup;
 			children = (
+				94FD710E5EFA916159BCCE7D /* DesignSystemTests.swift */,
 			);
 			path = Tests;
 			sourceTree = "<group>";
@@ -275,6 +278,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				F8D8480922CC1CB246C5C711 /* DesignSystemTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -307,7 +311,7 @@
 				);
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.fitfluence.ios;
-				PRODUCT_NAME = Fitfluence;
+				PRODUCT_NAME = FitfluenceApp;
 				SDKROOT = iphoneos;
 				SWIFT_VERSION = 5.1;
 				TARGETED_DEVICE_FAMILY = "1,2";
@@ -424,7 +428,7 @@
 				);
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.fitfluence.ios;
-				PRODUCT_NAME = Fitfluence;
+				PRODUCT_NAME = FitfluenceApp;
 				SDKROOT = iphoneos;
 				SWIFT_VERSION = 5.1;
 				TARGETED_DEVICE_FAMILY = "1,2";
@@ -586,7 +590,7 @@
 				);
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.fitfluence.ios;
-				PRODUCT_NAME = Fitfluence;
+				PRODUCT_NAME = FitfluenceApp;
 				SDKROOT = iphoneos;
 				SWIFT_VERSION = 5.1;
 				TARGETED_DEVICE_FAMILY = "1,2";

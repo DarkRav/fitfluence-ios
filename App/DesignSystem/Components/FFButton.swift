@@ -48,26 +48,26 @@ private struct FFButtonStyle: ButtonStyle {
     private var foregroundColor: Color {
         switch variant {
         case .primary:
-            return FFColors.background
+            FFColors.background
         case .secondary:
-            return FFColors.accent
+            FFColors.accent
         case .destructive:
-            return FFColors.textPrimary
+            FFColors.textPrimary
         case .disabled:
-            return FFColors.gray500
+            FFColors.gray500
         }
     }
 
     private func backgroundColor(configuration: Configuration) -> Color {
         switch variant {
         case .primary:
-            return configuration.isPressed ? FFColors.primary.opacity(0.85) : FFColors.primary
+            configuration.isPressed ? FFColors.primary.opacity(0.85) : FFColors.primary
         case .secondary:
-            return FFColors.surface
+            FFColors.surface
         case .destructive:
-            return configuration.isPressed ? FFColors.danger.opacity(0.85) : FFColors.danger
+            configuration.isPressed ? FFColors.danger.opacity(0.85) : FFColors.danger
         case .disabled:
-            return FFColors.gray700
+            FFColors.gray700
         }
     }
 }

@@ -47,13 +47,13 @@ struct FFTextField: View {
     private var borderColor: Color {
         switch resolvedState {
         case .normal:
-            return FFColors.gray700
+            FFColors.gray700
         case .focused:
-            return FFColors.accent
+            FFColors.accent
         case .error:
-            return FFColors.danger
+            FFColors.danger
         case .disabled:
-            return FFColors.gray500
+            FFColors.gray500
         }
     }
 
@@ -63,10 +63,10 @@ struct FFTextField: View {
 
     private var statusText: String? {
         switch state {
-        case .error(let message):
-            return message
+        case let .error(message):
+            message
         case .normal, .focused, .disabled:
-            return helperText
+            helperText
         }
     }
 
