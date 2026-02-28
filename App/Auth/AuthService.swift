@@ -1,4 +1,5 @@
 import AppAuth
+import AuthenticationServices
 import Foundation
 import UIKit
 
@@ -22,6 +23,8 @@ final class AuthService: NSObject, AuthServiceProtocol, @unchecked Sendable {
     private let discoveryService: OIDCDiscoveryServiceProtocol
     private let tokenStore: TokenStore
     private let refreshCoordinator = RefreshCoordinator()
+    @MainActor
+    private var currentAuthorizationFlow: OIDExternalUserAgentSession?
 
     init(
         environment: AppEnvironment,
@@ -167,23 +170,63 @@ final class AuthService: NSObject, AuthServiceProtocol, @unchecked Sendable {
         from presentingViewController: UIViewController,
     ) async throws -> OIDAuthState {
         try await withCheckedThrowingContinuation { continuation in
-            OIDAuthState.authState(byPresenting: request, presenting: presentingViewController) { authState, error in
+            var didResume = false
+            let resumeOnce: (Result<OIDAuthState, APIError>) -> Void = { result in
+                guard !didResume else { return }
+                didResume = true
+                switch result {
+                case let .success(state):
+                    continuation.resume(returning: state)
+                case let .failure(error):
+                    continuation.resume(throwing: error)
+                }
+            }
+
+            let flow = OIDAuthState.authState(byPresenting: request, presenting: presentingViewController) {
+                [weak self] authState, error in
+                Task { @MainActor in
+                    self?.currentAuthorizationFlow = nil
+                }
+
                 if let error = error as NSError? {
                     if error.domain == OIDOAuthAuthorizationErrorDomain,
                        error.code == OIDErrorCodeOAuth.accessDenied.rawValue
                     {
-                        continuation.resume(throwing: APIError.cancelled)
-                    } else {
-                        continuation.resume(throwing: APIError.unknown)
+                        resumeOnce(.failure(.cancelled))
+                        return
                     }
+
+                    if error.domain == ASWebAuthenticationSessionErrorDomain,
+                       error.code == ASWebAuthenticationSessionError.canceledLogin.rawValue
+                    {
+                        resumeOnce(.failure(.cancelled))
+                        return
+                    }
+
+                    if error.domain == NSURLErrorDomain {
+                        let code = URLError.Code(rawValue: error.code)
+                        resumeOnce(.failure(APIError.from(urlError: URLError(code))))
+                        return
+                    }
+
+                    resumeOnce(.failure(.unknown))
                     return
                 }
 
                 guard let authState else {
-                    continuation.resume(throwing: APIError.unknown)
+                    resumeOnce(.failure(.unknown))
                     return
                 }
-                continuation.resume(returning: authState)
+
+                resumeOnce(.success(authState))
+            }
+
+            Task { @MainActor in
+                currentAuthorizationFlow = flow
+            }
+
+            if flow == nil {
+                resumeOnce(.failure(.unknown))
             }
         }
     }
