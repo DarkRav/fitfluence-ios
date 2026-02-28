@@ -74,6 +74,7 @@ final class CatalogAndProgramDetailsFeatureTests: XCTestCase {
             $0.isLoading = false
             $0.isRefreshing = false
             $0.error = UserFacingError(
+                kind: .offline,
                 title: "Нет подключения к интернету",
                 message: "Проверьте сеть и попробуйте снова.",
             )
@@ -196,8 +197,9 @@ final class CatalogAndProgramDetailsFeatureTests: XCTestCase {
         await store.receive(.detailsResponse(.failure(.serverError(statusCode: 503, bodySnippet: nil)))) {
             $0.isLoading = false
             $0.error = UserFacingError(
+                kind: .server,
                 title: "Сервис временно недоступен",
-                message: "Попробуйте открыть программу чуть позже.",
+                message: "Не удалось загрузить программу. Попробуйте позже.",
             )
         }
     }

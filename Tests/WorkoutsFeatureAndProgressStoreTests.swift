@@ -77,6 +77,7 @@ final class WorkoutsFeatureAndProgressStoreTests: XCTestCase {
             $0.isLoading = false
             $0.isRefreshing = false
             $0.error = UserFacingError(
+                kind: .offline,
                 title: "Нет подключения к интернету",
                 message: "Проверьте сеть и попробуйте снова.",
             )
@@ -99,6 +100,7 @@ final class WorkoutsFeatureAndProgressStoreTests: XCTestCase {
             WorkoutPlayerFeature(
                 workoutsClient: workoutsClient,
                 progressStore: MockWorkoutProgressStore(statuses: [:]),
+                cacheStore: MemoryCacheStore(),
             )
         }
 
@@ -130,6 +132,126 @@ final class WorkoutsFeatureAndProgressStoreTests: XCTestCase {
 
         await store.send(.toggleSetComplete(exerciseId: "ex-1", setIndex: 0)) {
             $0.perExerciseState["ex-1"]?.sets[0].isCompleted = true
+            $0.hasChanges = true
+            $0.restTimer = WorkoutPlayerFeature.RestTimerState(
+                totalSeconds: 90,
+                remainingSeconds: 90,
+                isRunning: true,
+            )
+        }
+
+        await store.send(.restTimerSkipTapped) {
+            $0.restTimer = nil
+        }
+    }
+
+    func testWorkoutPlayerRestoresSnapshotAndShowsResumePrompt() async {
+        let workoutsClient = MockWorkoutsClient(
+            listResults: [],
+            detailsResults: [.success(sampleWorkoutDetails)],
+        )
+        let snapshot = WorkoutProgressSnapshot(
+            userSub: "u1",
+            programId: "p1",
+            workoutId: "w1",
+            currentExerciseIndex: 0,
+            isFinished: false,
+            lastUpdated: Date(),
+            exercises: [
+                "ex-1": StoredExerciseProgress(sets: [
+                    StoredSetProgress(isCompleted: true, repsText: "10", weightText: "40", rpeText: "8"),
+                    StoredSetProgress(isCompleted: false, repsText: "", weightText: "", rpeText: ""),
+                ]),
+            ],
+        )
+
+        let store = TestStore(
+            initialState: WorkoutPlayerFeature.State(
+                userSub: "u1",
+                programId: "p1",
+                workoutId: "w1",
+            ),
+        ) {
+            WorkoutPlayerFeature(
+                workoutsClient: workoutsClient,
+                progressStore: MockWorkoutProgressStore(statuses: [:], snapshot: snapshot),
+                cacheStore: MemoryCacheStore(),
+            )
+        }
+
+        await store.send(.onAppear) {
+            $0.isLoading = true
+            $0.error = nil
+            $0.progressStorageMode = .localOnly
+        }
+        await store.receive(.cachedDetailsResponse(nil))
+        await store.receive(.detailsResponse(.success(sampleWorkoutDetails))) { [self] in
+            $0.isLoading = false
+            $0.workout = self.sampleWorkoutDetails
+            $0.currentExerciseIndex = 0
+            $0.perExerciseState = [
+                "ex-1": WorkoutPlayerFeature.ExerciseProgress(
+                    sets: [
+                        WorkoutPlayerFeature.SetProgress(),
+                        WorkoutPlayerFeature.SetProgress(),
+                    ],
+                ),
+            ]
+            $0.isShowingCachedData = false
+            $0.error = nil
+        }
+        await store.receive(.loadedProgress(snapshot)) {
+            $0.perExerciseState["ex-1"]?.sets[0].isCompleted = true
+            $0.perExerciseState["ex-1"]?.sets[0].repsText = "10"
+            $0.perExerciseState["ex-1"]?.sets[0].weightText = "40"
+            $0.perExerciseState["ex-1"]?.sets[0].rpeText = "8"
+            $0.currentExerciseIndex = 0
+            $0.hasChanges = true
+            $0.isResumePromptPresented = true
+        }
+
+        await store.send(.resumePromptContinueTapped) {
+            $0.isResumePromptPresented = false
+            $0.hasPromptedResume = true
+        }
+    }
+
+    func testWorkoutPlayerNumericActionsUpdateValues() async {
+        let workoutsClient = MockWorkoutsClient(
+            listResults: [],
+            detailsResults: [],
+        )
+        var state = WorkoutPlayerFeature.State(
+            userSub: "u1",
+            programId: "p1",
+            workoutId: "w1",
+        )
+        state.workout = sampleWorkoutDetails
+        state.perExerciseState = [
+            "ex-1": WorkoutPlayerFeature.ExerciseProgress(
+                sets: [WorkoutPlayerFeature.SetProgress()],
+            ),
+        ]
+
+        let store = TestStore(initialState: state) {
+            WorkoutPlayerFeature(
+                workoutsClient: workoutsClient,
+                progressStore: MockWorkoutProgressStore(statuses: [:]),
+                cacheStore: MemoryCacheStore(),
+            )
+        }
+
+        await store.send(.incrementSetReps(exerciseId: "ex-1", setIndex: 0)) {
+            $0.perExerciseState["ex-1"]?.sets[0].repsText = "1"
+            $0.hasChanges = true
+        }
+        await store.send(.incrementSetWeight(exerciseId: "ex-1", setIndex: 0)) {
+            $0.perExerciseState["ex-1"]?.sets[0].weightText = "2.5"
+            $0.hasChanges = true
+        }
+        await store.send(.decrementSetWeight(exerciseId: "ex-1", setIndex: 0)) {
+            $0.perExerciseState["ex-1"]?.sets[0].weightText = "0"
+            $0.hasChanges = true
         }
     }
 
@@ -158,6 +280,7 @@ final class WorkoutsFeatureAndProgressStoreTests: XCTestCase {
             WorkoutPlayerFeature(
                 workoutsClient: workoutsClient,
                 progressStore: MockWorkoutProgressStore(statuses: [:]),
+                cacheStore: MemoryCacheStore(),
             )
         }
 
@@ -262,16 +385,20 @@ private actor MockWorkoutsClient: WorkoutsClientProtocol {
 
 private actor MockWorkoutProgressStore: WorkoutProgressStore {
     private let statusesValue: [String: WorkoutProgressStatus]
+    private var snapshotValue: WorkoutProgressSnapshot?
 
-    init(statuses: [String: WorkoutProgressStatus]) {
+    init(statuses: [String: WorkoutProgressStatus], snapshot: WorkoutProgressSnapshot? = nil) {
         statusesValue = statuses
+        snapshotValue = snapshot
     }
 
     func load(userSub _: String, programId _: String, workoutId _: String) async -> WorkoutProgressSnapshot? {
-        nil
+        snapshotValue
     }
 
-    func save(_: WorkoutProgressSnapshot) async {}
+    func save(_ snapshot: WorkoutProgressSnapshot) async {
+        snapshotValue = snapshot
+    }
 
     func status(userSub _: String, programId _: String, workoutId: String) async -> WorkoutProgressStatus {
         statusesValue[workoutId] ?? .notStarted
