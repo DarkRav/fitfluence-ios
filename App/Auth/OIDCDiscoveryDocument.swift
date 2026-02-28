@@ -41,10 +41,14 @@ struct OIDCDiscoveryService: OIDCDiscoveryServiceProtocol {
         do {
             let (data, response) = try await session.data(from: endpoint)
             guard let httpResponse = response as? HTTPURLResponse else {
+                FFLog.error("OIDC discovery: non-HTTP response from \(endpoint.absoluteString)")
                 throw APIError.unknown
             }
 
             if let apiError = APIError.from(statusCode: httpResponse.statusCode, data: data) {
+                FFLog.error(
+                    "OIDC discovery failed status=\(httpResponse.statusCode) url=\(endpoint.absoluteString)",
+                )
                 throw apiError
             }
 
@@ -52,13 +56,18 @@ struct OIDCDiscoveryService: OIDCDiscoveryServiceProtocol {
                 let decoded = try JSONDecoder().decode(OIDCDiscoveryDocument.self, from: data)
                 return normalized(document: decoded)
             } catch {
+                FFLog.error("OIDC discovery decoding failed for \(endpoint.absoluteString)")
                 throw APIError.decodingError
             }
         } catch let apiError as APIError {
             throw apiError
         } catch let urlError as URLError {
+            FFLog.error(
+                "OIDC discovery network error code=\(urlError.code.rawValue) url=\(endpoint.absoluteString)",
+            )
             throw APIError.from(urlError: urlError)
         } catch {
+            FFLog.error("OIDC discovery unknown error for \(endpoint.absoluteString)")
             throw APIError.unknown
         }
     }

@@ -33,16 +33,41 @@ struct AppEnvironment: Equatable {
             .trimmingCharacters(in: .whitespacesAndNewlines)
 
         let resolvedName = (name?.isEmpty == false ? name : nil) ?? "UNKNOWN"
+        let isDev = resolvedName.uppercased() == "DEV"
+        let parsedBaseURL = URL(string: rawBaseURL ?? "")
+        let parsedKeycloakURL = URL(string: rawKeycloakURL ?? "")
+
+        let resolvedKeycloakURL: URL? = {
+            if let parsedKeycloakURL, parsedKeycloakURL.host?.isEmpty == false {
+                return parsedKeycloakURL
+            }
+            guard isDev, let baseHost = parsedBaseURL?.host, !baseHost.isEmpty else {
+                return parsedKeycloakURL
+            }
+
+            var components = URLComponents()
+            components.scheme = parsedBaseURL?.scheme ?? "http"
+            components.host = baseHost
+            components.port = 9990
+            return components.url
+        }()
+
+        let resolvedRealm = (keycloakRealm?.isEmpty == false ? keycloakRealm : nil) ?? (isDev ? "fitfluence" : "")
+        let resolvedClientId = (keycloakClientId?.isEmpty == false ? keycloakClientId : nil) ??
+            (isDev ? "fitfluence-ios" : "")
+        let resolvedRedirectURI = URL(string: rawKeycloakRedirectURI ?? "") ??
+            (isDev ? URL(string: "fitfluence://oauth/callback") : nil)
+        let resolvedScopes = (keycloakScopes?.isEmpty == false ? keycloakScopes : nil) ??
+            (isDev ? "openid" : "openid profile email offline_access")
 
         return AppEnvironment(
             name: resolvedName,
-            baseURL: URL(string: rawBaseURL ?? ""),
-            keycloakURL: URL(string: rawKeycloakURL ?? ""),
-            keycloakRealm: (keycloakRealm?.isEmpty == false ? keycloakRealm : nil) ?? "",
-            keycloakClientId: (keycloakClientId?.isEmpty == false ? keycloakClientId : nil) ?? "",
-            keycloakRedirectURI: URL(string: rawKeycloakRedirectURI ?? ""),
-            keycloakScopes: (keycloakScopes?.isEmpty == false ? keycloakScopes : nil) ??
-                "openid profile email offline_access",
+            baseURL: parsedBaseURL,
+            keycloakURL: resolvedKeycloakURL,
+            keycloakRealm: resolvedRealm,
+            keycloakClientId: resolvedClientId,
+            keycloakRedirectURI: resolvedRedirectURI,
+            keycloakScopes: resolvedScopes,
             keycloakRegistrationHintMode: (keycloakRegistrationHintMode?
                 .isEmpty == false ? keycloakRegistrationHintMode : nil)
                 ?? "kc_action",

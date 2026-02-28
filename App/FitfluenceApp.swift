@@ -44,6 +44,8 @@ struct FitfluenceApp: App {
         FFLog.info("Запуск приложения в окружении: \(environment.name)")
         FFLog.info("Backend URL: \(environment.backendBaseURL?.absoluteString ?? "не задан")")
         FFLog.info("Keycloak URL: \(environment.keycloakBaseURL?.absoluteString ?? "не задан")")
+        FFLog.info("Keycloak realm: \(environment.keycloakRealm)")
+        FFLog.info("Keycloak clientId: \(environment.keycloakClientId)")
     }
 
     var body: some Scene {
