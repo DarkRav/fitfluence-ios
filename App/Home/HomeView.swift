@@ -48,7 +48,6 @@ struct HomeView: View {
         }
     }
 
-    @ViewBuilder
     private func hero(_ viewStore: ViewStore<HomeFeature.State, HomeFeature.Action>) -> some View {
         FFCard {
             VStack(alignment: .leading, spacing: FFSpacing.md) {

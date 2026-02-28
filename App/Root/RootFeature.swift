@@ -83,170 +83,170 @@ struct RootFeature {
 
             Reduce { state, action in
                 switch action {
-            case .onAppear:
-                guard !state.hasBootstrapped else { return .none }
-                state.hasBootstrapped = true
-                state.sessionState = .authenticating
-                return .merge(
-                    .run { [sessionManager] send in
+                case .onAppear:
+                    guard !state.hasBootstrapped else { return .none }
+                    state.hasBootstrapped = true
+                    state.sessionState = .authenticating
+                    return .merge(
+                        .run { [sessionManager] send in
+                            let resolved = await sessionManager.bootstrap()
+                            await send(.sessionResolved(resolved))
+                        },
+                        .run { [networkMonitor] send in
+                            for await status in networkMonitor.statusUpdates() {
+                                await send(.networkStatusChanged(status))
+                            }
+                        }
+                        .cancellable(id: CancelID.networkMonitoring, cancelInFlight: true),
+                    )
+
+                case .retryBootstrapTapped:
+                    state.sessionState = .authenticating
+                    return .run { [sessionManager] send in
                         let resolved = await sessionManager.bootstrap()
                         await send(.sessionResolved(resolved))
-                    },
-                    .run { [networkMonitor] send in
-                        for await status in networkMonitor.statusUpdates() {
-                            await send(.networkStatusChanged(status))
-                        }
                     }
-                    .cancellable(id: CancelID.networkMonitoring, cancelInFlight: true),
-                )
 
-            case .retryBootstrapTapped:
-                state.sessionState = .authenticating
-                return .run { [sessionManager] send in
-                    let resolved = await sessionManager.bootstrap()
-                    await send(.sessionResolved(resolved))
-                }
+                case let .loginTapped(mode):
+                    state.sessionState = .authenticating
+                    return .run { [authService, sessionManager] send in
+                        let result = await authService.login(mode: mode)
 
-            case let .loginTapped(mode):
-                state.sessionState = .authenticating
-                return .run { [authService, sessionManager] send in
-                    let result = await authService.login(mode: mode)
-
-                    switch result {
-                    case .success:
-                        let nextState = await sessionManager.postLoginBootstrap()
-                        await send(.sessionResolved(nextState))
-                    case let .failure(error):
-                        if error == .cancelled {
-                            await send(.sessionResolved(.unauthenticated))
-                        } else {
-                            await send(
-                                .sessionResolved(
-                                    .error(
-                                        UserFacingError(
-                                            title: "Ошибка входа",
-                                            message: error.loginFailureMessage,
+                        switch result {
+                        case .success:
+                            let nextState = await sessionManager.postLoginBootstrap()
+                            await send(.sessionResolved(nextState))
+                        case let .failure(error):
+                            if error == .cancelled {
+                                await send(.sessionResolved(.unauthenticated))
+                            } else {
+                                await send(
+                                    .sessionResolved(
+                                        .error(
+                                            UserFacingError(
+                                                title: "Ошибка входа",
+                                                message: error.loginFailureMessage,
+                                            ),
                                         ),
                                     ),
-                                ),
-                            )
+                                )
+                            }
                         }
                     }
-                }
 
-            case .logoutTapped:
-                let namespace: String = if case let .authenticated(context) = state.sessionState {
-                    context.me.subject ?? state.catalog.cacheNamespace
-                } else {
-                    state.catalog.cacheNamespace
-                }
-                state.sessionState = .authenticating
-                state.programDetails = nil
-                return .run { [sessionManager, cacheStore] send in
-                    await cacheStore.clearAll(namespace: namespace)
-                    let nextState = await sessionManager.logout()
-                    await send(.sessionResolved(nextState))
-                }
+                case .logoutTapped:
+                    let namespace: String = if case let .authenticated(context) = state.sessionState {
+                        context.me.subject ?? state.catalog.cacheNamespace
+                    } else {
+                        state.catalog.cacheNamespace
+                    }
+                    state.sessionState = .authenticating
+                    state.programDetails = nil
+                    return .run { [sessionManager, cacheStore] send in
+                        await cacheStore.clearAll(namespace: namespace)
+                        let nextState = await sessionManager.logout()
+                        await send(.sessionResolved(nextState))
+                    }
 
-            case .catalog(.programsResponse(.failure(.unauthorized), _)),
-                 .programDetails(.detailsResponse(.failure(.unauthorized))),
-                 .programDetails(.startProgramResponse(.failure(.unauthorized))),
-                 .programDetails(.workoutsList(.response(.failure(.unauthorized)))),
-                 .programDetails(.workoutPlayer(.detailsResponse(.failure(.unauthorized)))):
-                return forceLogout(&state)
+                case .catalog(.programsResponse(.failure(.unauthorized), _)),
+                     .programDetails(.detailsResponse(.failure(.unauthorized))),
+                     .programDetails(.startProgramResponse(.failure(.unauthorized))),
+                     .programDetails(.workoutsList(.response(.failure(.unauthorized)))),
+                     .programDetails(.workoutPlayer(.detailsResponse(.failure(.unauthorized)))):
+                    return forceLogout(&state)
 
-            case let .networkStatusChanged(status):
-                state.isOnline = status
-                return .none
+                case let .networkStatusChanged(status):
+                    state.isOnline = status
+                    return .none
 
-            case let .sessionResolved(nextState):
-                state.sessionState = nextState
-                if case let .needsOnboarding(context) = nextState {
-                    state.onboarding = OnboardingFeature.State(context: context)
-                } else {
-                    state.onboarding = nil
-                }
-                if case let .authenticated(context) = nextState {
-                    let userSub = context.me.subject ?? "anonymous"
-                    state.catalog.cacheNamespace = userSub
-                    state.home.userSub = userSub
-                    state.selectedMainTab = .home
-                } else if case .unauthenticated = nextState {
-                    state.catalog.cacheNamespace = "anonymous"
-                    state.home.userSub = "anonymous"
-                    state.selectedMainTab = .home
-                }
-                return .none
-
-            case let .tabSelected(tab):
-                state.selectedMainTab = tab
-                return .none
-
-            case .home(.onAppear):
-                return .none
-
-            case let .home(.delegate(.openCatalog)):
-                state.selectedMainTab = .catalog
-                return .none
-
-            case let .home(.delegate(.openWorkout(programID, workoutID))):
-                state.selectedMainTab = .catalog
-                let userSub: String = if case let .authenticated(context) = state.sessionState {
-                    context.me.subject ?? "anonymous"
-                } else {
-                    "anonymous"
-                }
-                state.programDetails = ProgramDetailsFeature.State(
-                    programId: programID,
-                    userSub: userSub,
-                    workoutPlayer: WorkoutPlayerFeature.State(
-                        userSub: userSub,
-                        programId: programID,
-                        workoutId: workoutID,
-                    ),
-                )
-                return .none
-
-            case let .catalog(.delegate(.openProgram(programID))):
-                let userSub: String = if case let .authenticated(context) = state.sessionState {
-                    context.me.subject ?? "anonymous"
-                } else {
-                    "anonymous"
-                }
-                state.programDetails = ProgramDetailsFeature.State(
-                    programId: programID,
-                    userSub: userSub,
-                )
-                return .none
-
-            case .catalog:
-                return .none
-
-            case .home:
-                return .none
-
-            case .programDetails:
-                return .none
-
-            case .programDetailsDismissed:
-                state.programDetails = nil
-                return .none
-
-            case let .onboarding(.delegate(.sessionResolved(nextState))):
-                state.sessionState = nextState
-                if case let .needsOnboarding(context) = nextState {
-                    state.onboarding = OnboardingFeature.State(context: context)
-                } else {
-                    state.onboarding = nil
-                    if case .authenticated = nextState {
+                case let .sessionResolved(nextState):
+                    state.sessionState = nextState
+                    if case let .needsOnboarding(context) = nextState {
+                        state.onboarding = OnboardingFeature.State(context: context)
+                    } else {
+                        state.onboarding = nil
+                    }
+                    if case let .authenticated(context) = nextState {
+                        let userSub = context.me.subject ?? "anonymous"
+                        state.catalog.cacheNamespace = userSub
+                        state.home.userSub = userSub
+                        state.selectedMainTab = .home
+                    } else if case .unauthenticated = nextState {
+                        state.catalog.cacheNamespace = "anonymous"
+                        state.home.userSub = "anonymous"
                         state.selectedMainTab = .home
                     }
-                }
-                return .none
+                    return .none
 
-            case .onboarding:
-                return .none
-            }
+                case let .tabSelected(tab):
+                    state.selectedMainTab = tab
+                    return .none
+
+                case .home(.onAppear):
+                    return .none
+
+                case let .home(.delegate(.openCatalog)):
+                    state.selectedMainTab = .catalog
+                    return .none
+
+                case let .home(.delegate(.openWorkout(programID, workoutID))):
+                    state.selectedMainTab = .catalog
+                    let userSub: String = if case let .authenticated(context) = state.sessionState {
+                        context.me.subject ?? "anonymous"
+                    } else {
+                        "anonymous"
+                    }
+                    state.programDetails = ProgramDetailsFeature.State(
+                        programId: programID,
+                        userSub: userSub,
+                        workoutPlayer: WorkoutPlayerFeature.State(
+                            userSub: userSub,
+                            programId: programID,
+                            workoutId: workoutID,
+                        ),
+                    )
+                    return .none
+
+                case let .catalog(.delegate(.openProgram(programID))):
+                    let userSub: String = if case let .authenticated(context) = state.sessionState {
+                        context.me.subject ?? "anonymous"
+                    } else {
+                        "anonymous"
+                    }
+                    state.programDetails = ProgramDetailsFeature.State(
+                        programId: programID,
+                        userSub: userSub,
+                    )
+                    return .none
+
+                case .catalog:
+                    return .none
+
+                case .home:
+                    return .none
+
+                case .programDetails:
+                    return .none
+
+                case .programDetailsDismissed:
+                    state.programDetails = nil
+                    return .none
+
+                case let .onboarding(.delegate(.sessionResolved(nextState))):
+                    state.sessionState = nextState
+                    if case let .needsOnboarding(context) = nextState {
+                        state.onboarding = OnboardingFeature.State(context: context)
+                    } else {
+                        state.onboarding = nil
+                        if case .authenticated = nextState {
+                            state.selectedMainTab = .home
+                        }
+                    }
+                    return .none
+
+                case .onboarding:
+                    return .none
+                }
             }
         }
         .ifLet(\.onboarding, action: \.onboarding) { [athleteClient, sessionManager] in
