@@ -10,10 +10,13 @@ protocol APIClientProtocol: Sendable {
     func createProfile(_ request: CreateAthleteProfileRequest) async -> Result<CreateAthleteProfileResponse, APIError>
     func createProfile(_ request: CreateInfluencerProfileRequest) async
         -> Result<CreateInfluencerProfileResponse, APIError>
+    func listPublishedPrograms(query: String, page: Int, size: Int) async -> Result<PagedProgramResponse, APIError>
+    func getProgramDetails(programId: String) async -> Result<ProgramDetails, APIError>
+    func startProgram(programVersionId: String) async -> Result<ProgramEnrollment, APIError>
 }
 
 final class APIClient: APIClientProtocol, MeClientProtocol, AthleteProfileClientProtocol,
-    InfluencerProfileClientProtocol
+    InfluencerProfileClientProtocol, ProgramsClientProtocol
 {
     private let httpClient: HTTPClientProtocol
     private let authService: AuthServiceProtocol?
@@ -65,6 +68,40 @@ final class APIClient: APIClientProtocol, MeClientProtocol, AthleteProfileClient
             let payload = try JSONEncoder().encode(request)
             let apiRequest = APIRequest(path: "/v1/influencer/profile", method: .post, body: payload)
             return await decode(apiRequest, as: CreateInfluencerProfileResponse.self)
+        } catch {
+            return .failure(.unknown)
+        }
+    }
+
+    func listPublishedPrograms(
+        query: String,
+        page: Int,
+        size: Int = 20,
+    ) async -> Result<PagedProgramResponse, APIError> {
+        do {
+            let body = ProgramsSearchRequest(
+                filter: ProgramFilter(search: query.isEmpty ? nil : query, influencerId: nil, status: .published),
+                page: page,
+                size: size,
+            )
+            let payload = try JSONEncoder().encode(body)
+            let request = APIRequest(path: "/v1/programs/published/search", method: .post, body: payload)
+            return await decode(request, as: PagedProgramResponse.self)
+        } catch {
+            return .failure(.unknown)
+        }
+    }
+
+    func getProgramDetails(programId: String) async -> Result<ProgramDetails, APIError> {
+        let request = APIRequest.get(path: "/v1/programs/\(programId)", requiresAuthorization: true)
+        return await decode(request, as: ProgramDetails.self)
+    }
+
+    func startProgram(programVersionId: String) async -> Result<ProgramEnrollment, APIError> {
+        do {
+            let payload = try JSONEncoder().encode(CreateSelfEnrollmentRequest(programVersionId: programVersionId))
+            let request = APIRequest(path: "/v1/athlete/enrollments/self", method: .post, body: payload)
+            return await decode(request, as: ProgramEnrollment.self)
         } catch {
             return .failure(.unknown)
         }
