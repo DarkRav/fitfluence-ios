@@ -151,7 +151,6 @@ final class CatalogAndProgramDetailsFeatureTests: XCTestCase {
         let store = TestStore(initialState: ProgramDetailsFeature.State(programId: "program-1", userSub: "u1")) {
             ProgramDetailsFeature(
                 programsClient: mockClient,
-                progressStore: LocalWorkoutProgressStore(defaults: UserDefaults(suiteName: UUID().uuidString)!),
                 cacheStore: MemoryCacheStore(),
                 networkMonitor: StaticNetworkMonitor(currentStatus: true),
             )
@@ -181,7 +180,6 @@ final class CatalogAndProgramDetailsFeatureTests: XCTestCase {
         let store = TestStore(initialState: ProgramDetailsFeature.State(programId: "program-1", userSub: "u1")) {
             ProgramDetailsFeature(
                 programsClient: mockClient,
-                progressStore: LocalWorkoutProgressStore(defaults: UserDefaults(suiteName: UUID().uuidString)!),
                 cacheStore: MemoryCacheStore(),
                 networkMonitor: StaticNetworkMonitor(currentStatus: true),
             )

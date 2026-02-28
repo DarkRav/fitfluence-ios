@@ -133,8 +133,7 @@ struct RootFeature {
 
                 case .catalog(.programsResponse(.failure(.unauthorized), _)),
                      .programDetails(.detailsResponse(.failure(.unauthorized))),
-                     .programDetails(.startProgramResponse(.failure(.unauthorized))),
-                     .programDetails(.workoutsList(.response(.failure(.unauthorized)))):
+                     .programDetails(.startProgramResponse(.failure(.unauthorized))):
                     return forceLogout(&state)
 
                 case let .networkStatusChanged(status):
@@ -198,10 +197,9 @@ struct RootFeature {
                 sessionManager: sessionManager,
             )
         }
-        .ifLet(\.programDetails, action: \.programDetails) { [apiClient, progressStore, cacheStore, networkMonitor] in
+        .ifLet(\.programDetails, action: \.programDetails) { [apiClient, cacheStore, networkMonitor] in
             ProgramDetailsFeature(
                 programsClient: apiClient as? ProgramsClientProtocol,
-                progressStore: progressStore,
                 cacheStore: cacheStore,
                 networkMonitor: networkMonitor,
             )

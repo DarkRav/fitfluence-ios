@@ -16,7 +16,7 @@ struct ProgramDetailsView: View {
             store,
             observe: {
                 ViewState(
-                    isWorkoutsPresented: $0.workoutsList != nil,
+                    isWorkoutsPresented: $0.isWorkoutsPresented,
                     isWorkoutPlayerPresented: $0.selectedWorkout != nil,
                 )
             },
@@ -75,9 +75,26 @@ struct ProgramDetailsView: View {
                         },
                     ),
                 ) {
-                    if let workoutsStore = store.scope(state: \.workoutsList, action: \.workoutsList) {
-                        WorkoutsListView(store: workoutsStore)
+                    if let programsClient = apiClient as? ProgramsClientProtocol {
+                        WorkoutsListScreen(
+                            viewModel: WorkoutsListViewModel(
+                                programId: viewStore.programId,
+                                userSub: viewStore.userSub,
+                                workoutsClient: WorkoutsClient(programsClient: programsClient),
+                            ),
+                            onWorkoutTap: { workoutID in
+                                store.send(.workoutSelected(workoutID))
+                            },
+                        )
                             .navigationTitle("Тренировки")
+                    } else {
+                        FFErrorState(
+                            title: "Тренировки недоступны",
+                            message: "Проверьте конфигурацию API-клиента для загрузки тренировок.",
+                            retryTitle: "Назад",
+                        ) {
+                            store.send(.workoutsListDismissed)
+                        }
                     }
                 }
                 .navigationDestination(

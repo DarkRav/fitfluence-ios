@@ -1,69 +1,162 @@
-import ComposableArchitecture
+import Observation
 import SwiftUI
 
-struct WorkoutsListView: View {
-    let store: StoreOf<WorkoutsListFeature>
+@Observable
+final class WorkoutsListViewModel {
+    private let programId: String
+    private let userSub: String
+    private let workoutsClient: WorkoutsClientProtocol
+    private let progressStore: WorkoutProgressStore
+    private let cacheStore: CacheStore
+
+    var workouts: [WorkoutSummary] = []
+    var workoutStatuses: [String: WorkoutProgressStatus] = [:]
+    var isLoading = false
+    var isRefreshing = false
+    var isShowingCachedData = false
+    var error: UserFacingError?
+
+    init(
+        programId: String,
+        userSub: String,
+        workoutsClient: WorkoutsClientProtocol,
+        progressStore: WorkoutProgressStore = LocalWorkoutProgressStore(),
+        cacheStore: CacheStore = CompositeCacheStore()
+    ) {
+        self.programId = programId
+        self.userSub = userSub
+        self.workoutsClient = workoutsClient
+        self.progressStore = progressStore
+        self.cacheStore = cacheStore
+    }
+
+    @MainActor
+    func onAppear() async {
+        guard workouts.isEmpty, !isLoading else { return }
+        isLoading = true
+        error = nil
+        await load(cachedFirst: true)
+        isLoading = false
+    }
+
+    @MainActor
+    func refresh() async {
+        guard !isRefreshing else { return }
+        isRefreshing = true
+        error = nil
+        await load(cachedFirst: true)
+        isRefreshing = false
+    }
+
+    @MainActor
+    func retry() async {
+        guard !isLoading else { return }
+        isLoading = true
+        error = nil
+        await load(cachedFirst: true)
+        isLoading = false
+    }
+
+    @MainActor
+    private func load(cachedFirst: Bool) async {
+        if cachedFirst, let cached = await cacheStore.get(cacheKey, as: [WorkoutSummary].self, namespace: userSub) {
+            workouts = cached
+            isShowingCachedData = true
+            await loadStatuses(for: cached)
+        }
+
+        let result = await workoutsClient.listWorkouts(for: programId)
+        switch result {
+        case let .success(workouts):
+            self.workouts = workouts
+            self.error = nil
+            self.isShowingCachedData = false
+            await cacheStore.set(cacheKey, value: workouts, namespace: userSub, ttl: 60 * 30)
+            await loadStatuses(for: workouts)
+
+        case let .failure(apiError):
+            if apiError == .offline, !workouts.isEmpty {
+                error = nil
+                isShowingCachedData = true
+                return
+            }
+            error = apiError.userFacing(context: .workoutsList)
+        }
+    }
+
+    @MainActor
+    private func loadStatuses(for workouts: [WorkoutSummary]) async {
+        workoutStatuses = await progressStore.statuses(
+            userSub: userSub,
+            programId: programId,
+            workoutIds: workouts.map(\.id)
+        )
+    }
+
+    private var cacheKey: String {
+        "workouts.list:\(programId)"
+    }
+}
+
+struct WorkoutsListScreen: View {
+    @State var viewModel: WorkoutsListViewModel
+    let onWorkoutTap: (String) -> Void
 
     var body: some View {
-        WithViewStore(store, observe: { $0 }) { viewStore in
-            Group {
-                if viewStore.isLoading, viewStore.workouts.isEmpty {
-                    FFLoadingState(title: "Загружаем тренировки")
-                        .padding(.horizontal, FFSpacing.md)
-                } else if let error = viewStore.error, viewStore.workouts.isEmpty {
-                    FFErrorState(
-                        title: error.title,
-                        message: error.message,
-                        retryTitle: "Повторить",
-                    ) {
-                        viewStore.send(.retry)
-                    }
+        Group {
+            if viewModel.isLoading, viewModel.workouts.isEmpty {
+                FFLoadingState(title: "Загружаем тренировки")
                     .padding(.horizontal, FFSpacing.md)
-                } else if viewStore.workouts.isEmpty {
-                    FFEmptyState(
-                        title: "В этой программе пока нет тренировок",
-                        message: "Как только тренировки появятся, они будут доступны на этом экране.",
-                    )
-                    .padding(.horizontal, FFSpacing.md)
-                } else {
-                    ScrollView {
-                        VStack(spacing: FFSpacing.sm) {
-                            if viewStore.isShowingCachedData {
-                                FFCard {
-                                    Text("Оффлайн. Показаны сохранённые данные.")
-                                        .font(FFTypography.caption.weight(.semibold))
-                                        .foregroundStyle(FFColors.primary)
-                                }
-                            }
-
-                            ForEach(viewStore.workouts) { workout in
-                                workoutCard(
-                                    workout,
-                                    status: workoutStatus(for: workout, viewStore: viewStore),
-                                ) {
-                                    viewStore.send(.workoutTapped(workout.id))
-                                }
+            } else if let error = viewModel.error, viewModel.workouts.isEmpty {
+                FFErrorState(
+                    title: error.title,
+                    message: error.message,
+                    retryTitle: "Повторить"
+                ) {
+                    Task { await viewModel.retry() }
+                }
+                .padding(.horizontal, FFSpacing.md)
+            } else if viewModel.workouts.isEmpty {
+                FFEmptyState(
+                    title: "В этой программе пока нет тренировок",
+                    message: "Как только тренировки появятся, они будут доступны на этом экране."
+                )
+                .padding(.horizontal, FFSpacing.md)
+            } else {
+                ScrollView {
+                    VStack(spacing: FFSpacing.sm) {
+                        if viewModel.isShowingCachedData {
+                            FFCard {
+                                Text("Оффлайн. Показаны сохранённые данные.")
+                                    .font(FFTypography.caption.weight(.semibold))
+                                    .foregroundStyle(FFColors.primary)
                             }
                         }
-                        .padding(.horizontal, FFSpacing.md)
-                        .padding(.vertical, FFSpacing.md)
+
+                        ForEach(viewModel.workouts) { workout in
+                            workoutCard(workout, status: workoutStatus(for: workout)) {
+                                onWorkoutTap(workout.id)
+                            }
+                        }
                     }
-                    .refreshable {
-                        viewStore.send(.refresh)
-                    }
+                    .padding(.horizontal, FFSpacing.md)
+                    .padding(.vertical, FFSpacing.md)
+                }
+                .refreshable {
+                    await viewModel.refresh()
                 }
             }
-            .background(FFColors.background)
-            .onAppear {
-                viewStore.send(.onAppear)
-            }
+        }
+        .background(FFColors.background)
+        .task {
+            await viewModel.onAppear()
         }
     }
 
     private func workoutCard(
         _ workout: WorkoutSummary,
         status: WorkoutProgressStatus,
-        onTap: @escaping () -> Void,
+        onTap: @escaping () -> Void
     ) -> some View {
         Button(action: onTap) {
             FFCard {
@@ -84,7 +177,6 @@ struct WorkoutsListView: View {
                     }
 
                     Spacer(minLength: FFSpacing.xs)
-
                     FFBadge(status: badgeStatus(for: status))
                 }
             }
@@ -102,11 +194,8 @@ struct WorkoutsListView: View {
         return "Упражнений: \(workout.exerciseCount)"
     }
 
-    private func workoutStatus(
-        for workout: WorkoutSummary,
-        viewStore: ViewStore<WorkoutsListFeature.State, WorkoutsListFeature.Action>,
-    ) -> WorkoutProgressStatus {
-        viewStore.workoutStatuses[workout.id] ?? .notStarted
+    private func workoutStatus(for workout: WorkoutSummary) -> WorkoutProgressStatus {
+        viewModel.workoutStatuses[workout.id] ?? .notStarted
     }
 
     private func badgeStatus(for status: WorkoutProgressStatus) -> FFBadge.Status {

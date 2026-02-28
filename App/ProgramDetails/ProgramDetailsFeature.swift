@@ -15,7 +15,7 @@ struct ProgramDetailsFeature {
         let userSub: String
         var details: ProgramDetails?
         var isShowingCachedData = false
-        var workoutsList: WorkoutsListFeature.State?
+        var isWorkoutsPresented = false
         var selectedWorkout: SelectedWorkout?
         var isLoading = false
         var isStartingProgram = false
@@ -31,32 +31,23 @@ struct ProgramDetailsFeature {
         case startProgramTapped
         case startProgramResponse(Result<ProgramEnrollment, APIError>)
         case openWorkoutsTapped
-        case workoutsList(WorkoutsListFeature.Action)
+        case workoutSelected(String)
         case workoutsListDismissed
         case selectedWorkoutDismissed
     }
 
     private let programsClient: ProgramsClientProtocol?
-    private let workoutsClient: WorkoutsClientProtocol
-    private let progressStore: WorkoutProgressStore
     private let cacheStore: CacheStore
     private let networkMonitor: NetworkMonitoring
 
     init(
         programsClient: ProgramsClientProtocol?,
-        progressStore: WorkoutProgressStore = LocalWorkoutProgressStore(),
         cacheStore: CacheStore = CompositeCacheStore(),
         networkMonitor: NetworkMonitoring = StaticNetworkMonitor(currentStatus: true),
     ) {
         self.programsClient = programsClient
-        self.progressStore = progressStore
         self.cacheStore = cacheStore
         self.networkMonitor = networkMonitor
-        if let programsClient {
-            workoutsClient = WorkoutsClient(programsClient: programsClient)
-        } else {
-            workoutsClient = UnavailableWorkoutsClient()
-        }
     }
 
     var body: some ReducerOf<Self> {
@@ -139,17 +130,14 @@ struct ProgramDetailsFeature {
                 return .none
 
             case .openWorkoutsTapped:
-                state.workoutsList = WorkoutsListFeature.State(
-                    programId: state.programId,
-                    userSub: state.userSub,
-                )
+                state.isWorkoutsPresented = true
                 return .none
 
             case .workoutsListDismissed:
-                state.workoutsList = nil
+                state.isWorkoutsPresented = false
                 return .none
 
-            case let .workoutsList(.delegate(.openWorkout(workoutID))):
+            case let .workoutSelected(workoutID):
                 state.selectedWorkout = State.SelectedWorkout(
                     userSub: state.userSub,
                     programId: state.programId,
@@ -160,18 +148,7 @@ struct ProgramDetailsFeature {
             case .selectedWorkoutDismissed:
                 state.selectedWorkout = nil
                 return .none
-
-            case .workoutsList:
-                return .none
             }
-        }
-        .ifLet(\.workoutsList, action: \.workoutsList) { [workoutsClient, progressStore, cacheStore, networkMonitor] in
-            WorkoutsListFeature(
-                workoutsClient: workoutsClient,
-                progressStore: progressStore,
-                cacheStore: cacheStore,
-                networkMonitor: networkMonitor,
-            )
         }
     }
 
