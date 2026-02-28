@@ -4,6 +4,14 @@ import SwiftUI
 @Observable
 @MainActor
 final class TrainingInsightsViewModel {
+    struct DayDetailsItem: Equatable, Identifiable {
+        let id: String
+        let title: String
+        let status: TrainingDayStatus
+        let source: WorkoutSource
+        let subtitle: String
+    }
+
     private let userSub: String
     private let trainingStore: TrainingStore
     private let calendar: Calendar
@@ -69,10 +77,43 @@ final class TrainingInsightsViewModel {
         let day = calendar.startOfDay(for: date)
         return monthPlans.first(where: { calendar.isDate($0.day, inSameDayAs: day) })?.status
     }
+
+    func dayDetails(_ date: Date) -> [DayDetailsItem] {
+        let day = calendar.startOfDay(for: date)
+
+        let plans = monthPlans
+            .filter { calendar.isDate($0.day, inSameDayAs: day) }
+            .map { plan in
+                DayDetailsItem(
+                    id: "plan-\(plan.id)",
+                    title: plan.title,
+                    status: plan.status,
+                    source: plan.source,
+                    subtitle: "План на день",
+                )
+            }
+
+        let completed = history
+            .filter { calendar.isDate($0.finishedAt, inSameDayAs: day) }
+            .map { record in
+                DayDetailsItem(
+                    id: "history-\(record.id)",
+                    title: record.workoutTitle,
+                    status: .completed,
+                    source: record.source,
+                    subtitle: record.finishedAt.formatted(date: .omitted, time: .shortened),
+                )
+            }
+
+        return (plans + completed).sorted {
+            $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending
+        }
+    }
 }
 
 struct TrainingInsightsView: View {
     @State var viewModel: TrainingInsightsViewModel
+    @State private var selectedDay: Date?
 
     var body: some View {
         ScrollView {
@@ -88,6 +129,18 @@ struct TrainingInsightsView: View {
         .navigationTitle("Прогресс")
         .task {
             await viewModel.onAppear()
+        }
+        .sheet(
+            isPresented: Binding(
+                get: { selectedDay != nil },
+                set: { isPresented in
+                    if !isPresented {
+                        selectedDay = nil
+                    }
+                },
+            ),
+        ) {
+            dayDetailsSheet
         }
     }
 
@@ -117,13 +170,18 @@ struct TrainingInsightsView: View {
 
     private func dayCell(_ day: Date) -> some View {
         let status = viewModel.dayStatus(day)
-        return Text(day.formatted(.dateTime.day()))
-            .font(FFTypography.caption)
-            .foregroundStyle(FFColors.textPrimary)
-            .frame(maxWidth: .infinity, minHeight: 30)
-            .background(statusColor(status).opacity(0.22))
-            .clipShape(RoundedRectangle(cornerRadius: 8))
-            .accessibilityLabel("\(day.formatted(date: .abbreviated, time: .omitted))")
+        return Button {
+            selectedDay = day
+        } label: {
+            Text(day.formatted(.dateTime.day()))
+                .font(FFTypography.caption)
+                .foregroundStyle(FFColors.textPrimary)
+                .frame(maxWidth: .infinity, minHeight: 30)
+                .background(statusColor(status).opacity(0.22))
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("\(day.formatted(date: .abbreviated, time: .omitted))")
     }
 
     private func statusColor(_ status: TrainingDayStatus?) -> Color {
@@ -220,6 +278,76 @@ struct TrainingInsightsView: View {
             Label("Фильтр", systemImage: "line.3.horizontal.decrease.circle")
                 .font(FFTypography.caption)
                 .foregroundStyle(FFColors.accent)
+        }
+    }
+
+    private var dayDetailsSheet: some View {
+        VStack(spacing: FFSpacing.md) {
+            if let selectedDay {
+                Text(selectedDay.formatted(date: .complete, time: .omitted))
+                    .font(FFTypography.h2)
+                    .foregroundStyle(FFColors.textPrimary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                let items = viewModel.dayDetails(selectedDay)
+                if items.isEmpty {
+                    FFEmptyState(
+                        title: "На этот день тренировок нет",
+                        message: "Запланируйте тренировку или откройте быструю тренировку.",
+                    )
+                } else {
+                    ScrollView {
+                        VStack(spacing: FFSpacing.sm) {
+                            ForEach(items) { item in
+                                FFCard {
+                                    HStack(alignment: .top, spacing: FFSpacing.sm) {
+                                        VStack(alignment: .leading, spacing: FFSpacing.xs) {
+                                            Text(item.title)
+                                                .font(FFTypography.body.weight(.semibold))
+                                                .foregroundStyle(FFColors.textPrimary)
+                                            Text(item.subtitle)
+                                                .font(FFTypography.caption)
+                                                .foregroundStyle(FFColors.textSecondary)
+                                            Text("Источник: \(sourceTitle(item.source))")
+                                                .font(FFTypography.caption)
+                                                .foregroundStyle(FFColors.gray300)
+                                        }
+                                        Spacer(minLength: FFSpacing.xs)
+                                        FFBadge(status: badgeStatus(for: item.status))
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        .padding(.horizontal, FFSpacing.md)
+        .padding(.top, FFSpacing.md)
+        .padding(.bottom, FFSpacing.lg)
+        .presentationDetents([.medium, .large])
+        .background(FFColors.background)
+    }
+
+    private func sourceTitle(_ source: WorkoutSource) -> String {
+        switch source {
+        case .program:
+            "Программа"
+        case .freestyle:
+            "Freestyle"
+        case .template:
+            "Шаблон"
+        }
+    }
+
+    private func badgeStatus(for status: TrainingDayStatus) -> FFBadge.Status {
+        switch status {
+        case .planned:
+            .notStarted
+        case .completed:
+            .completed
+        case .missed:
+            .archived
         }
     }
 }
