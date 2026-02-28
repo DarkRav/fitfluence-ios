@@ -1,0 +1,4 @@
+#include "Base.xcconfig"
+BASE_URL =
+KEYCLOAK_URL =
+APP_ENVIRONMENT_NAME = PROD

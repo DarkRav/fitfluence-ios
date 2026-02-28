@@ -1,0 +1,4 @@
+#include "Base.xcconfig"
+BASE_URL = http://localhost:9876
+KEYCLOAK_URL = http://localhost:9990
+APP_ENVIRONMENT_NAME = DEV

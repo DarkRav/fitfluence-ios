@@ -7,13 +7,16 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		06931F2CD054F4E2CB1A73B4 /* Logging.swift in Sources */ = {isa = PBXBuildFile; fileRef = B0CE9CC0E1302819C8010358 /* Logging.swift */; };
 		1D7E67CC678EE15C79E3AB96 /* Typography.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2E5D8994FEA468EC4504CD0 /* Typography.swift */; };
 		2446FADE5A6601002AB8A61D /* Colors.swift in Sources */ = {isa = PBXBuildFile; fileRef = 87E0FAD6B3FC785EE59C774B /* Colors.swift */; };
 		24A48678A501B841969AB1EC /* RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 870E9DD10FEBC22074CF71BA /* RootView.swift */; };
 		268CC2843BD27BA0CDDE9075 /* ComposableArchitecture in Frameworks */ = {isa = PBXBuildFile; productRef = CF92C8BF8645F9BA258E283B /* ComposableArchitecture */; };
+		302383A11BF7E3A6A2017B59 /* PreviewMocks.swift in Sources */ = {isa = PBXBuildFile; fileRef = 967F2EF94A530FC0D94A6D5C /* PreviewMocks.swift */; };
 		47666B7411F0CE528FE8B1F4 /* FFErrorState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 151CCFD42F23601C4661B789 /* FFErrorState.swift */; };
 		5C6A1DDAACA62605B0E42581 /* FFLoadingState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2C571FBEBDFDA288B1E05B14 /* FFLoadingState.swift */; };
 		659A792308E4E63241F9DE2C /* FFBadge.swift in Sources */ = {isa = PBXBuildFile; fileRef = E190F6607FF86AE368CDC6DC /* FFBadge.swift */; };
+		849A338E87813F3C4CB7BF03 /* Environment.swift in Sources */ = {isa = PBXBuildFile; fileRef = 44A1273CE966730AE3C9922B /* Environment.swift */; };
 		B68CFEB25BF04441A03234E5 /* Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 86189A9947AC753259B89A8D /* Theme.swift */; };
 		BE14E4CFB655557D8C529CDF /* RootFeature.swift in Sources */ = {isa = PBXBuildFile; fileRef = CAEB6BFF14C57697C73E6CD3 /* RootFeature.swift */; };
 		C091B3E8CBC8FB1F8ABFDC95 /* FitfluenceApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2406C59ACFAD49D5F8BF8FC2 /* FitfluenceApp.swift */; };
@@ -40,12 +43,18 @@
 		2406C59ACFAD49D5F8BF8FC2 /* FitfluenceApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FitfluenceApp.swift; sourceTree = "<group>"; };
 		274454899BAE117E3568041E /* FitfluenceApp.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = FitfluenceApp.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		2C571FBEBDFDA288B1E05B14 /* FFLoadingState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFLoadingState.swift; sourceTree = "<group>"; };
+		44A1273CE966730AE3C9922B /* Environment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Environment.swift; sourceTree = "<group>"; };
+		4BB48B9AF4D57EE8E899CC9E /* Stage.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Stage.xcconfig; sourceTree = "<group>"; };
 		65EE21EADAEB1C46C1227CF6 /* FitfluenceTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = FitfluenceTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		86189A9947AC753259B89A8D /* Theme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Theme.swift; sourceTree = "<group>"; };
 		870E9DD10FEBC22074CF71BA /* RootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootView.swift; sourceTree = "<group>"; };
 		87E0FAD6B3FC785EE59C774B /* Colors.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Colors.swift; sourceTree = "<group>"; };
+		8B5464E69784604F0C29B39C /* Prod.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Prod.xcconfig; sourceTree = "<group>"; };
+		9244A63DF5237F20107DDA2E /* Dev.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Dev.xcconfig; sourceTree = "<group>"; };
+		967F2EF94A530FC0D94A6D5C /* PreviewMocks.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PreviewMocks.swift; sourceTree = "<group>"; };
 		A2E5D8994FEA468EC4504CD0 /* Typography.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Typography.swift; sourceTree = "<group>"; };
 		A97D9C4C6794471BA7C75525 /* FFButton.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFButton.swift; sourceTree = "<group>"; };
+		B0CE9CC0E1302819C8010358 /* Logging.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Logging.swift; sourceTree = "<group>"; };
 		B202B94DE2C375FB67F019B3 /* FFTextField.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFTextField.swift; sourceTree = "<group>"; };
 		CAEB6BFF14C57697C73E6CD3 /* RootFeature.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootFeature.swift; sourceTree = "<group>"; };
 		D45116A2BFE9402EC531FE76 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
@@ -66,6 +75,16 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		0D7CB9670CE34D83248C0D35 /* Configs */ = {
+			isa = PBXGroup;
+			children = (
+				9244A63DF5237F20107DDA2E /* Dev.xcconfig */,
+				8B5464E69784604F0C29B39C /* Prod.xcconfig */,
+				4BB48B9AF4D57EE8E899CC9E /* Stage.xcconfig */,
+			);
+			path = Configs;
+			sourceTree = "<group>";
+		};
 		859C07AB354F477587B5FCA6 /* App */ = {
 			isa = PBXGroup;
 			children = (
@@ -73,6 +92,7 @@
 				D45116A2BFE9402EC531FE76 /* Info.plist */,
 				AAAC776BF68BD9D9EAA0E275 /* DesignSystem */,
 				D292F30B286489A7E8DBAFB9 /* Root */,
+				8AAD2A15E46772C722633EDA /* Support */,
 			);
 			path = App;
 			sourceTree = "<group>";
@@ -84,6 +104,16 @@
 				65EE21EADAEB1C46C1227CF6 /* FitfluenceTests.xctest */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		8AAD2A15E46772C722633EDA /* Support */ = {
+			isa = PBXGroup;
+			children = (
+				44A1273CE966730AE3C9922B /* Environment.swift */,
+				B0CE9CC0E1302819C8010358 /* Logging.swift */,
+				967F2EF94A530FC0D94A6D5C /* PreviewMocks.swift */,
+			);
+			path = Support;
 			sourceTree = "<group>";
 		};
 		AAAC776BF68BD9D9EAA0E275 /* DesignSystem */ = {
@@ -132,6 +162,7 @@
 			isa = PBXGroup;
 			children = (
 				859C07AB354F477587B5FCA6 /* App */,
+				0D7CB9670CE34D83248C0D35 /* Configs */,
 				C61D88E577A786ED0C1385C5 /* Tests */,
 				88E87D442A12759AA8F36A2D /* Products */,
 			);
@@ -221,6 +252,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				2446FADE5A6601002AB8A61D /* Colors.swift in Sources */,
+				849A338E87813F3C4CB7BF03 /* Environment.swift in Sources */,
 				659A792308E4E63241F9DE2C /* FFBadge.swift in Sources */,
 				D0381F8271688F1DD55ECF64 /* FFButton.swift in Sources */,
 				F12AF47E2E6A7061D391E5F6 /* FFCard.swift in Sources */,
@@ -229,6 +261,8 @@
 				5C6A1DDAACA62605B0E42581 /* FFLoadingState.swift in Sources */,
 				F540D452CC4979E1CE3FDFED /* FFTextField.swift in Sources */,
 				C091B3E8CBC8FB1F8ABFDC95 /* FitfluenceApp.swift in Sources */,
+				06931F2CD054F4E2CB1A73B4 /* Logging.swift in Sources */,
+				302383A11BF7E3A6A2017B59 /* PreviewMocks.swift in Sources */,
 				BE14E4CFB655557D8C529CDF /* RootFeature.swift in Sources */,
 				24A48678A501B841969AB1EC /* RootView.swift in Sources */,
 				C3535BA80F21F23FCA8AE684 /* Spacing.swift in Sources */,
@@ -255,8 +289,9 @@
 /* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
-		02F0011B8FD7A98B1E175C34 /* Release */ = {
+		0A70EB44F2F2AFACF0162AD3 /* Prod */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = 8B5464E69784604F0C29B39C /* Prod.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
@@ -277,10 +312,103 @@
 				SWIFT_VERSION = 5.1;
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
-			name = Release;
+			name = Prod;
 		};
-		14F30DEF0BDEF4AA004D30B6 /* Debug */ = {
+		5553699BC8C39F2E212889FF /* Stage */ = {
 			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Stage;
+		};
+		776C024BDFFB61D6BA0F741E /* Prod */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 8B5464E69784604F0C29B39C /* Prod.xcconfig */;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.fitfluence.ios.tests;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/FitfluenceApp.app/FitfluenceApp";
+			};
+			name = Prod;
+		};
+		82CF90DF6665312E93544553 /* Stage */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 4BB48B9AF4D57EE8E899CC9E /* Stage.xcconfig */;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.fitfluence.ios.tests;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/FitfluenceApp.app/FitfluenceApp";
+			};
+			name = Stage;
+		};
+		90803C2F95682A702B9E84FF /* Dev */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 9244A63DF5237F20107DDA2E /* Dev.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
@@ -301,9 +429,83 @@
 				SWIFT_VERSION = 5.1;
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
-			name = Debug;
+			name = Dev;
 		};
-		21768CC0E65F658C6797337A /* Debug */ = {
+		93395F07439452D9A6D24909 /* Prod */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Prod;
+		};
+		B8607B3D6304C6123A192317 /* Dev */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 9244A63DF5237F20107DDA2E /* Dev.xcconfig */;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.fitfluence.ios.tests;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/FitfluenceApp.app/FitfluenceApp";
+			};
+			name = Dev;
+		};
+		C5608EC87744DF422979557B /* Dev */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
@@ -364,97 +566,32 @@
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
 				SWIFT_VERSION = 5.0;
 			};
-			name = Debug;
+			name = Dev;
 		};
-		C55EB005C791E56B7125E92D /* Release */ = {
+		D79080B958AB9061686E3680 /* Stage */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = 4BB48B9AF4D57EE8E899CC9E /* Stage.xcconfig */;
 			buildSettings = {
-				ALWAYS_SEARCH_USER_PATHS = NO;
-				CLANG_ANALYZER_NONNULL = YES;
-				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
-				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
-				CLANG_CXX_LIBRARY = "libc++";
-				CLANG_ENABLE_MODULES = YES;
-				CLANG_ENABLE_OBJC_ARC = YES;
-				CLANG_ENABLE_OBJC_WEAK = YES;
-				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
-				CLANG_WARN_BOOL_CONVERSION = YES;
-				CLANG_WARN_COMMA = YES;
-				CLANG_WARN_CONSTANT_CONVERSION = YES;
-				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
-				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
-				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
-				CLANG_WARN_EMPTY_BODY = YES;
-				CLANG_WARN_ENUM_CONVERSION = YES;
-				CLANG_WARN_INFINITE_RECURSION = YES;
-				CLANG_WARN_INT_CONVERSION = YES;
-				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
-				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
-				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
-				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
-				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
-				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
-				CLANG_WARN_STRICT_PROTOTYPES = YES;
-				CLANG_WARN_SUSPICIOUS_MOVE = YES;
-				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
-				CLANG_WARN_UNREACHABLE_CODE = YES;
-				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
-				COPY_PHASE_STRIP = NO;
-				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
-				ENABLE_NS_ASSERTIONS = NO;
-				ENABLE_STRICT_OBJC_MSGSEND = YES;
-				GCC_C_LANGUAGE_STANDARD = gnu11;
-				GCC_NO_COMMON_BLOCKS = YES;
-				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
-				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
-				GCC_WARN_UNDECLARED_SELECTOR = YES;
-				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
-				GCC_WARN_UNUSED_FUNCTION = YES;
-				GCC_WARN_UNUSED_VARIABLE = YES;
-				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
-				MTL_ENABLE_DEBUG_INFO = NO;
-				MTL_FAST_MATH = YES;
-				PRODUCT_NAME = "$(TARGET_NAME)";
-				SDKROOT = iphoneos;
-				SWIFT_COMPILATION_MODE = wholemodule;
-				SWIFT_OPTIMIZATION_LEVEL = "-O";
-				SWIFT_VERSION = 5.0;
-			};
-			name = Release;
-		};
-		CCA6CBA42BB9D54D5C8320C5 /* Release */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				BUNDLE_LOADER = "$(TEST_HOST)";
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = App/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
-					"@loader_path/Frameworks",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = com.fitfluence.ios.tests;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.fitfluence.ios;
+				PRODUCT_NAME = Fitfluence;
 				SDKROOT = iphoneos;
+				SWIFT_VERSION = 5.1;
 				TARGETED_DEVICE_FAMILY = "1,2";
-				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/FitfluenceApp.app/FitfluenceApp";
 			};
-			name = Release;
-		};
-		D4DE59D6345969D6EE1B3CE9 /* Debug */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				BUNDLE_LOADER = "$(TEST_HOST)";
-				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
-				LD_RUNPATH_SEARCH_PATHS = (
-					"$(inherited)",
-					"@executable_path/Frameworks",
-					"@loader_path/Frameworks",
-				);
-				PRODUCT_BUNDLE_IDENTIFIER = com.fitfluence.ios.tests;
-				SDKROOT = iphoneos;
-				TARGETED_DEVICE_FAMILY = "1,2";
-				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/FitfluenceApp.app/FitfluenceApp";
-			};
-			name = Debug;
+			name = Stage;
 		};
 /* End XCBuildConfiguration section */
 
@@ -462,29 +599,32 @@
 		365A57E9C02065B065F60FD0 /* Build configuration list for PBXNativeTarget "FitfluenceApp" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
-				14F30DEF0BDEF4AA004D30B6 /* Debug */,
-				02F0011B8FD7A98B1E175C34 /* Release */,
+				90803C2F95682A702B9E84FF /* Dev */,
+				0A70EB44F2F2AFACF0162AD3 /* Prod */,
+				D79080B958AB9061686E3680 /* Stage */,
 			);
 			defaultConfigurationIsVisible = 0;
-			defaultConfigurationName = Debug;
+			defaultConfigurationName = Dev;
 		};
 		64CDBB74EC3FB63664C8D647 /* Build configuration list for PBXNativeTarget "FitfluenceTests" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
-				D4DE59D6345969D6EE1B3CE9 /* Debug */,
-				CCA6CBA42BB9D54D5C8320C5 /* Release */,
+				B8607B3D6304C6123A192317 /* Dev */,
+				776C024BDFFB61D6BA0F741E /* Prod */,
+				82CF90DF6665312E93544553 /* Stage */,
 			);
 			defaultConfigurationIsVisible = 0;
-			defaultConfigurationName = Debug;
+			defaultConfigurationName = Dev;
 		};
 		6E3E84CAF377BD7520FC274A /* Build configuration list for PBXProject "Fitfluence" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
-				21768CC0E65F658C6797337A /* Debug */,
-				C55EB005C791E56B7125E92D /* Release */,
+				C5608EC87744DF422979557B /* Dev */,
+				93395F07439452D9A6D24909 /* Prod */,
+				5553699BC8C39F2E212889FF /* Stage */,
 			);
 			defaultConfigurationIsVisible = 0;
-			defaultConfigurationName = Debug;
+			defaultConfigurationName = Dev;
 		};
 /* End XCConfigurationList section */
 

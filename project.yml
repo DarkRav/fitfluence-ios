@@ -8,8 +8,9 @@ packages:
     url: https://github.com/pointfreeco/swift-composable-architecture
     from: 1.10.0
 configs:
-  Debug: debug
-  Release: release
+  Dev: debug
+  Stage: release
+  Prod: release
 targets:
   FitfluenceApp:
     type: application
@@ -17,6 +18,10 @@ targets:
     deploymentTarget: '17.0'
     sources:
       - App
+    configFiles:
+      Dev: Configs/Dev.xcconfig
+      Stage: Configs/Stage.xcconfig
+      Prod: Configs/Prod.xcconfig
     info:
       path: App/Info.plist
       properties:
@@ -43,6 +48,10 @@ targets:
     deploymentTarget: '17.0'
     sources:
       - Tests
+    configFiles:
+      Dev: Configs/Dev.xcconfig
+      Stage: Configs/Stage.xcconfig
+      Prod: Configs/Prod.xcconfig
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.fitfluence.ios.tests

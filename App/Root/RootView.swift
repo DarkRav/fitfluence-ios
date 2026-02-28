@@ -3,11 +3,12 @@ import ComposableArchitecture
 
 struct RootView: View {
     @Bindable var store: StoreOf<RootFeature>
+    let environment: AppEnvironment
 
     var body: some View {
         TabView(selection: $store.selectedTab.sending(\RootFeature.Action.tabSelected)) {
             NavigationStack {
-                CatalogPlaceholderView()
+                CatalogPlaceholderView(environment: environment)
                     .padding(.horizontal, FFSpacing.md)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
                     .background(FFColors.background)
@@ -47,6 +48,8 @@ struct RootView: View {
 }
 
 private struct CatalogPlaceholderView: View {
+    let environment: AppEnvironment
+
     var body: some View {
         VStack(spacing: FFSpacing.md) {
             FFCard {
@@ -58,6 +61,9 @@ private struct CatalogPlaceholderView: View {
                     Text("Скоро здесь появятся программы тренировок с подборками по целям.")
                         .font(FFTypography.body)
                         .foregroundStyle(FFColors.textSecondary)
+                    Text("Окружение: \(environment.name)")
+                        .font(FFTypography.caption)
+                        .foregroundStyle(FFColors.gray300)
                 }
             }
             FFEmptyState(title: "Каталог формируется", message: "Добавим первые программы в ближайших итерациях")
