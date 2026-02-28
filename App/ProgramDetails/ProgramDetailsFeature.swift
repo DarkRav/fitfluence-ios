@@ -10,6 +10,7 @@ struct ProgramDetailsFeature {
         var details: ProgramDetails?
         var workoutsList: WorkoutsListFeature.State?
         var workoutPlayer: WorkoutPlayerFeature.State?
+        var workoutCompletion: WorkoutCompletionFeature.State?
         var isLoading = false
         var isStartingProgram = false
         var error: UserFacingError?
@@ -27,6 +28,8 @@ struct ProgramDetailsFeature {
         case workoutsListDismissed
         case workoutPlayer(WorkoutPlayerFeature.Action)
         case workoutPlayerDismissed
+        case workoutCompletion(WorkoutCompletionFeature.Action)
+        case workoutCompletionDismissed
     }
 
     private let programsClient: ProgramsClientProtocol?
@@ -124,13 +127,26 @@ struct ProgramDetailsFeature {
                 state.workoutPlayer = nil
                 return .none
 
-            case .workoutPlayer(.delegate(.workoutCompleted)):
+            case let .workoutPlayer(.delegate(.workoutCompleted(summary))):
+                state.workoutCompletion = WorkoutCompletionFeature.State(summary: summary)
+                return .none
+
+            case .workoutCompletionDismissed:
+                state.workoutCompletion = nil
+                return .none
+
+            case .workoutCompletion(.delegate(.close)):
+                state.workoutCompletion = nil
+                state.workoutPlayer = nil
                 return .none
 
             case .workoutsList:
                 return .none
 
             case .workoutPlayer:
+                return .none
+
+            case .workoutCompletion:
                 return .none
             }
         }
@@ -139,6 +155,9 @@ struct ProgramDetailsFeature {
         }
         .ifLet(\.workoutPlayer, action: \.workoutPlayer) { [workoutsClient, progressStore] in
             WorkoutPlayerFeature(workoutsClient: workoutsClient, progressStore: progressStore)
+        }
+        .ifLet(\.workoutCompletion, action: \.workoutCompletion) {
+            WorkoutCompletionFeature()
         }
     }
 
