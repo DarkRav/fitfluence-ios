@@ -28,6 +28,14 @@ struct WorkoutsListView: View {
                 } else {
                     ScrollView {
                         VStack(spacing: FFSpacing.sm) {
+                            if viewStore.isShowingCachedData {
+                                FFCard {
+                                    Text("Оффлайн. Показаны сохранённые данные.")
+                                        .font(FFTypography.caption.weight(.semibold))
+                                        .foregroundStyle(FFColors.primary)
+                                }
+                            }
+
                             ForEach(viewStore.workouts) { workout in
                                 workoutCard(
                                     workout,

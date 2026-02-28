@@ -8,6 +8,14 @@ struct WorkoutPlayerView: View {
         WithViewStore(store, observe: { $0 }) { viewStore in
             ScrollView {
                 VStack(spacing: FFSpacing.md) {
+                    if viewStore.isShowingCachedData {
+                        FFCard {
+                            Text("Оффлайн. Показаны сохранённые данные.")
+                                .font(FFTypography.caption.weight(.semibold))
+                                .foregroundStyle(FFColors.primary)
+                        }
+                    }
+
                     if viewStore.isLoading, viewStore.workout == nil {
                         FFLoadingState(title: "Открываем тренировку")
                     } else if let error = viewStore.error, viewStore.workout == nil {

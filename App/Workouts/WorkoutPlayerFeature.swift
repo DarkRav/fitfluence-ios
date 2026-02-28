@@ -26,6 +26,7 @@ struct WorkoutPlayerFeature {
         let programId: String
         let workoutId: String
         var workout: WorkoutDetailsModel?
+        var isShowingCachedData = false
         var currentExerciseIndex = 0
         var perExerciseState: [String: ExerciseProgress] = [:]
         var isLoading = false
@@ -37,6 +38,7 @@ struct WorkoutPlayerFeature {
     enum Action: Equatable {
         case onAppear
         case retry
+        case cachedDetailsResponse(WorkoutDetailsModel?)
         case detailsResponse(Result<WorkoutDetailsModel, APIError>)
         case loadedProgress(WorkoutProgressSnapshot?)
         case nextExerciseTapped
@@ -55,10 +57,19 @@ struct WorkoutPlayerFeature {
 
     private let workoutsClient: WorkoutsClientProtocol
     private let progressStore: WorkoutProgressStore
+    private let cacheStore: CacheStore
+    private let networkMonitor: NetworkMonitoring
 
-    init(workoutsClient: WorkoutsClientProtocol, progressStore: WorkoutProgressStore) {
+    init(
+        workoutsClient: WorkoutsClientProtocol,
+        progressStore: WorkoutProgressStore,
+        cacheStore: CacheStore = CompositeCacheStore(),
+        networkMonitor: NetworkMonitoring = StaticNetworkMonitor(currentStatus: true),
+    ) {
         self.workoutsClient = workoutsClient
         self.progressStore = progressStore
+        self.cacheStore = cacheStore
+        self.networkMonitor = networkMonitor
     }
 
     var body: some ReducerOf<Self> {
@@ -69,12 +80,36 @@ struct WorkoutPlayerFeature {
                 state.isLoading = true
                 state.error = nil
                 state.progressStorageMode = workoutsClient.progressStorageMode
-                return loadWorkout(programId: state.programId, workoutId: state.workoutId)
+                return .concatenate(
+                    loadCachedWorkout(programId: state.programId, workoutId: state.workoutId, namespace: state.userSub),
+                    loadWorkout(programId: state.programId, workoutId: state.workoutId),
+                )
 
             case .retry:
                 state.isLoading = true
                 state.error = nil
-                return loadWorkout(programId: state.programId, workoutId: state.workoutId)
+                return .concatenate(
+                    loadCachedWorkout(programId: state.programId, workoutId: state.workoutId, namespace: state.userSub),
+                    loadWorkout(programId: state.programId, workoutId: state.workoutId),
+                )
+
+            case let .cachedDetailsResponse(cached):
+                guard let cached else { return .none }
+                state.workout = cached
+                state.currentExerciseIndex = 0
+                state.perExerciseState = makeExerciseProgress(for: cached)
+                state.isShowingCachedData = true
+                let userSub = state.userSub
+                let programId = state.programId
+                let workoutId = state.workoutId
+                return .run { [progressStore] send in
+                    let snapshot = await progressStore.load(
+                        userSub: userSub,
+                        programId: programId,
+                        workoutId: workoutId,
+                    )
+                    await send(.loadedProgress(snapshot))
+                }
 
             case let .detailsResponse(result):
                 state.isLoading = false
@@ -83,19 +118,32 @@ struct WorkoutPlayerFeature {
                     state.workout = workout
                     state.currentExerciseIndex = 0
                     state.perExerciseState = makeExerciseProgress(for: workout)
+                    state.isShowingCachedData = false
                     state.error = nil
                     let userSub = state.userSub
                     let programId = state.programId
                     let workoutId = state.workoutId
-                    return .run { [progressStore] send in
-                        let snapshot = await progressStore.load(
-                            userSub: userSub,
-                            programId: programId,
-                            workoutId: workoutId,
-                        )
-                        await send(.loadedProgress(snapshot))
-                    }
+                    let namespace = state.userSub
+                    let key = cacheKey(programId: state.programId, workoutId: workout.id)
+                    return .merge(
+                        .run { [cacheStore] _ in
+                            await cacheStore.set(key, value: workout, namespace: namespace, ttl: 60 * 30)
+                        },
+                        .run { [progressStore] send in
+                            let snapshot = await progressStore.load(
+                                userSub: userSub,
+                                programId: programId,
+                                workoutId: workoutId,
+                            )
+                            await send(.loadedProgress(snapshot))
+                        },
+                    )
                 case let .failure(error):
+                    if error == .offline || !networkMonitor.currentStatus, state.workout != nil {
+                        state.error = nil
+                        state.isShowingCachedData = true
+                        return .none
+                    }
                     state.error = error.workoutPlayerUserFacingError
                     return .none
                 }
@@ -187,6 +235,14 @@ struct WorkoutPlayerFeature {
         }
     }
 
+    private func loadCachedWorkout(programId: String, workoutId: String, namespace: String) -> Effect<Action> {
+        .run { [cacheStore] send in
+            let key = cacheKey(programId: programId, workoutId: workoutId)
+            let cached = await cacheStore.get(key, as: WorkoutDetailsModel.self, namespace: namespace)
+            await send(.cachedDetailsResponse(cached))
+        }
+    }
+
     private func makeExerciseProgress(for workout: WorkoutDetailsModel) -> [String: ExerciseProgress] {
         var result: [String: ExerciseProgress] = [:]
         for exercise in workout.exercises {
@@ -261,6 +317,10 @@ struct WorkoutPlayerFeature {
             totalExercises: workout.exercises.count,
             completedSets: completedSets,
         )
+    }
+
+    private func cacheKey(programId: String, workoutId: String) -> String {
+        "workout.details:\(programId):\(workoutId)"
     }
 }
 

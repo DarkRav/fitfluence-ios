@@ -21,7 +21,12 @@ final class WorkoutsFeatureAndProgressStoreTests: XCTestCase {
         let store = TestStore(
             initialState: WorkoutsListFeature.State(programId: "p1", userSub: "u1"),
         ) {
-            WorkoutsListFeature(workoutsClient: workoutsClient, progressStore: progressStore)
+            WorkoutsListFeature(
+                workoutsClient: workoutsClient,
+                progressStore: progressStore,
+                cacheStore: MemoryCacheStore(),
+                networkMonitor: StaticNetworkMonitor(currentStatus: true),
+            )
         }
 
         await store.send(.onAppear) {
@@ -29,11 +34,14 @@ final class WorkoutsFeatureAndProgressStoreTests: XCTestCase {
             $0.error = nil
         }
 
+        await store.receive(.cachedResponse(nil))
+
         await store.receive(.response(.success(workouts))) {
             $0.isLoading = false
             $0.isRefreshing = false
             $0.workouts = workouts
             $0.error = nil
+            $0.isShowingCachedData = false
         }
 
         await store.receive(.statusesLoaded(["w1": .inProgress, "w2": .completed])) {
@@ -50,13 +58,20 @@ final class WorkoutsFeatureAndProgressStoreTests: XCTestCase {
         let store = TestStore(
             initialState: WorkoutsListFeature.State(programId: "p1", userSub: "u1"),
         ) {
-            WorkoutsListFeature(workoutsClient: workoutsClient, progressStore: MockWorkoutProgressStore(statuses: [:]))
+            WorkoutsListFeature(
+                workoutsClient: workoutsClient,
+                progressStore: MockWorkoutProgressStore(statuses: [:]),
+                cacheStore: MemoryCacheStore(),
+                networkMonitor: StaticNetworkMonitor(currentStatus: true),
+            )
         }
 
         await store.send(.onAppear) {
             $0.isLoading = true
             $0.error = nil
         }
+
+        await store.receive(.cachedResponse(nil))
 
         await store.receive(.response(.failure(.offline))) {
             $0.isLoading = false
@@ -93,6 +108,8 @@ final class WorkoutsFeatureAndProgressStoreTests: XCTestCase {
             $0.progressStorageMode = .localOnly
         }
 
+        await store.receive(.cachedDetailsResponse(nil))
+
         await store.receive(.detailsResponse(.success(sampleWorkoutDetails))) { [self] in
             $0.isLoading = false
             $0.workout = self.sampleWorkoutDetails
@@ -105,6 +122,7 @@ final class WorkoutsFeatureAndProgressStoreTests: XCTestCase {
                     ],
                 ),
             ]
+            $0.isShowingCachedData = false
             $0.error = nil
         }
 

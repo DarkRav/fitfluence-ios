@@ -183,11 +183,26 @@ struct ProgramDetailsFeature {
                 return .none
             }
         }
-        .ifLet(\.workoutsList, action: \.workoutsList) { [workoutsClient, progressStore] in
-            WorkoutsListFeature(workoutsClient: workoutsClient, progressStore: progressStore)
+        .ifLet(\.workoutsList, action: \.workoutsList) { [workoutsClient, progressStore, cacheStore, networkMonitor] in
+            WorkoutsListFeature(
+                workoutsClient: workoutsClient,
+                progressStore: progressStore,
+                cacheStore: cacheStore,
+                networkMonitor: networkMonitor,
+            )
         }
-        .ifLet(\.workoutPlayer, action: \.workoutPlayer) { [workoutsClient, progressStore] in
-            WorkoutPlayerFeature(workoutsClient: workoutsClient, progressStore: progressStore)
+        .ifLet(\.workoutPlayer, action: \.workoutPlayer) { [
+            workoutsClient,
+            progressStore,
+            cacheStore,
+            networkMonitor,
+        ] in
+            WorkoutPlayerFeature(
+                workoutsClient: workoutsClient,
+                progressStore: progressStore,
+                cacheStore: cacheStore,
+                networkMonitor: networkMonitor,
+            )
         }
         .ifLet(\.workoutCompletion, action: \.workoutCompletion) {
             WorkoutCompletionFeature()

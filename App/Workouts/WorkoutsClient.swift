@@ -5,7 +5,7 @@ enum WorkoutProgressStorageMode: String, Equatable, Sendable {
     case serverBacked
 }
 
-struct WorkoutSummary: Equatable, Sendable, Identifiable {
+struct WorkoutSummary: Codable, Equatable, Sendable, Identifiable {
     let id: String
     let title: String
     let dayOrder: Int
@@ -13,7 +13,7 @@ struct WorkoutSummary: Equatable, Sendable, Identifiable {
     let estimatedDurationMinutes: Int?
 }
 
-struct WorkoutDetailsModel: Equatable, Sendable, Identifiable {
+struct WorkoutDetailsModel: Codable, Equatable, Sendable, Identifiable {
     let id: String
     let title: String
     let dayOrder: Int
@@ -21,7 +21,7 @@ struct WorkoutDetailsModel: Equatable, Sendable, Identifiable {
     let exercises: [WorkoutExercise]
 }
 
-struct WorkoutExercise: Equatable, Sendable, Identifiable {
+struct WorkoutExercise: Codable, Equatable, Sendable, Identifiable {
     let id: String
     let name: String
     let sets: Int
