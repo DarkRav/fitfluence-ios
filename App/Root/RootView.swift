@@ -48,6 +48,25 @@ struct RootView: View {
                     Label("Профиль", systemImage: "person.crop.circle")
                 }
                 .tag(RootFeature.Tab.profile)
+
+#if DEBUG
+                NavigationStack {
+                    DiagnosticsView(
+                        store: store.scope(
+                            state: \.diagnostics,
+                            action: \.diagnostics
+                        )
+                    )
+                    .padding(.horizontal, FFSpacing.md)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                    .background(FFColors.background)
+                    .navigationTitle("Диагностика")
+                }
+                .tabItem {
+                    Label("Диагностика", systemImage: "waveform.path.ecg")
+                }
+                .tag(RootFeature.Tab.diagnostics)
+#endif
             }
             .tint(FFColors.accent)
         }

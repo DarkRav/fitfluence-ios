@@ -1,0 +1,84 @@
+import ComposableArchitecture
+import SwiftUI
+
+struct DiagnosticsView: View {
+    let store: StoreOf<DiagnosticsFeature>
+
+    var body: some View {
+        WithViewStore(store, observe: { $0 }) { viewStore in
+            VStack(spacing: FFSpacing.md) {
+                FFCard {
+                    VStack(alignment: .leading, spacing: FFSpacing.xs) {
+                        Text("Диагностика API")
+                            .font(FFTypography.h2)
+                            .foregroundStyle(FFColors.textPrimary)
+                        Text("Проверка выполняет безопасный запрос `/actuator/health`.")
+                            .font(FFTypography.body)
+                            .foregroundStyle(FFColors.textSecondary)
+                    }
+                }
+
+                FFButton(title: "Проверить соединение", variant: .primary) {
+                    viewStore.send(.checkConnectionTapped)
+                }
+
+                switch viewStore.phase {
+                case .idle:
+                    FFEmptyState(
+                        title: "Ожидаем проверку",
+                        message: "Нажмите кнопку, чтобы проверить доступность backend"
+                    )
+
+                case .loading:
+                    FFLoadingState(title: "Выполняем запрос к серверу")
+
+                case let .success(response):
+                    FFCard {
+                        VStack(alignment: .leading, spacing: FFSpacing.xs) {
+                            FFBadge(status: .published)
+                            Text("Соединение установлено")
+                                .font(FFTypography.h2)
+                                .foregroundStyle(FFColors.textPrimary)
+                            Text("Статус сервиса: \(response.status)")
+                                .font(FFTypography.body)
+                                .foregroundStyle(FFColors.textSecondary)
+                        }
+                    }
+
+                case let .failure(error):
+                    FFErrorState(
+                        title: "Проверка не пройдена",
+                        message: error.userMessage,
+                        retryTitle: "Повторить"
+                    ) {
+                        viewStore.send(.checkConnectionTapped)
+                    }
+                }
+
+                Spacer()
+            }
+            .padding(.top, FFSpacing.md)
+        }
+    }
+}
+
+private extension APIError {
+    var userMessage: String {
+        switch self {
+        case .offline:
+            return "Нет подключения к интернету"
+        case .timeout, .transportError, .httpError:
+            return "Сервер недоступен"
+        case .unauthorized:
+            return "Требуется авторизация"
+        case .forbidden:
+            return "Доступ запрещён"
+        case .serverError:
+            return "Ошибка сервера"
+        case .decodingError:
+            return "Не удалось обработать ответ"
+        case .cancelled, .invalidURL, .unknown:
+            return "Неизвестная ошибка"
+        }
+    }
+}

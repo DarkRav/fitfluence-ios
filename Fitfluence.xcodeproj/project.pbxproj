@@ -25,12 +25,14 @@
 		A7468B42E0564F56E4DEA037 /* APIError.swift in Sources */ = {isa = PBXBuildFile; fileRef = D049FFBF6B3F8E522C058CAA /* APIError.swift */; };
 		A894EEF1CB87660C0CDB9600 /* HTTPClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 14C19E971649693B43AC91DB /* HTTPClient.swift */; };
 		B68CFEB25BF04441A03234E5 /* Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 86189A9947AC753259B89A8D /* Theme.swift */; };
+		B9F03E8D15122E06EEABC9B3 /* DiagnosticsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 02FB6451DC5112CB7DE94103 /* DiagnosticsView.swift */; };
 		BAE62E7712F38E9F49845685 /* NetworkingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 59F8273C6875008A5C9A3300 /* NetworkingTests.swift */; };
 		BE14E4CFB655557D8C529CDF /* RootFeature.swift in Sources */ = {isa = PBXBuildFile; fileRef = CAEB6BFF14C57697C73E6CD3 /* RootFeature.swift */; };
 		C091B3E8CBC8FB1F8ABFDC95 /* FitfluenceApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2406C59ACFAD49D5F8BF8FC2 /* FitfluenceApp.swift */; };
 		C3535BA80F21F23FCA8AE684 /* Spacing.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A3A5018D89BEF09A1424EEF /* Spacing.swift */; };
 		D0381F8271688F1DD55ECF64 /* FFButton.swift in Sources */ = {isa = PBXBuildFile; fileRef = A97D9C4C6794471BA7C75525 /* FFButton.swift */; };
 		D0EDEA7F9D27535EA83A0F26 /* FFEmptyState.swift in Sources */ = {isa = PBXBuildFile; fileRef = E40B5498BB99116B3021C4E4 /* FFEmptyState.swift */; };
+		DE67CA63B6CB763CE7FF9FD8 /* DiagnosticsFeature.swift in Sources */ = {isa = PBXBuildFile; fileRef = F985AA318869C8870BDA6187 /* DiagnosticsFeature.swift */; };
 		F12AF47E2E6A7061D391E5F6 /* FFCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4D6772D2C40BCF7FEB3C45C /* FFCard.swift */; };
 		F540D452CC4979E1CE3FDFED /* FFTextField.swift in Sources */ = {isa = PBXBuildFile; fileRef = B202B94DE2C375FB67F019B3 /* FFTextField.swift */; };
 		F8D8480922CC1CB246C5C711 /* DesignSystemTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 94FD710E5EFA916159BCCE7D /* DesignSystemTests.swift */; };
@@ -47,6 +49,7 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+		02FB6451DC5112CB7DE94103 /* DiagnosticsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiagnosticsView.swift; sourceTree = "<group>"; };
 		0A3A5018D89BEF09A1424EEF /* Spacing.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Spacing.swift; sourceTree = "<group>"; };
 		14C19E971649693B43AC91DB /* HTTPClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HTTPClient.swift; sourceTree = "<group>"; };
 		151CCFD42F23601C4661B789 /* FFErrorState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFErrorState.swift; sourceTree = "<group>"; };
@@ -79,6 +82,7 @@
 		E1984067FE9FCB6709C5D963 /* MockURLProtocol.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MockURLProtocol.swift; sourceTree = "<group>"; };
 		E40B5498BB99116B3021C4E4 /* FFEmptyState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFEmptyState.swift; sourceTree = "<group>"; };
 		ED3B939F25D70B624ECD73AC /* APILogger.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APILogger.swift; sourceTree = "<group>"; };
+		F985AA318869C8870BDA6187 /* DiagnosticsFeature.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiagnosticsFeature.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -103,6 +107,15 @@
 			path = Configs;
 			sourceTree = "<group>";
 		};
+		2B8FF2D42D4065D13B51126A /* Diagnostics */ = {
+			isa = PBXGroup;
+			children = (
+				F985AA318869C8870BDA6187 /* DiagnosticsFeature.swift */,
+				02FB6451DC5112CB7DE94103 /* DiagnosticsView.swift */,
+			);
+			path = Diagnostics;
+			sourceTree = "<group>";
+		};
 		58F67AC41220B348AE247B79 /* Networking */ = {
 			isa = PBXGroup;
 			children = (
@@ -122,6 +135,7 @@
 				2406C59ACFAD49D5F8BF8FC2 /* FitfluenceApp.swift */,
 				D45116A2BFE9402EC531FE76 /* Info.plist */,
 				AAAC776BF68BD9D9EAA0E275 /* DesignSystem */,
+				2B8FF2D42D4065D13B51126A /* Diagnostics */,
 				58F67AC41220B348AE247B79 /* Networking */,
 				D292F30B286489A7E8DBAFB9 /* Root */,
 				8AAD2A15E46772C722633EDA /* Support */,
@@ -292,6 +306,8 @@
 				0AF9ACEEACEF5516F5A125FC /* APIRequest.swift in Sources */,
 				28A1BACADED54018734A2488 /* AuthTokenProvider.swift in Sources */,
 				2446FADE5A6601002AB8A61D /* Colors.swift in Sources */,
+				DE67CA63B6CB763CE7FF9FD8 /* DiagnosticsFeature.swift in Sources */,
+				B9F03E8D15122E06EEABC9B3 /* DiagnosticsView.swift in Sources */,
 				849A338E87813F3C4CB7BF03 /* Environment.swift in Sources */,
 				659A792308E4E63241F9DE2C /* FFBadge.swift in Sources */,
 				D0381F8271688F1DD55ECF64 /* FFButton.swift in Sources */,
