@@ -5,7 +5,6 @@ struct RootFeature {
     private let sessionManager: SessionManaging
     private let authService: AuthServiceProtocol
     private let apiClient: APIClientProtocol?
-    private let progressStore: WorkoutProgressStore
     private let cacheStore: CacheStore
     private let networkMonitor: NetworkMonitoring
     private let athleteClient: AthleteProfileClientProtocol?
@@ -14,14 +13,12 @@ struct RootFeature {
         sessionManager: SessionManaging,
         authService: AuthServiceProtocol,
         apiClient: APIClientProtocol?,
-        progressStore: WorkoutProgressStore = LocalWorkoutProgressStore(),
         cacheStore: CacheStore = CompositeCacheStore(),
         networkMonitor: NetworkMonitoring = StaticNetworkMonitor(currentStatus: true),
     ) {
         self.sessionManager = sessionManager
         self.authService = authService
         self.apiClient = apiClient
-        self.progressStore = progressStore
         self.cacheStore = cacheStore
         self.networkMonitor = networkMonitor
         athleteClient = apiClient as? AthleteProfileClientProtocol
@@ -29,11 +26,16 @@ struct RootFeature {
 
     @ObservableState
     struct State: Equatable {
+        struct SelectedProgram: Equatable {
+            let programId: String
+            let userSub: String
+        }
+
         var hasBootstrapped = false
         var isOnline = true
         var sessionState: RootSessionState = .authenticating
         var catalog = CatalogFeature.State()
-        var programDetails: ProgramDetailsFeature.State?
+        var selectedProgram: SelectedProgram?
         var onboarding: OnboardingFeature.State?
     }
 
@@ -46,7 +48,6 @@ struct RootFeature {
         case sessionResolved(RootSessionState)
         case onboarding(OnboardingFeature.Action)
         case catalog(CatalogFeature.Action)
-        case programDetails(ProgramDetailsFeature.Action)
         case programDetailsDismissed
     }
 
@@ -124,16 +125,14 @@ struct RootFeature {
                         state.catalog.cacheNamespace
                     }
                     state.sessionState = .authenticating
-                    state.programDetails = nil
+                    state.selectedProgram = nil
                     return .run { [sessionManager, cacheStore] send in
                         await cacheStore.clearAll(namespace: namespace)
                         let nextState = await sessionManager.logout()
                         await send(.sessionResolved(nextState))
                     }
 
-                case .catalog(.programsResponse(.failure(.unauthorized), _)),
-                     .programDetails(.detailsResponse(.failure(.unauthorized))),
-                     .programDetails(.startProgramResponse(.failure(.unauthorized))):
+                case .catalog(.programsResponse(.failure(.unauthorized), _)):
                     return forceLogout(&state)
 
                 case let .networkStatusChanged(status):
@@ -161,7 +160,7 @@ struct RootFeature {
                     } else {
                         "anonymous"
                     }
-                    state.programDetails = ProgramDetailsFeature.State(
+                    state.selectedProgram = State.SelectedProgram(
                         programId: programID,
                         userSub: userSub,
                     )
@@ -170,11 +169,8 @@ struct RootFeature {
                 case .catalog:
                     return .none
 
-                case .programDetails:
-                    return .none
-
                 case .programDetailsDismissed:
-                    state.programDetails = nil
+                    state.selectedProgram = nil
                     return .none
 
                 case let .onboarding(.delegate(.sessionResolved(nextState))):
@@ -197,13 +193,6 @@ struct RootFeature {
                 sessionManager: sessionManager,
             )
         }
-        .ifLet(\.programDetails, action: \.programDetails) { [apiClient, cacheStore, networkMonitor] in
-            ProgramDetailsFeature(
-                programsClient: apiClient as? ProgramsClientProtocol,
-                cacheStore: cacheStore,
-                networkMonitor: networkMonitor,
-            )
-        }
     }
 
     private func forceLogout(_ state: inout State) -> Effect<Action> {
@@ -214,7 +203,7 @@ struct RootFeature {
         }
 
         state.sessionState = .authenticating
-        state.programDetails = nil
+        state.selectedProgram = nil
         state.onboarding = nil
 
         return .run { [sessionManager, cacheStore] send in

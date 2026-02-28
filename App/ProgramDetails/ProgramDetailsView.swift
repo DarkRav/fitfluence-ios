@@ -1,123 +1,207 @@
-import ComposableArchitecture
+import Observation
 import SwiftUI
 
-struct ProgramDetailsView: View {
-    let store: StoreOf<ProgramDetailsFeature>
-    let environment: AppEnvironment
-    let apiClient: APIClientProtocol?
+@Observable
+@MainActor
+final class ProgramDetailsViewModel {
+    struct SelectedWorkout: Equatable, Identifiable {
+        let userSub: String
+        let programId: String
+        let workoutId: String
 
-    private struct ViewState: Equatable {
-        let isWorkoutsPresented: Bool
-        let isWorkoutPlayerPresented: Bool
+        var id: String { "\(programId)::\(workoutId)" }
     }
 
-    var body: some View {
-        WithViewStore(
-            store,
-            observe: {
-                ViewState(
-                    isWorkoutsPresented: $0.isWorkoutsPresented,
-                    isWorkoutPlayerPresented: $0.selectedWorkout != nil,
-                )
-            },
-        ) { navViewStore in
-            WithViewStore(store, observe: { $0 }) { viewStore in
-                ScrollView {
-                    VStack(spacing: FFSpacing.md) {
-                        if viewStore.isShowingCachedData {
-                            FFCard {
-                                Text("Оффлайн. Показаны сохранённые данные.")
-                                    .font(FFTypography.caption.weight(.semibold))
-                                    .foregroundStyle(FFColors.primary)
-                            }
-                        }
+    let programId: String
+    let userSub: String
 
-                        if viewStore.isLoading, viewStore.details == nil {
-                            loadingState
-                        } else if let error = viewStore.error, viewStore.details == nil {
-                            FFErrorState(
-                                title: error.title,
-                                message: error.message,
-                                retryTitle: "Повторить",
-                                onRetry: { viewStore.send(.retry) },
-                            )
-                        } else if let details = viewStore.details {
-                            header(details: details)
-                            about(details: details)
-                            workouts(details: details)
-                            startProgramBlock(details: details, viewStore: viewStore)
-                            if let successMessage = viewStore.successMessage {
-                                FFCard {
-                                    Text(successMessage)
-                                        .font(FFTypography.body)
-                                        .foregroundStyle(FFColors.accent)
-                                        .multilineTextAlignment(.leading)
-                                }
-                            }
-                        } else {
-                            FFEmptyState(title: "Программа не найдена", message: "Попробуйте открыть другую программу.")
+    private let programsClient: ProgramsClientProtocol?
+    private let cacheStore: CacheStore
+    private let networkMonitor: NetworkMonitoring
+
+    var details: ProgramDetails?
+    var isShowingCachedData = false
+    var isLoading = false
+    var isStartingProgram = false
+    var error: UserFacingError?
+    var successMessage: String?
+    var isWorkoutsPresented = false
+    var selectedWorkout: SelectedWorkout?
+
+    init(
+        programId: String,
+        userSub: String,
+        programsClient: ProgramsClientProtocol?,
+        cacheStore: CacheStore = CompositeCacheStore(),
+        networkMonitor: NetworkMonitoring = StaticNetworkMonitor(currentStatus: true)
+    ) {
+        self.programId = programId
+        self.userSub = userSub
+        self.programsClient = programsClient
+        self.cacheStore = cacheStore
+        self.networkMonitor = networkMonitor
+    }
+
+    func onAppear() async {
+        guard details == nil, !isLoading else { return }
+        await load()
+    }
+
+    func retry() async {
+        await load()
+    }
+
+    func startProgram() async {
+        guard let versionID = details?.currentPublishedVersion?.id, !isStartingProgram else { return }
+        isStartingProgram = true
+        defer { isStartingProgram = false }
+
+        let result: Result<ProgramEnrollment, APIError>
+        if let programsClient {
+            result = await programsClient.startProgram(programVersionId: versionID)
+        } else {
+            result = .failure(.invalidURL)
+        }
+
+        switch result {
+        case .success:
+            successMessage = "Программа успешно начата."
+            error = nil
+        case let .failure(apiError):
+            error = apiError.userFacing(context: .programDetails)
+        }
+    }
+
+    func openWorkouts() {
+        isWorkoutsPresented = true
+    }
+
+    func workoutPicked(_ workoutID: String) {
+        selectedWorkout = SelectedWorkout(userSub: userSub, programId: programId, workoutId: workoutID)
+    }
+
+    func dismissSelectedWorkout() {
+        selectedWorkout = nil
+    }
+
+    private func load() async {
+        isLoading = true
+        error = nil
+        defer { isLoading = false }
+
+        if let cached = await cacheStore.get(cacheKey, as: ProgramDetails.self, namespace: userSub) {
+            details = cached
+            isShowingCachedData = true
+        }
+
+        let result: Result<ProgramDetails, APIError>
+        if let programsClient {
+            result = await programsClient.getProgramDetails(programId: programId)
+        } else {
+            result = .failure(.invalidURL)
+        }
+
+        switch result {
+        case let .success(details):
+            self.details = details
+            isShowingCachedData = false
+            error = nil
+            await cacheStore.set(cacheKey, value: details, namespace: userSub, ttl: 60 * 30)
+
+        case let .failure(apiError):
+            if (apiError == .offline || !networkMonitor.currentStatus), details != nil {
+                error = nil
+                isShowingCachedData = true
+                return
+            }
+            error = apiError.userFacing(context: .programDetails)
+        }
+    }
+
+    private var cacheKey: String {
+        "program.details:\(programId)"
+    }
+}
+
+struct ProgramDetailsScreen: View {
+    @State var viewModel: ProgramDetailsViewModel
+    let apiClient: APIClientProtocol?
+
+    var body: some View {
+        ScrollView {
+            VStack(spacing: FFSpacing.md) {
+                if viewModel.isShowingCachedData {
+                    FFCard {
+                        Text("Оффлайн. Показаны сохранённые данные.")
+                            .font(FFTypography.caption.weight(.semibold))
+                            .foregroundStyle(FFColors.primary)
+                    }
+                }
+
+                if viewModel.isLoading, viewModel.details == nil {
+                    loadingState
+                } else if let error = viewModel.error, viewModel.details == nil {
+                    FFErrorState(
+                        title: error.title,
+                        message: error.message,
+                        retryTitle: "Повторить",
+                        onRetry: { Task { await viewModel.retry() } }
+                    )
+                } else if let details = viewModel.details {
+                    header(details: details)
+                    about(details: details)
+                    workouts(details: details)
+                    startProgramBlock(details: details)
+                    if let successMessage = viewModel.successMessage {
+                        FFCard {
+                            Text(successMessage)
+                                .font(FFTypography.body)
+                                .foregroundStyle(FFColors.accent)
+                                .multilineTextAlignment(.leading)
                         }
                     }
-                    .padding(.horizontal, FFSpacing.md)
-                    .padding(.vertical, FFSpacing.md)
-                }
-                .background(FFColors.background)
-                .onAppear {
-                    viewStore.send(.onAppear)
-                }
-                .navigationDestination(
-                    isPresented: Binding(
-                        get: { navViewStore.isWorkoutsPresented },
-                        set: { isPresented in
-                            if !isPresented {
-                                store.send(.workoutsListDismissed)
-                            }
-                        },
-                    ),
-                ) {
-                    if let programsClient = apiClient as? ProgramsClientProtocol {
-                        WorkoutsListScreen(
-                            viewModel: WorkoutsListViewModel(
-                                programId: viewStore.programId,
-                                userSub: viewStore.userSub,
-                                workoutsClient: WorkoutsClient(programsClient: programsClient),
-                            ),
-                            onWorkoutTap: { workoutID in
-                                store.send(.workoutSelected(workoutID))
-                            },
-                        )
-                            .navigationTitle("Тренировки")
-                    } else {
-                        FFErrorState(
-                            title: "Тренировки недоступны",
-                            message: "Проверьте конфигурацию API-клиента для загрузки тренировок.",
-                            retryTitle: "Назад",
-                        ) {
-                            store.send(.workoutsListDismissed)
-                        }
-                    }
-                }
-                .navigationDestination(
-                    isPresented: Binding(
-                        get: { navViewStore.isWorkoutPlayerPresented },
-                        set: { isPresented in
-                            if !isPresented {
-                                store.send(.selectedWorkoutDismissed)
-                            }
-                        },
-                    ),
-                ) {
-                    if let playerState = viewStore.selectedWorkout {
-                        WorkoutLaunchView(
-                            userSub: playerState.userSub,
-                            programId: playerState.programId,
-                            workoutId: playerState.workoutId,
-                            apiClient: apiClient,
-                        )
-                            .navigationTitle("Тренировка")
-                    }
+                } else {
+                    FFEmptyState(title: "Программа не найдена", message: "Попробуйте открыть другую программу.")
                 }
             }
+            .padding(.horizontal, FFSpacing.md)
+            .padding(.vertical, FFSpacing.md)
+        }
+        .background(FFColors.background)
+        .task {
+            await viewModel.onAppear()
+        }
+        .navigationDestination(isPresented: $viewModel.isWorkoutsPresented) {
+            if let programsClient = apiClient as? ProgramsClientProtocol {
+                WorkoutsListScreen(
+                    viewModel: WorkoutsListViewModel(
+                        programId: viewModel.programId,
+                        userSub: viewModel.userSub,
+                        workoutsClient: WorkoutsClient(programsClient: programsClient)
+                    ),
+                    onWorkoutTap: { workoutID in
+                        viewModel.workoutPicked(workoutID)
+                    }
+                )
+                .navigationTitle("Тренировки")
+            } else {
+                FFErrorState(
+                    title: "Тренировки недоступны",
+                    message: "Проверьте конфигурацию API-клиента для загрузки тренировок.",
+                    retryTitle: "Назад"
+                ) {
+                    viewModel.isWorkoutsPresented = false
+                }
+            }
+        }
+        .navigationDestination(item: $viewModel.selectedWorkout) { selectedWorkout in
+            WorkoutLaunchView(
+                userSub: selectedWorkout.userSub,
+                programId: selectedWorkout.programId,
+                workoutId: selectedWorkout.workoutId,
+                apiClient: apiClient
+            )
+            .navigationTitle("Тренировка")
         }
     }
 
@@ -192,7 +276,7 @@ struct ProgramDetailsView: View {
                     FFButton(
                         title: "Открыть тренировки",
                         variant: .secondary,
-                        action: { store.send(.openWorkoutsTapped) },
+                        action: { viewModel.openWorkouts() }
                     )
 
                     ForEach(workouts.sorted(by: { $0.dayOrder < $1.dayOrder })) { workout in
@@ -221,15 +305,12 @@ struct ProgramDetailsView: View {
     }
 
     @ViewBuilder
-    private func startProgramBlock(
-        details: ProgramDetails,
-        viewStore: ViewStore<ProgramDetailsFeature.State, ProgramDetailsFeature.Action>,
-    ) -> some View {
+    private func startProgramBlock(details: ProgramDetails) -> some View {
         if details.currentPublishedVersion?.id != nil {
             FFButton(
-                title: viewStore.isStartingProgram ? "Запускаем программу..." : "Начать программу",
-                variant: viewStore.isStartingProgram ? .disabled : .primary,
-                action: { viewStore.send(.startProgramTapped) },
+                title: viewModel.isStartingProgram ? "Запускаем программу..." : "Начать программу",
+                variant: viewModel.isStartingProgram ? .disabled : .primary,
+                action: { Task { await viewModel.startProgram() } }
             )
             .accessibilityLabel("Начать программу")
             .accessibilityHint("Создаст активное прохождение программы для вашего профиля")
@@ -255,18 +336,16 @@ struct ProgramDetailsView: View {
     }
 
     private func resolveImageURL(_ pathOrURL: String?) -> URL? {
-        guard let pathOrURL, !pathOrURL.isEmpty else {
-            return nil
+        guard let pathOrURL, !pathOrURL.isEmpty else { return nil }
+        if let absolute = URL(string: pathOrURL), absolute.scheme != nil {
+            return absolute
         }
-
-        if let direct = URL(string: pathOrURL), direct.scheme != nil {
-            return direct
+        guard let baseURL = viewModel.details?.media?.first?.url else {
+            return URL(string: pathOrURL)
         }
-
-        guard let baseURL = environment.backendBaseURL else {
-            return nil
+        if let absolute = URL(string: baseURL), absolute.scheme != nil {
+            return absolute.deletingLastPathComponent().appendingPathComponent(pathOrURL)
         }
-        let normalizedPath = pathOrURL.hasPrefix("/") ? String(pathOrURL.dropFirst()) : pathOrURL
-        return baseURL.appendingPathComponent(normalizedPath)
+        return URL(string: pathOrURL)
     }
 }

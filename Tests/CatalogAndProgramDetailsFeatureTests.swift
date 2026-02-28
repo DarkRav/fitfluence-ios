@@ -8,14 +8,14 @@ final class CatalogAndProgramDetailsFeatureTests: XCTestCase {
         let mockClient = MockProgramsClient(
             listResults: [.success(samplePage(title: "Сила и тонус"))],
             detailsResults: [],
-            startResults: [],
+            startResults: []
         )
 
         let store = TestStore(initialState: CatalogFeature.State()) {
             CatalogFeature(
                 programsClient: mockClient,
                 cacheStore: MemoryCacheStore(),
-                networkMonitor: StaticNetworkMonitor(currentStatus: true),
+                networkMonitor: StaticNetworkMonitor(currentStatus: true)
             )
         }
 
@@ -38,7 +38,7 @@ final class CatalogAndProgramDetailsFeatureTests: XCTestCase {
                     influencerName: "Тренер",
                     goals: ["Сила"],
                     coverURL: "/uploads/media/image.png",
-                    isPublished: true,
+                    isPublished: true
                 ),
             ]
             $0.currentPage = 0
@@ -51,14 +51,14 @@ final class CatalogAndProgramDetailsFeatureTests: XCTestCase {
         let mockClient = MockProgramsClient(
             listResults: [.failure(.offline)],
             detailsResults: [],
-            startResults: [],
+            startResults: []
         )
 
         let store = TestStore(initialState: CatalogFeature.State()) {
             CatalogFeature(
                 programsClient: mockClient,
                 cacheStore: MemoryCacheStore(),
-                networkMonitor: StaticNetworkMonitor(currentStatus: true),
+                networkMonitor: StaticNetworkMonitor(currentStatus: true)
             )
         }
 
@@ -76,7 +76,7 @@ final class CatalogAndProgramDetailsFeatureTests: XCTestCase {
             $0.error = UserFacingError(
                 kind: .offline,
                 title: "Нет подключения к интернету",
-                message: "Проверьте сеть и попробуйте снова.",
+                message: "Проверьте сеть и попробуйте снова."
             )
             $0.programs = []
         }
@@ -88,14 +88,14 @@ final class CatalogAndProgramDetailsFeatureTests: XCTestCase {
                 .success(samplePage(title: "Первая")),
             ],
             detailsResults: [],
-            startResults: [],
+            startResults: []
         )
 
         let store = TestStore(initialState: CatalogFeature.State()) {
             CatalogFeature(
                 programsClient: mockClient,
                 cacheStore: MemoryCacheStore(),
-                networkMonitor: StaticNetworkMonitor(currentStatus: true),
+                networkMonitor: StaticNetworkMonitor(currentStatus: true)
             )
         }
 
@@ -127,7 +127,7 @@ final class CatalogAndProgramDetailsFeatureTests: XCTestCase {
                     influencerName: "Тренер",
                     goals: ["Сила"],
                     coverURL: "/uploads/media/image.png",
-                    isPublished: true,
+                    isPublished: true
                 ),
             ]
             $0.currentPage = 0
@@ -141,65 +141,49 @@ final class CatalogAndProgramDetailsFeatureTests: XCTestCase {
         XCTAssertEqual(lastQuery, "пер")
     }
 
-    func testProgramDetailsSuccess() async {
+    func testProgramDetailsViewModelSuccess() async {
         let mockClient = MockProgramsClient(
             listResults: [],
             detailsResults: [.success(sampleDetails)],
-            startResults: [],
+            startResults: []
         )
 
-        let store = TestStore(initialState: ProgramDetailsFeature.State(programId: "program-1", userSub: "u1")) {
-            ProgramDetailsFeature(
-                programsClient: mockClient,
-                cacheStore: MemoryCacheStore(),
-                networkMonitor: StaticNetworkMonitor(currentStatus: true),
-            )
-        }
+        let viewModel = ProgramDetailsViewModel(
+            programId: "program-1",
+            userSub: "u1",
+            programsClient: mockClient,
+            cacheStore: MemoryCacheStore(),
+            networkMonitor: StaticNetworkMonitor(currentStatus: true)
+        )
 
-        await store.send(.onAppear) {
-            $0.isLoading = true
-            $0.error = nil
-        }
+        await viewModel.onAppear()
 
-        await store.receive(.cachedDetailsResponse(nil))
-
-        await store.receive(.detailsResponse(.success(sampleDetails))) { [self] in
-            $0.isLoading = false
-            $0.details = self.sampleDetails
-            $0.error = nil
-        }
+        XCTAssertEqual(viewModel.details?.id, "program-1")
+        XCTAssertNil(viewModel.error)
+        XCTAssertFalse(viewModel.isLoading)
     }
 
-    func testProgramDetailsError() async {
+    func testProgramDetailsViewModelError() async {
         let mockClient = MockProgramsClient(
             listResults: [],
             detailsResults: [.failure(.serverError(statusCode: 503, bodySnippet: nil))],
-            startResults: [],
+            startResults: []
         )
 
-        let store = TestStore(initialState: ProgramDetailsFeature.State(programId: "program-1", userSub: "u1")) {
-            ProgramDetailsFeature(
-                programsClient: mockClient,
-                cacheStore: MemoryCacheStore(),
-                networkMonitor: StaticNetworkMonitor(currentStatus: true),
-            )
-        }
+        let viewModel = ProgramDetailsViewModel(
+            programId: "program-1",
+            userSub: "u1",
+            programsClient: mockClient,
+            cacheStore: MemoryCacheStore(),
+            networkMonitor: StaticNetworkMonitor(currentStatus: true)
+        )
 
-        await store.send(.onAppear) {
-            $0.isLoading = true
-            $0.error = nil
-        }
+        await viewModel.onAppear()
 
-        await store.receive(.cachedDetailsResponse(nil))
-
-        await store.receive(.detailsResponse(.failure(.serverError(statusCode: 503, bodySnippet: nil)))) {
-            $0.isLoading = false
-            $0.error = UserFacingError(
-                kind: .server,
-                title: "Сервис временно недоступен",
-                message: "Не удалось загрузить программу. Попробуйте позже.",
-            )
-        }
+        XCTAssertEqual(viewModel.error?.kind, .server)
+        XCTAssertEqual(viewModel.error?.title, "Сервис временно недоступен")
+        XCTAssertEqual(viewModel.error?.message, "Попробуйте ещё раз чуть позже.")
+        XCTAssertFalse(viewModel.isLoading)
     }
 
     private func samplePage(title: String) -> PagedProgramResponse {
@@ -221,7 +205,7 @@ final class CatalogAndProgramDetailsFeatureTests: XCTestCase {
                         createdAt: nil,
                         ownerType: nil,
                         ownerId: nil,
-                        ownerDisplayName: nil,
+                        ownerDisplayName: nil
                     ),
                     media: nil,
                     goals: ["Сила"],
@@ -232,13 +216,13 @@ final class CatalogAndProgramDetailsFeatureTests: XCTestCase {
                         publishedAt: nil,
                         level: nil,
                         frequencyPerWeek: 3,
-                        requirements: nil,
+                        requirements: nil
                     ),
                     createdAt: nil,
-                    updatedAt: nil,
+                    updatedAt: nil
                 ),
             ],
-            metadata: PageMetadata(page: 0, size: 20, totalElements: 1, totalPages: 1),
+            metadata: PageMetadata(page: 0, size: 20, totalElements: 1, totalPages: 1)
         )
     }
 
@@ -260,12 +244,12 @@ final class CatalogAndProgramDetailsFeatureTests: XCTestCase {
                 publishedAt: nil,
                 level: nil,
                 frequencyPerWeek: nil,
-                requirements: nil,
+                requirements: nil
             ),
             createdAt: nil,
             updatedAt: nil,
             versions: nil,
-            workouts: nil,
+            workouts: nil
         )
     }
 }
@@ -279,44 +263,29 @@ private actor MockProgramsClient: ProgramsClientProtocol {
     init(
         listResults: [Result<PagedProgramResponse, APIError>],
         detailsResults: [Result<ProgramDetails, APIError>],
-        startResults: [Result<ProgramEnrollment, APIError>],
+        startResults: [Result<ProgramEnrollment, APIError>]
     ) {
         self.listResults = listResults
         self.detailsResults = detailsResults
         self.startResults = startResults
     }
 
-    func listPublishedPrograms(
-        query: String,
-        page _: Int,
-        size _: Int,
-    ) async -> Result<PagedProgramResponse, APIError> {
+    func listPublishedPrograms(query: String, page: Int, size _: Int) async -> Result<PagedProgramResponse, APIError> {
         receivedQueries.append(query)
-        guard !listResults.isEmpty else {
-            return .failure(.unknown)
-        }
+        guard !listResults.isEmpty else { return .failure(.unknown) }
         return listResults.removeFirst()
     }
 
     func getProgramDetails(programId _: String) async -> Result<ProgramDetails, APIError> {
-        guard !detailsResults.isEmpty else {
-            return .failure(.unknown)
-        }
+        guard !detailsResults.isEmpty else { return .failure(.unknown) }
         return detailsResults.removeFirst()
     }
 
     func startProgram(programVersionId _: String) async -> Result<ProgramEnrollment, APIError> {
-        guard !startResults.isEmpty else {
-            return .failure(.unknown)
-        }
+        guard !startResults.isEmpty else { return .failure(.unknown) }
         return startResults.removeFirst()
     }
 
-    func listCallCount() -> Int {
-        receivedQueries.count
-    }
-
-    func lastQuery() -> String? {
-        receivedQueries.last
-    }
+    func listCallCount() async -> Int { receivedQueries.count }
+    func lastQuery() async -> String? { receivedQueries.last }
 }

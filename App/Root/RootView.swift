@@ -192,10 +192,14 @@ private struct PlanTabContent: View {
 
     private struct ViewState: Equatable {
         var isProgramDetailsPresented: Bool
+        var selectedProgram: RootFeature.State.SelectedProgram?
     }
 
     var body: some View {
-        WithViewStore(store, observe: { ViewState(isProgramDetailsPresented: $0.programDetails != nil) }) { viewStore in
+        WithViewStore(
+            store,
+            observe: { ViewState(isProgramDetailsPresented: $0.selectedProgram != nil, selectedProgram: $0.selectedProgram) },
+        ) { viewStore in
             CatalogView(
                 store: store.scope(
                     state: \.catalog,
@@ -214,10 +218,13 @@ private struct PlanTabContent: View {
                     },
                 ),
             ) {
-                if let detailsStore = store.scope(state: \.programDetails, action: \.programDetails) {
-                    ProgramDetailsView(
-                        store: detailsStore,
-                        environment: environment,
+                if let selectedProgram = viewStore.selectedProgram {
+                    ProgramDetailsScreen(
+                        viewModel: ProgramDetailsViewModel(
+                            programId: selectedProgram.programId,
+                            userSub: selectedProgram.userSub,
+                            programsClient: apiClient as? ProgramsClientProtocol,
+                        ),
                         apiClient: apiClient,
                     )
                     .navigationTitle("Программа")
