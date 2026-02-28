@@ -47,6 +47,11 @@
 	<string>$(KEYCLOAK_URL)</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Приложению нужен доступ к локальной сети для подключения к вашему dev-серверу.</string>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_http._tcp</string>
+		<string>_https._tcp</string>
+	</array>
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<key>NSExceptionDomains</key>
