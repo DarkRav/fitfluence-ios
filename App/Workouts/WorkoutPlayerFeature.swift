@@ -33,6 +33,8 @@ struct WorkoutPlayerFeature {
         var error: UserFacingError?
         var hasChanges = false
         var isExitConfirmationPresented = false
+        var isResumePromptPresented = false
+        var hasPromptedResume = false
         var completionSummary: CompletionSummary?
         var progressStorageMode: WorkoutProgressStorageMode = .localOnly
     }
@@ -49,9 +51,15 @@ struct WorkoutPlayerFeature {
         case updateSetReps(exerciseId: String, setIndex: Int, value: String)
         case updateSetWeight(exerciseId: String, setIndex: Int, value: String)
         case updateSetRPE(exerciseId: String, setIndex: Int, value: String)
+        case incrementSetReps(exerciseId: String, setIndex: Int)
+        case decrementSetReps(exerciseId: String, setIndex: Int)
+        case incrementSetWeight(exerciseId: String, setIndex: Int)
+        case decrementSetWeight(exerciseId: String, setIndex: Int)
         case exitTapped
         case exitConfirmed
         case exitConfirmationDismissed
+        case resumePromptContinueTapped
+        case resumePromptStartOverTapped
         case finishWorkoutTapped
         case delegate(Delegate)
     }
@@ -165,6 +173,9 @@ struct WorkoutPlayerFeature {
                     state.currentExerciseIndex = min(max(0, index), maxIndex)
                 }
                 state.hasChanges = snapshot.status != .notStarted
+                if !state.hasPromptedResume, snapshot.status == .inProgress {
+                    state.isResumePromptPresented = true
+                }
                 return .none
 
             case .nextExerciseTapped:
@@ -184,6 +195,9 @@ struct WorkoutPlayerFeature {
                 }
                 progress.sets[setIndex].isCompleted.toggle()
                 state.perExerciseState[exerciseID] = progress
+                if progress.sets[setIndex].isCompleted {
+                    applyCarryOverValues(state: &state, exerciseID: exerciseID, setIndex: setIndex)
+                }
                 state.hasChanges = true
                 return persistProgress(state: state)
 
@@ -217,6 +231,46 @@ struct WorkoutPlayerFeature {
                 state.hasChanges = true
                 return persistProgress(state: state)
 
+            case let .incrementSetReps(exerciseID, setIndex):
+                return updateNumericValue(
+                    state: &state,
+                    exerciseID: exerciseID,
+                    setIndex: setIndex,
+                    keyPath: \.repsText,
+                    delta: 1,
+                    formatter: { String(Int($0)) },
+                )
+
+            case let .decrementSetReps(exerciseID, setIndex):
+                return updateNumericValue(
+                    state: &state,
+                    exerciseID: exerciseID,
+                    setIndex: setIndex,
+                    keyPath: \.repsText,
+                    delta: -1,
+                    formatter: { String(Int($0)) },
+                )
+
+            case let .incrementSetWeight(exerciseID, setIndex):
+                return updateNumericValue(
+                    state: &state,
+                    exerciseID: exerciseID,
+                    setIndex: setIndex,
+                    keyPath: \.weightText,
+                    delta: 2.5,
+                    formatter: formatWeight,
+                )
+
+            case let .decrementSetWeight(exerciseID, setIndex):
+                return updateNumericValue(
+                    state: &state,
+                    exerciseID: exerciseID,
+                    setIndex: setIndex,
+                    keyPath: \.weightText,
+                    delta: -2.5,
+                    formatter: formatWeight,
+                )
+
             case .exitTapped:
                 if state.hasChanges {
                     state.isExitConfirmationPresented = true
@@ -227,6 +281,20 @@ struct WorkoutPlayerFeature {
             case .exitConfirmationDismissed:
                 state.isExitConfirmationPresented = false
                 return .none
+
+            case .resumePromptContinueTapped:
+                state.isResumePromptPresented = false
+                state.hasPromptedResume = true
+                return .none
+
+            case .resumePromptStartOverTapped:
+                state.isResumePromptPresented = false
+                state.hasPromptedResume = true
+                guard let workout = state.workout else { return .none }
+                state.currentExerciseIndex = 0
+                state.perExerciseState = makeExerciseProgress(for: workout)
+                state.hasChanges = false
+                return persistProgress(state: state)
 
             case .exitConfirmed:
                 state.isExitConfirmationPresented = false
@@ -261,6 +329,26 @@ struct WorkoutPlayerFeature {
         }
         update(&progress.sets[setIndex])
         state.perExerciseState[exerciseID] = progress
+    }
+
+    private func updateNumericValue(
+        state: inout State,
+        exerciseID: String,
+        setIndex: Int,
+        keyPath: WritableKeyPath<SetProgress, String>,
+        delta: Double,
+        formatter: (Double) -> String,
+    ) -> Effect<Action> {
+        guard var progress = state.perExerciseState[exerciseID], progress.sets.indices.contains(setIndex) else {
+            return .none
+        }
+        let currentRaw = progress.sets[setIndex][keyPath: keyPath]
+        let current = parseDouble(currentRaw) ?? 0
+        let nextValue = max(0, current + delta)
+        progress.sets[setIndex][keyPath: keyPath] = formatter(nextValue)
+        state.perExerciseState[exerciseID] = progress
+        state.hasChanges = true
+        return persistProgress(state: state)
     }
 
     private func loadWorkout(programId: String, workoutId: String) -> Effect<Action> {
@@ -332,6 +420,37 @@ struct WorkoutPlayerFeature {
         return .run { [progressStore] _ in
             await progressStore.save(snapshot)
         }
+    }
+
+    private func applyCarryOverValues(state: inout State, exerciseID: String, setIndex: Int) {
+        guard var progress = state.perExerciseState[exerciseID], progress.sets.indices.contains(setIndex) else {
+            return
+        }
+        let nextIndex = setIndex + 1
+        guard progress.sets.indices.contains(nextIndex) else { return }
+        let source = progress.sets[setIndex]
+        if progress.sets[nextIndex].repsText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            progress.sets[nextIndex].repsText = source.repsText
+        }
+        if progress.sets[nextIndex].weightText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            progress.sets[nextIndex].weightText = source.weightText
+        }
+        if progress.sets[nextIndex].rpeText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            progress.sets[nextIndex].rpeText = source.rpeText
+        }
+        state.perExerciseState[exerciseID] = progress
+    }
+
+    private func parseDouble(_ raw: String) -> Double? {
+        let normalized = raw.replacingOccurrences(of: ",", with: ".")
+        return Double(normalized)
+    }
+
+    private func formatWeight(_ value: Double) -> String {
+        if value.rounded() == value {
+            return String(Int(value))
+        }
+        return String(format: "%.1f", value)
     }
 
     private func makeSummary(

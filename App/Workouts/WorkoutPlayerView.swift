@@ -68,6 +68,22 @@ struct WorkoutPlayerView: View {
             } message: {
                 Text("Прогресс сохранится на устройстве.")
             }
+            .alert(
+                "Продолжить тренировку?",
+                isPresented: viewStore.binding(
+                    get: \.isResumePromptPresented,
+                    send: { _ in .resumePromptContinueTapped },
+                ),
+            ) {
+                Button("Продолжить") {
+                    viewStore.send(.resumePromptContinueTapped)
+                }
+                Button("Начать заново", role: .destructive) {
+                    viewStore.send(.resumePromptStartOverTapped)
+                }
+            } message: {
+                Text("Найден сохранённый прогресс этой тренировки на устройстве.")
+            }
             .onAppear {
                 viewStore.send(.onAppear)
             }
@@ -207,6 +223,14 @@ struct WorkoutPlayerView: View {
                             helperText: "Например, 40",
                             keyboardType: .decimalPad,
                         )
+                        numericStepperRow(
+                            minusLabel: "Уменьшить вес",
+                            plusLabel: "Увеличить вес",
+                        ) {
+                            viewStore.send(.decrementSetWeight(exerciseId: exercise.id, setIndex: index))
+                        } onPlus: {
+                            viewStore.send(.incrementSetWeight(exerciseId: exercise.id, setIndex: index))
+                        }
 
                         FFTextField(
                             label: "Повторы",
@@ -222,6 +246,14 @@ struct WorkoutPlayerView: View {
                             helperText: "Например, 10",
                             keyboardType: .numberPad,
                         )
+                        numericStepperRow(
+                            minusLabel: "Уменьшить повторы",
+                            plusLabel: "Увеличить повторы",
+                        ) {
+                            viewStore.send(.decrementSetReps(exerciseId: exercise.id, setIndex: index))
+                        } onPlus: {
+                            viewStore.send(.incrementSetReps(exerciseId: exercise.id, setIndex: index))
+                        }
 
                         FFTextField(
                             label: "RPE",
@@ -279,6 +311,31 @@ struct WorkoutPlayerView: View {
                 }
             }
         }
+    }
+
+    private func numericStepperRow(
+        minusLabel: String,
+        plusLabel: String,
+        onMinus: @escaping () -> Void,
+        onPlus: @escaping () -> Void,
+    ) -> some View {
+        HStack(spacing: FFSpacing.sm) {
+            stepperButton(title: "−", accessibility: minusLabel, action: onMinus)
+            stepperButton(title: "+", accessibility: plusLabel, action: onPlus)
+            Spacer()
+        }
+    }
+
+    private func stepperButton(title: String, accessibility: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(title)
+                .font(FFTypography.body.weight(.bold))
+                .foregroundStyle(FFColors.textPrimary)
+                .frame(width: 44, height: 44)
+                .background(FFColors.gray700)
+                .clipShape(RoundedRectangle(cornerRadius: FFTheme.Radius.control))
+        }
+        .accessibilityLabel(accessibility)
     }
 
     private func prescriptionText(for exercise: WorkoutExercise) -> String {
