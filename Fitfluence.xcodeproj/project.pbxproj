@@ -11,10 +11,17 @@
 		2446FADE5A6601002AB8A61D /* Colors.swift in Sources */ = {isa = PBXBuildFile; fileRef = 87E0FAD6B3FC785EE59C774B /* Colors.swift */; };
 		24A48678A501B841969AB1EC /* RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 870E9DD10FEBC22074CF71BA /* RootView.swift */; };
 		268CC2843BD27BA0CDDE9075 /* ComposableArchitecture in Frameworks */ = {isa = PBXBuildFile; productRef = CF92C8BF8645F9BA258E283B /* ComposableArchitecture */; };
+		47666B7411F0CE528FE8B1F4 /* FFErrorState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 151CCFD42F23601C4661B789 /* FFErrorState.swift */; };
+		5C6A1DDAACA62605B0E42581 /* FFLoadingState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2C571FBEBDFDA288B1E05B14 /* FFLoadingState.swift */; };
+		659A792308E4E63241F9DE2C /* FFBadge.swift in Sources */ = {isa = PBXBuildFile; fileRef = E190F6607FF86AE368CDC6DC /* FFBadge.swift */; };
 		B68CFEB25BF04441A03234E5 /* Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 86189A9947AC753259B89A8D /* Theme.swift */; };
 		BE14E4CFB655557D8C529CDF /* RootFeature.swift in Sources */ = {isa = PBXBuildFile; fileRef = CAEB6BFF14C57697C73E6CD3 /* RootFeature.swift */; };
 		C091B3E8CBC8FB1F8ABFDC95 /* FitfluenceApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2406C59ACFAD49D5F8BF8FC2 /* FitfluenceApp.swift */; };
 		C3535BA80F21F23FCA8AE684 /* Spacing.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A3A5018D89BEF09A1424EEF /* Spacing.swift */; };
+		D0381F8271688F1DD55ECF64 /* FFButton.swift in Sources */ = {isa = PBXBuildFile; fileRef = A97D9C4C6794471BA7C75525 /* FFButton.swift */; };
+		D0EDEA7F9D27535EA83A0F26 /* FFEmptyState.swift in Sources */ = {isa = PBXBuildFile; fileRef = E40B5498BB99116B3021C4E4 /* FFEmptyState.swift */; };
+		F12AF47E2E6A7061D391E5F6 /* FFCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4D6772D2C40BCF7FEB3C45C /* FFCard.swift */; };
+		F540D452CC4979E1CE3FDFED /* FFTextField.swift in Sources */ = {isa = PBXBuildFile; fileRef = B202B94DE2C375FB67F019B3 /* FFTextField.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -29,15 +36,22 @@
 
 /* Begin PBXFileReference section */
 		0A3A5018D89BEF09A1424EEF /* Spacing.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Spacing.swift; sourceTree = "<group>"; };
+		151CCFD42F23601C4661B789 /* FFErrorState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFErrorState.swift; sourceTree = "<group>"; };
 		2406C59ACFAD49D5F8BF8FC2 /* FitfluenceApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FitfluenceApp.swift; sourceTree = "<group>"; };
 		274454899BAE117E3568041E /* FitfluenceApp.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = FitfluenceApp.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		2C571FBEBDFDA288B1E05B14 /* FFLoadingState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFLoadingState.swift; sourceTree = "<group>"; };
 		65EE21EADAEB1C46C1227CF6 /* FitfluenceTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = FitfluenceTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		86189A9947AC753259B89A8D /* Theme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Theme.swift; sourceTree = "<group>"; };
 		870E9DD10FEBC22074CF71BA /* RootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootView.swift; sourceTree = "<group>"; };
 		87E0FAD6B3FC785EE59C774B /* Colors.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Colors.swift; sourceTree = "<group>"; };
 		A2E5D8994FEA468EC4504CD0 /* Typography.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Typography.swift; sourceTree = "<group>"; };
+		A97D9C4C6794471BA7C75525 /* FFButton.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFButton.swift; sourceTree = "<group>"; };
+		B202B94DE2C375FB67F019B3 /* FFTextField.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFTextField.swift; sourceTree = "<group>"; };
 		CAEB6BFF14C57697C73E6CD3 /* RootFeature.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootFeature.swift; sourceTree = "<group>"; };
 		D45116A2BFE9402EC531FE76 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		D4D6772D2C40BCF7FEB3C45C /* FFCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFCard.swift; sourceTree = "<group>"; };
+		E190F6607FF86AE368CDC6DC /* FFBadge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFBadge.swift; sourceTree = "<group>"; };
+		E40B5498BB99116B3021C4E4 /* FFEmptyState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFEmptyState.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -79,8 +93,23 @@
 				0A3A5018D89BEF09A1424EEF /* Spacing.swift */,
 				86189A9947AC753259B89A8D /* Theme.swift */,
 				A2E5D8994FEA468EC4504CD0 /* Typography.swift */,
+				B204E6A7193CEFDBF07F3B51 /* Components */,
 			);
 			path = DesignSystem;
+			sourceTree = "<group>";
+		};
+		B204E6A7193CEFDBF07F3B51 /* Components */ = {
+			isa = PBXGroup;
+			children = (
+				E190F6607FF86AE368CDC6DC /* FFBadge.swift */,
+				A97D9C4C6794471BA7C75525 /* FFButton.swift */,
+				D4D6772D2C40BCF7FEB3C45C /* FFCard.swift */,
+				E40B5498BB99116B3021C4E4 /* FFEmptyState.swift */,
+				151CCFD42F23601C4661B789 /* FFErrorState.swift */,
+				2C571FBEBDFDA288B1E05B14 /* FFLoadingState.swift */,
+				B202B94DE2C375FB67F019B3 /* FFTextField.swift */,
+			);
+			path = Components;
 			sourceTree = "<group>";
 		};
 		C61D88E577A786ED0C1385C5 /* Tests */ = {
@@ -192,6 +221,13 @@
 			buildActionMask = 2147483647;
 			files = (
 				2446FADE5A6601002AB8A61D /* Colors.swift in Sources */,
+				659A792308E4E63241F9DE2C /* FFBadge.swift in Sources */,
+				D0381F8271688F1DD55ECF64 /* FFButton.swift in Sources */,
+				F12AF47E2E6A7061D391E5F6 /* FFCard.swift in Sources */,
+				D0EDEA7F9D27535EA83A0F26 /* FFEmptyState.swift in Sources */,
+				47666B7411F0CE528FE8B1F4 /* FFErrorState.swift in Sources */,
+				5C6A1DDAACA62605B0E42581 /* FFLoadingState.swift in Sources */,
+				F540D452CC4979E1CE3FDFED /* FFTextField.swift in Sources */,
 				C091B3E8CBC8FB1F8ABFDC95 /* FitfluenceApp.swift in Sources */,
 				BE14E4CFB655557D8C529CDF /* RootFeature.swift in Sources */,
 				24A48678A501B841969AB1EC /* RootView.swift in Sources */,
