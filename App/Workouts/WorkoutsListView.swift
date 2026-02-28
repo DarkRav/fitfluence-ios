@@ -3,18 +3,27 @@ import SwiftUI
 
 @Observable
 final class WorkoutsListViewModel {
+    enum SortMode: String, CaseIterable {
+        case plan = "По плану"
+        case title = "По названию"
+        case duration = "По длительности"
+    }
+
     private let programId: String
     private let userSub: String
     private let workoutsClient: WorkoutsClientProtocol
     private let progressStore: WorkoutProgressStore
     private let cacheStore: CacheStore
+    private let trainingStore: TrainingStore
 
     var workouts: [WorkoutSummary] = []
     var workoutStatuses: [String: WorkoutProgressStatus] = [:]
+    var lastCompletionByWorkout: [String: Date] = [:]
     var isLoading = false
     var isRefreshing = false
     var isShowingCachedData = false
     var error: UserFacingError?
+    var sortMode: SortMode = .plan
 
     init(
         programId: String,
@@ -22,12 +31,14 @@ final class WorkoutsListViewModel {
         workoutsClient: WorkoutsClientProtocol,
         progressStore: WorkoutProgressStore = LocalWorkoutProgressStore(),
         cacheStore: CacheStore = CompositeCacheStore(),
+        trainingStore: TrainingStore = LocalTrainingStore(),
     ) {
         self.programId = programId
         self.userSub = userSub
         self.workoutsClient = workoutsClient
         self.progressStore = progressStore
         self.cacheStore = cacheStore
+        self.trainingStore = trainingStore
     }
 
     @MainActor
@@ -91,10 +102,29 @@ final class WorkoutsListViewModel {
             programId: programId,
             workoutIds: workouts.map(\.id),
         )
+        let history = await trainingStore.history(userSub: userSub, source: nil, limit: 120)
+            .filter { $0.programId == programId }
+        lastCompletionByWorkout = Dictionary(
+            history.map { ($0.workoutId, $0.finishedAt) },
+            uniquingKeysWith: { lhs, rhs in
+                max(lhs, rhs)
+            },
+        )
     }
 
     private var cacheKey: String {
         "workouts.list:\(programId)"
+    }
+
+    var sortedWorkouts: [WorkoutSummary] {
+        switch sortMode {
+        case .plan:
+            workouts.sorted(by: { $0.dayOrder < $1.dayOrder })
+        case .title:
+            workouts.sorted(by: { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending })
+        case .duration:
+            workouts.sorted(by: { ($0.estimatedDurationMinutes ?? 0) > ($1.estimatedDurationMinutes ?? 0) })
+        }
     }
 }
 
@@ -133,7 +163,7 @@ struct WorkoutsListScreen: View {
                             }
                         }
 
-                        ForEach(viewModel.workouts) { workout in
+                        ForEach(viewModel.sortedWorkouts) { workout in
                             workoutCard(workout, status: workoutStatus(for: workout)) {
                                 onWorkoutTap(workout.id)
                             }
@@ -144,6 +174,20 @@ struct WorkoutsListScreen: View {
                 }
                 .refreshable {
                     await viewModel.refresh()
+                }
+                .toolbar {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Menu {
+                            ForEach(WorkoutsListViewModel.SortMode.allCases, id: \.self) { mode in
+                                Button(mode.rawValue) {
+                                    viewModel.sortMode = mode
+                                }
+                            }
+                        } label: {
+                            Image(systemName: "arrow.up.arrow.down.circle")
+                                .foregroundStyle(FFColors.accent)
+                        }
+                    }
                 }
             }
         }
@@ -174,6 +218,11 @@ struct WorkoutsListScreen: View {
                         Text(detailsText(workout: workout))
                             .font(FFTypography.caption)
                             .foregroundStyle(FFColors.textSecondary)
+                        if let lastDate = viewModel.lastCompletionByWorkout[workout.id] {
+                            Text("Последнее выполнение: \(lastDate.formatted(date: .abbreviated, time: .omitted))")
+                                .font(FFTypography.caption)
+                                .foregroundStyle(FFColors.accent)
+                        }
                     }
 
                     Spacer(minLength: FFSpacing.xs)

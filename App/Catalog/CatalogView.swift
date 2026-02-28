@@ -12,6 +12,10 @@ final class CatalogViewModel {
         let goals: [String]
         let coverURL: String?
         let isPublished: Bool
+        let level: String
+        let frequency: String
+        let equipment: String
+        let updatedAt: String?
     }
 
     struct CachedCatalogPage: Codable, Equatable {
@@ -137,6 +141,10 @@ final class CatalogViewModel {
                     goals: $0.goals ?? [],
                     coverURL: $0.cover?.url ?? $0.media?.first?.url,
                     isPublished: $0.status == .published,
+                    level: $0.currentPublishedVersion?.levelTitle ?? "Базовый",
+                    frequency: $0.currentPublishedVersion?.frequencyTitle ?? "Частота не указана",
+                    equipment: $0.currentPublishedVersion?.equipmentTitle ?? "Оборудование не указано",
+                    updatedAt: $0.updatedAt,
                 )
             }
 
@@ -301,6 +309,17 @@ struct CatalogScreen: View {
                         Text(program.goals.joined(separator: " • "))
                             .font(FFTypography.caption)
                             .foregroundStyle(FFColors.accent)
+                    }
+                    Text("\(program.level) • \(program.frequency)")
+                        .font(FFTypography.caption)
+                        .foregroundStyle(FFColors.textSecondary)
+                    Text(program.equipment)
+                        .font(FFTypography.caption)
+                        .foregroundStyle(FFColors.textSecondary)
+                    if let updatedAt = program.updatedAt {
+                        Text("Обновлено: \(updatedAt.prefix(10))")
+                            .font(FFTypography.caption)
+                            .foregroundStyle(FFColors.gray300)
                     }
                 }
             }

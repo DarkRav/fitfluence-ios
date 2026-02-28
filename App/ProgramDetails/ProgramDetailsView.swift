@@ -20,6 +20,8 @@ final class ProgramDetailsViewModel {
     private let programsClient: ProgramsClientProtocol?
     private let cacheStore: CacheStore
     private let networkMonitor: NetworkMonitoring
+    private let progressStore: WorkoutProgressStore
+    private let trainingStore: TrainingStore
 
     var details: ProgramDetails?
     var isShowingCachedData = false
@@ -29,6 +31,10 @@ final class ProgramDetailsViewModel {
     var successMessage: String?
     var isWorkoutsPresented = false
     var selectedWorkout: SelectedWorkout?
+    var completedWorkoutsCount = 0
+    var totalWorkoutsCount = 0
+    var upcomingWorkoutTitle: String?
+    var lastCompletionTitle: String?
 
     init(
         programId: String,
@@ -36,12 +42,16 @@ final class ProgramDetailsViewModel {
         programsClient: ProgramsClientProtocol?,
         cacheStore: CacheStore = CompositeCacheStore(),
         networkMonitor: NetworkMonitoring = StaticNetworkMonitor(currentStatus: true),
+        progressStore: WorkoutProgressStore = LocalWorkoutProgressStore(),
+        trainingStore: TrainingStore = LocalTrainingStore(),
     ) {
         self.programId = programId
         self.userSub = userSub
         self.programsClient = programsClient
         self.cacheStore = cacheStore
         self.networkMonitor = networkMonitor
+        self.progressStore = progressStore
+        self.trainingStore = trainingStore
     }
 
     func onAppear() async {
@@ -107,14 +117,44 @@ final class ProgramDetailsViewModel {
             isShowingCachedData = false
             error = nil
             await cacheStore.set(cacheKey, value: details, namespace: userSub, ttl: 60 * 30)
+            await refreshProgress(with: details)
 
         case let .failure(apiError):
             if apiError == .offline || !networkMonitor.currentStatus, details != nil {
                 error = nil
                 isShowingCachedData = true
+                if let details {
+                    await refreshProgress(with: details)
+                }
                 return
             }
             error = apiError.userFacing(context: .programDetails)
+        }
+    }
+
+    private func refreshProgress(with details: ProgramDetails) async {
+        let workouts = details.workouts ?? []
+        totalWorkoutsCount = workouts.count
+
+        let statuses = await progressStore.statuses(
+            userSub: userSub,
+            programId: programId,
+            workoutIds: workouts.map(\.id),
+        )
+        completedWorkoutsCount = statuses.values.count(where: { $0 == .completed })
+        upcomingWorkoutTitle = workouts
+            .sorted(by: { $0.dayOrder < $1.dayOrder })
+            .first(where: { statuses[$0.id] != .completed })?
+            .title ?? workouts.sorted(by: { $0.dayOrder < $1.dayOrder }).first?.title
+
+        if let last = await trainingStore.history(userSub: userSub, source: nil, limit: 40)
+            .first(where: { $0.programId == programId })
+        {
+            let minutes = max(1, last.durationSeconds / 60)
+            let volume = last.volume > 0 ? " • объём \(Int(last.volume)) кг" : ""
+            lastCompletionTitle = "\(last.finishedAt.formatted(date: .abbreviated, time: .shortened)) • \(minutes) мин\(volume)"
+        } else {
+            lastCompletionTitle = nil
         }
     }
 
@@ -149,6 +189,7 @@ struct ProgramDetailsScreen: View {
                     )
                 } else if let details = viewModel.details {
                     header(details: details)
+                    progress(details: details)
                     about(details: details)
                     workouts(details: details)
                     startProgramBlock(details: details)
@@ -258,9 +299,46 @@ struct ProgramDetailsScreen: View {
                 Text("О программе")
                     .font(FFTypography.h2)
                     .foregroundStyle(FFColors.textPrimary)
+                if let version = details.currentPublishedVersion {
+                    Text("\(version.levelTitle) • \(version.frequencyTitle)")
+                        .font(FFTypography.caption)
+                        .foregroundStyle(FFColors.textSecondary)
+                    Text(version.equipmentTitle)
+                        .font(FFTypography.caption)
+                        .foregroundStyle(FFColors.textSecondary)
+                }
                 Text(details.description ?? "Описание программы пока недоступно.")
                     .font(FFTypography.body)
                     .foregroundStyle(FFColors.textSecondary)
+            }
+        }
+    }
+
+    private func progress(details _: ProgramDetails) -> some View {
+        FFCard {
+            VStack(alignment: .leading, spacing: FFSpacing.xs) {
+                Text("Ваш прогресс")
+                    .font(FFTypography.h2)
+                    .foregroundStyle(FFColors.textPrimary)
+                if viewModel.totalWorkoutsCount > 0 {
+                    Text("Пройдено \(viewModel.completedWorkoutsCount) из \(viewModel.totalWorkoutsCount) тренировок")
+                        .font(FFTypography.body)
+                        .foregroundStyle(FFColors.textPrimary)
+                } else {
+                    Text("Прогресс появится после загрузки списка тренировок.")
+                        .font(FFTypography.body)
+                        .foregroundStyle(FFColors.textSecondary)
+                }
+                if let upcomingWorkoutTitle = viewModel.upcomingWorkoutTitle {
+                    Text("Следующая: \(upcomingWorkoutTitle)")
+                        .font(FFTypography.caption)
+                        .foregroundStyle(FFColors.textSecondary)
+                }
+                if let lastCompletionTitle = viewModel.lastCompletionTitle {
+                    Text("Последнее выполнение: \(lastCompletionTitle)")
+                        .font(FFTypography.caption)
+                        .foregroundStyle(FFColors.accent)
+                }
             }
         }
     }
@@ -287,6 +365,13 @@ struct ProgramDetailsScreen: View {
                             Text(workout.title ?? "Тренировка")
                                 .font(FFTypography.body.weight(.semibold))
                                 .foregroundStyle(FFColors.textPrimary)
+                            if let workoutTitle = viewModel.upcomingWorkoutTitle,
+                               workoutTitle == (workout.title ?? "Тренировка")
+                            {
+                                Text("Следующая по плану")
+                                    .font(FFTypography.caption)
+                                    .foregroundStyle(FFColors.accent)
+                            }
                             if let note = workout.coachNote, !note.isEmpty {
                                 Text(note)
                                     .font(FFTypography.caption)

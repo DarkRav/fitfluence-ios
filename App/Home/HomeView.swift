@@ -187,7 +187,7 @@ final class HomeViewModel {
 
         let goalsText = details.goals?.prefix(2).joined(separator: " • ") ?? "Силовая адаптация"
         let difficulty = details.currentPublishedVersion?.level?.trimmedNilIfEmpty ?? "Базовый"
-        let equipment = details.currentPublishedVersion?.requirements?.equipmentSummary ?? "Оборудование: не указано"
+        let equipment = "Оборудование: \(details.currentPublishedVersion?.requirements?.equipmentSummaryText ?? "не указано")"
 
         if let nextWorkout {
             let duration = nextWorkout.estimatedDurationMinutes
@@ -415,28 +415,6 @@ private extension String {
     var trimmedNilIfEmpty: String? {
         let trimmed = trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? nil : trimmed
-    }
-}
-
-private extension [String: JSONValue] {
-    var equipmentSummary: String {
-        if case let .array(values)? = self["equipment"] {
-            let equipment = values.compactMap { value -> String? in
-                if case let .string(text) = value {
-                    return text
-                }
-                return nil
-            }
-            if !equipment.isEmpty {
-                return "Оборудование: " + equipment.joined(separator: ", ")
-            }
-        }
-
-        if case let .string(value)? = self["equipment"] {
-            return "Оборудование: \(value)"
-        }
-
-        return "Оборудование: не указано"
     }
 }
 
