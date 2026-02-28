@@ -88,7 +88,7 @@ private struct AuthEntryView: View {
                     Text("Добро пожаловать")
                         .font(FFTypography.h1)
                         .foregroundStyle(FFColors.textPrimary)
-                    Text("Войдите через Keycloak, чтобы продолжить работу в Fitfluence.")
+                    Text("Войдите, чтобы продолжить работу в Fitfluence.")
                         .font(FFTypography.body)
                         .foregroundStyle(FFColors.textSecondary)
                 }
@@ -121,7 +121,7 @@ private struct OnboardingGateView: View {
                     Text("Создание профиля")
                         .font(FFTypography.h2)
                         .foregroundStyle(FFColors.textPrimary)
-                    Text("Подготавливаем onboarding по выбранным типам профиля.")
+                    Text("Подготавливаем форму для создания профиля.")
                         .font(FFTypography.body)
                         .foregroundStyle(FFColors.textSecondary)
                     if context.requiredProfiles.requiresAthleteProfile {
@@ -131,8 +131,8 @@ private struct OnboardingGateView: View {
             }
 
             FFEmptyState(
-                title: "Требуется onboarding",
-                message: "На следующем шаге откроются формы профилей атлета и инфлюэнсера.",
+                title: "Нужно завершить создание профиля",
+                message: "Сейчас откроется шаг выбора: атлет или инфлюэнсер.",
             )
 
             Spacer()
@@ -254,7 +254,7 @@ private struct WorkoutsPlaceholderView: View {
         VStack(spacing: FFSpacing.md) {
             FFLoadingState(title: "Готовим ваши тренировки")
             FFCard {
-                Text("Здесь будет история выполнений, план на неделю и прогресс.")
+                Text("Пока этот раздел недоступен. Открывайте тренировки из карточки программы в каталоге.")
                     .font(FFTypography.body)
                     .foregroundStyle(FFColors.textSecondary)
             }

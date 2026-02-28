@@ -26,7 +26,7 @@ struct DiagnosticsView: View {
                 case .idle:
                     FFEmptyState(
                         title: "Ожидаем проверку",
-                        message: "Нажмите кнопку, чтобы проверить доступность backend",
+                        message: "Нажмите кнопку, чтобы проверить доступность сервера",
                     )
 
                 case .loading:

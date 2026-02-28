@@ -29,7 +29,7 @@ struct OnboardingView: View {
 
                     if let error = viewStore.errorMessage {
                         FFErrorState(
-                            title: "Не удалось завершить onboarding",
+                            title: "Не удалось завершить создание профиля",
                             message: error,
                             retryTitle: "Скрыть",
                         ) {
@@ -128,7 +128,7 @@ struct OnboardingView: View {
 
             FFTextField(
                 label: "Имя профиля",
-                placeholder: "Например: Coach Anna",
+                placeholder: "Например: Анна Тренер",
                 text: viewStore.binding(
                     get: \.influencerDisplayName,
                     send: OnboardingFeature.Action.influencerDisplayNameChanged,

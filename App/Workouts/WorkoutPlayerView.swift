@@ -262,7 +262,7 @@ struct WorkoutPlayerView: View {
                         }
 
                         FFTextField(
-                            label: "RPE",
+                            label: "Нагрузка (RPE)",
                             placeholder: "уровень",
                             text: Binding(
                                 get: { setState.rpeText },
@@ -272,7 +272,7 @@ struct WorkoutPlayerView: View {
                                     )
                                 },
                             ),
-                            helperText: "Например, 8",
+                            helperText: "Например, 8 из 10",
                             keyboardType: .decimalPad,
                         )
                     }
@@ -390,7 +390,7 @@ struct WorkoutPlayerView: View {
             "повторы не указаны"
         }
 
-        let rpePart = exercise.targetRpe.map { "RPE \($0)" } ?? "RPE не указан"
+        let rpePart = exercise.targetRpe.map { "Нагрузка RPE \($0)" } ?? "Нагрузка не указана"
         let restPart = exercise.restSeconds.map { "Отдых \($0) сек" } ?? "Отдых по самочувствию"
         return "\(exercise.sets) подходов • \(repsPart) • \(rpePart) • \(restPart)"
     }
