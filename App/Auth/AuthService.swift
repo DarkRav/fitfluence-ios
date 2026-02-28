@@ -83,8 +83,10 @@ final class AuthService: NSObject, AuthServiceProtocol, @unchecked Sendable {
             try tokenStore.save(tokenSet)
             return .success(tokenSet)
         } catch let apiError as APIError {
+            FFLog.error("OIDC login failed with APIError: \(String(describing: apiError))")
             return .failure(apiError)
         } catch {
+            FFLog.error("OIDC login failed with unexpected error: \(error.localizedDescription)")
             return .failure(.unknown)
         }
     }
@@ -189,6 +191,10 @@ final class AuthService: NSObject, AuthServiceProtocol, @unchecked Sendable {
                 }
 
                 if let error = error as NSError? {
+                    FFLog
+                        .error(
+                            "OIDC auth callback error domain=\(error.domain) code=\(error.code) message=\(error.localizedDescription)",
+                        )
                     if error.domain == OIDOAuthAuthorizationErrorDomain,
                        error.code == OIDErrorCodeOAuth.accessDenied.rawValue
                     {

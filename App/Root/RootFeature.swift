@@ -108,7 +108,7 @@ struct RootFeature {
                                     .error(
                                         UserFacingError(
                                             title: "Ошибка входа",
-                                            message: "Не удалось выполнить вход через Keycloak.",
+                                            message: error.loginFailureMessage,
                                         ),
                                     ),
                                 ),
@@ -169,6 +169,21 @@ struct RootFeature {
             case .onboarding:
                 return .none
             }
+        }
+    }
+}
+
+private extension APIError {
+    var loginFailureMessage: String {
+        switch self {
+        case .timeout, .offline:
+            "Не удалось связаться с сервером авторизации. Проверьте сеть и адрес Keycloak."
+        case .invalidURL:
+            "Некорректная конфигурация URL авторизации. Проверьте настройки окружения."
+        case .unauthorized, .forbidden:
+            "Клиент авторизации отклонён. Проверьте clientId, redirect URI и настройки в Keycloak."
+        default:
+            "Не удалось выполнить вход через Keycloak. Проверьте настройки клиента и HTTPS для auth-сервера."
         }
     }
 }
