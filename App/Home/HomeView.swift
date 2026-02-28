@@ -1,4 +1,5 @@
 import ComposableArchitecture
+import Observation
 import SwiftUI
 
 struct HomeView: View {
@@ -71,5 +72,208 @@ struct HomeView: View {
                 }
             }
         }
+    }
+}
+
+enum HomePrimaryAction: Equatable {
+    case continueSession(programId: String, workoutId: String)
+    case startNext(programId: String, workoutId: String)
+    case repeatLast(programId: String, workoutId: String)
+    case openPicker
+}
+
+@Observable
+final class HomeViewModel {
+    private let sessionManager: WorkoutSessionManager
+    private let workoutsProvider: @Sendable () async -> [WorkoutSummary]
+    private let userSub: String
+    private let programId: String
+
+    var isLoading = false
+    var activeSession: ActiveWorkoutSession?
+    var nextWorkout: WorkoutSummary?
+    var lastWorkout: WorkoutSummary?
+
+    init(
+        userSub: String,
+        programId: String,
+        sessionManager: WorkoutSessionManager,
+        workoutsProvider: @escaping @Sendable () async -> [WorkoutSummary],
+    ) {
+        self.userSub = userSub
+        self.programId = programId
+        self.sessionManager = sessionManager
+        self.workoutsProvider = workoutsProvider
+    }
+
+    var primaryTitle: String {
+        if activeSession != nil {
+            return "Продолжить тренировку"
+        }
+        if nextWorkout != nil {
+            return "Начать тренировку"
+        }
+        if lastWorkout != nil {
+            return "Повторить последнюю"
+        }
+        return "Выбрать тренировку"
+    }
+
+    var primaryAction: HomePrimaryAction {
+        if let activeSession {
+            return .continueSession(programId: activeSession.programId, workoutId: activeSession.workoutId)
+        }
+        if let nextWorkout {
+            return .startNext(programId: programId, workoutId: nextWorkout.id)
+        }
+        if let lastWorkout {
+            return .repeatLast(programId: programId, workoutId: lastWorkout.id)
+        }
+        return .openPicker
+    }
+
+    @MainActor
+    func onAppear() async {
+        guard !userSub.isEmpty else { return }
+        isLoading = true
+        async let session = sessionManager.latestActiveSession(userSub: userSub)
+        async let workouts = workoutsProvider()
+        let resolvedSession = await session
+        let resolvedWorkouts = await workouts
+        activeSession = resolvedSession
+        nextWorkout = resolvedWorkouts.sorted(by: { $0.dayOrder < $1.dayOrder }).first
+        lastWorkout = resolvedWorkouts.sorted(by: { $0.dayOrder > $1.dayOrder }).first
+        isLoading = false
+    }
+}
+
+struct HomeViewV2: View {
+    @State var viewModel: HomeViewModel
+    let onPrimaryAction: (HomePrimaryAction) -> Void
+    let onOpenPlan: () -> Void
+
+    var body: some View {
+        ScrollView {
+            VStack(spacing: FFSpacing.md) {
+                hero
+                nextWorkoutCard
+                lastWorkoutCard
+                summaryCard
+            }
+            .padding(.horizontal, FFSpacing.md)
+            .padding(.vertical, FFSpacing.md)
+        }
+        .background(FFColors.background)
+        .task {
+            await viewModel.onAppear()
+        }
+        .navigationTitle("Сегодня")
+    }
+
+    private var hero: some View {
+        FFCard {
+            VStack(alignment: .leading, spacing: FFSpacing.md) {
+                Text("Тренировка на сегодня")
+                    .font(FFTypography.h1)
+                    .foregroundStyle(FFColors.textPrimary)
+                if viewModel.isLoading {
+                    FFLoadingState(title: "Готовим план")
+                } else {
+                    FFButton(title: viewModel.primaryTitle, variant: .primary) {
+                        onPrimaryAction(viewModel.primaryAction)
+                    }
+                }
+            }
+        }
+    }
+
+    private var nextWorkoutCard: some View {
+        FFCard {
+            VStack(alignment: .leading, spacing: FFSpacing.xs) {
+                Text("Следующая тренировка")
+                    .font(FFTypography.h2)
+                    .foregroundStyle(FFColors.textPrimary)
+                if let nextWorkout = viewModel.nextWorkout {
+                    Text(nextWorkout.title)
+                        .font(FFTypography.body)
+                        .foregroundStyle(FFColors.textPrimary)
+                    Text("\(nextWorkout.exerciseCount) упражнений")
+                        .font(FFTypography.caption)
+                        .foregroundStyle(FFColors.textSecondary)
+                } else {
+                    Text("Выберите тренировку в плане.")
+                        .font(FFTypography.body)
+                        .foregroundStyle(FFColors.textSecondary)
+                }
+                FFButton(title: "Открыть план", variant: .secondary) {
+                    onOpenPlan()
+                }
+            }
+        }
+    }
+
+    private var lastWorkoutCard: some View {
+        FFCard {
+            VStack(alignment: .leading, spacing: FFSpacing.xs) {
+                Text("Последняя тренировка")
+                    .font(FFTypography.h2)
+                    .foregroundStyle(FFColors.textPrimary)
+                if let lastWorkout = viewModel.lastWorkout {
+                    Text(lastWorkout.title)
+                        .font(FFTypography.body)
+                        .foregroundStyle(FFColors.textPrimary)
+                    FFButton(title: "Повторить", variant: .secondary) {
+                        onPrimaryAction(.repeatLast(programId: viewModel.primaryAction.programId, workoutId: lastWorkout.id))
+                    }
+                } else {
+                    Text("Пока нет завершённых тренировок.")
+                        .font(FFTypography.body)
+                        .foregroundStyle(FFColors.textSecondary)
+                }
+            }
+        }
+    }
+
+    private var summaryCard: some View {
+        FFCard {
+            VStack(alignment: .leading, spacing: FFSpacing.xs) {
+                Text("Режим данных")
+                    .font(FFTypography.h2)
+                    .foregroundStyle(FFColors.textPrimary)
+                Text("Оффлайн: тренировка и прогресс сохраняются на устройстве.")
+                    .font(FFTypography.body)
+                    .foregroundStyle(FFColors.textSecondary)
+            }
+        }
+    }
+}
+
+private extension HomePrimaryAction {
+    var programId: String {
+        switch self {
+        case let .continueSession(programId, _): return programId
+        case let .startNext(programId, _): return programId
+        case let .repeatLast(programId, _): return programId
+        case .openPicker: return ""
+        }
+    }
+}
+
+#Preview("Home V2") {
+    NavigationStack {
+        HomeViewV2(
+            viewModel: HomeViewModel(
+                userSub: "athlete-1",
+                programId: "program-1",
+                sessionManager: WorkoutSessionManager(),
+            ) {
+                [
+                    WorkoutSummary(id: "w1", title: "Силовая A", dayOrder: 1, exerciseCount: 6, estimatedDurationMinutes: 50),
+                    WorkoutSummary(id: "w2", title: "Силовая B", dayOrder: 2, exerciseCount: 5, estimatedDurationMinutes: 45),
+                ]
+            },
+            onPrimaryAction: { _ in },
+            onOpenPlan: {},
+        )
     }
 }
