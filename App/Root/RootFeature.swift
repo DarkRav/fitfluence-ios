@@ -2,13 +2,28 @@ import ComposableArchitecture
 
 @Reducer
 struct RootFeature {
-    struct State: Equatable {}
+    @ObservableState
+    struct State: Equatable {
+        var selectedTab: Tab = .catalog
+    }
 
-    enum Action: Equatable {}
+    enum Tab: Hashable {
+        case catalog
+        case workouts
+        case profile
+    }
+
+    enum Action: Equatable {
+        case tabSelected(Tab)
+    }
 
     var body: some ReducerOf<Self> {
-        Reduce { _, _ in
-            .none
+        Reduce { state, action in
+            switch action {
+            case .tabSelected(let tab):
+                state.selectedTab = tab
+                return .none
+            }
         }
     }
 }
