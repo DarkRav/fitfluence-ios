@@ -70,6 +70,7 @@ struct FitfluenceApp: App {
                     )
                 },
                 environment: environment,
+                apiClient: apiClient,
             )
         }
     }

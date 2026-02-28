@@ -4,6 +4,7 @@ import SwiftUI
 struct RootView: View {
     let store: StoreOf<RootFeature>
     let environment: AppEnvironment
+    let apiClient: APIClientProtocol?
 
     var body: some View {
         WithViewStore(store, observe: { $0 }) { viewStore in
@@ -38,6 +39,7 @@ struct RootView: View {
                         MainTabsView(
                             store: store,
                             environment: environment,
+                            apiClient: apiClient,
                             me: userContext.me,
                             onLogout: { viewStore.send(.logoutTapped) },
                         )
@@ -106,91 +108,271 @@ private struct AuthEntryView: View {
 private struct MainTabsView: View {
     let store: StoreOf<RootFeature>
     let environment: AppEnvironment
+    let apiClient: APIClientProtocol?
     let me: MeResponse
     let onLogout: () -> Void
 
+    var body: some View {
+        AthleteShellView(
+            store: store,
+            environment: environment,
+            apiClient: apiClient,
+            me: me,
+            onLogout: onLogout,
+        )
+    }
+}
+
+private struct AthleteShellView: View {
+    let store: StoreOf<RootFeature>
+    let environment: AppEnvironment
+    let apiClient: APIClientProtocol?
+    let me: MeResponse
+    let onLogout: () -> Void
+
+    @State private var selectedTab: ShellTab = .today
+
+    enum ShellTab: Hashable {
+        case today
+        case plan
+        case progress
+        case profile
+    }
+
+    var body: some View {
+        TabView(selection: $selectedTab) {
+            NavigationStack {
+                TodayHubView(
+                    me: me,
+                    apiClient: apiClient,
+                    onOpenPlan: { selectedTab = .plan },
+                )
+            }
+            .tabItem {
+                Label("Сегодня", systemImage: "sun.max")
+            }
+            .tag(ShellTab.today)
+
+            NavigationStack {
+                PlanTabContent(store: store, environment: environment)
+            }
+            .tabItem {
+                Label("План", systemImage: "list.bullet.rectangle")
+            }
+            .tag(ShellTab.plan)
+
+            NavigationStack {
+                ProgressTabView()
+            }
+            .tabItem {
+                Label("Прогресс", systemImage: "chart.line.uptrend.xyaxis")
+            }
+            .tag(ShellTab.progress)
+
+            NavigationStack {
+                ProfilePlaceholderView(me: me, onLogout: onLogout)
+                    .padding(.horizontal, FFSpacing.md)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                    .background(FFColors.background)
+                    .navigationTitle("Профиль")
+            }
+            .tabItem {
+                Label("Профиль", systemImage: "person.crop.circle")
+            }
+            .tag(ShellTab.profile)
+        }
+        .tint(FFColors.accent)
+    }
+}
+
+private struct PlanTabContent: View {
+    let store: StoreOf<RootFeature>
+    let environment: AppEnvironment
+
     private struct ViewState: Equatable {
-        var selectedTab: RootFeature.MainTab
         var isProgramDetailsPresented: Bool
     }
 
     var body: some View {
-        WithViewStore(
-            store,
-            observe: {
-                ViewState(
-                    selectedTab: $0.selectedMainTab,
-                    isProgramDetailsPresented: $0.programDetails != nil,
-                )
-            },
-        ) { viewStore in
-            TabView(
-                selection: Binding(
-                    get: { viewStore.selectedTab },
-                    set: { store.send(.tabSelected($0)) },
+        WithViewStore(store, observe: { ViewState(isProgramDetailsPresented: $0.programDetails != nil) }) { viewStore in
+            CatalogView(
+                store: store.scope(
+                    state: \.catalog,
+                    action: \.catalog,
+                ),
+                environment: environment,
+            )
+            .navigationTitle("План")
+            .navigationDestination(
+                isPresented: Binding(
+                    get: { viewStore.isProgramDetailsPresented },
+                    set: { isPresented in
+                        if !isPresented {
+                            store.send(.programDetailsDismissed)
+                        }
+                    },
                 ),
             ) {
-                NavigationStack {
-                    HomeView(
-                        store: store.scope(
-                            state: \.home,
-                            action: \.home,
-                        ),
-                    )
-                    .navigationTitle("Главная")
-                }
-                .tabItem {
-                    Label("Главная", systemImage: "house")
-                }
-                .tag(RootFeature.MainTab.home)
-
-                NavigationStack {
-                    CatalogView(
-                        store: store.scope(
-                            state: \.catalog,
-                            action: \.catalog,
-                        ),
+                if let detailsStore = store.scope(state: \.programDetails, action: \.programDetails) {
+                    ProgramDetailsView(
+                        store: detailsStore,
                         environment: environment,
                     )
-                    .navigationTitle("Каталог")
-                    .navigationDestination(
-                        isPresented: Binding(
-                            get: { viewStore.isProgramDetailsPresented },
-                            set: { isPresented in
-                                if !isPresented {
-                                    store.send(.programDetailsDismissed)
-                                }
-                            },
-                        ),
-                    ) {
-                        if let detailsStore = store.scope(state: \.programDetails, action: \.programDetails) {
-                            ProgramDetailsView(
-                                store: detailsStore,
-                                environment: environment,
-                            )
-                            .navigationTitle("Программа")
-                        }
+                    .navigationTitle("Программа")
+                }
+            }
+        }
+    }
+}
+
+private struct TodayHubView: View {
+    let me: MeResponse
+    let apiClient: APIClientProtocol?
+    let onOpenPlan: () -> Void
+
+    @State private var route: WorkoutRoute?
+
+    private struct WorkoutRoute: Identifiable, Hashable {
+        let programId: String
+        let workoutId: String
+        var id: String { "\(programId)::\(workoutId)" }
+    }
+
+    var body: some View {
+        HomeViewV2(
+            viewModel: HomeViewModel(
+                userSub: me.subject ?? "anonymous",
+                sessionManager: WorkoutSessionManager(),
+            ),
+            onPrimaryAction: { action in
+                switch action {
+                case let .continueSession(programId, workoutId),
+                     let .startNext(programId, workoutId),
+                     let .repeatLast(programId, workoutId):
+                    route = WorkoutRoute(programId: programId, workoutId: workoutId)
+                case .openPicker:
+                    onOpenPlan()
+                }
+            },
+            onOpenPlan: onOpenPlan,
+        )
+        .navigationDestination(item: $route) { route in
+            WorkoutLaunchView(
+                userSub: me.subject ?? "anonymous",
+                programId: route.programId,
+                workoutId: route.workoutId,
+                apiClient: apiClient,
+            )
+        }
+    }
+}
+
+private struct WorkoutLaunchView: View {
+    let userSub: String
+    let programId: String
+    let workoutId: String
+    let apiClient: APIClientProtocol?
+
+    @State private var details: WorkoutDetailsModel?
+    @State private var error: UserFacingError?
+    @State private var isLoading = false
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        Group {
+            if isLoading {
+                FFLoadingState(title: "Открываем тренировку")
+                    .padding(.horizontal, FFSpacing.md)
+            } else if let details {
+                WorkoutPlayerViewV2(
+                    viewModel: WorkoutPlayerViewModel(
+                        userSub: userSub,
+                        programId: programId,
+                        workout: details,
+                    ),
+                    onExit: { dismiss() },
+                    onFinish: { dismiss() },
+                )
+            } else if let error {
+                FFErrorState(
+                    title: error.title,
+                    message: error.message,
+                    retryTitle: "Повторить",
+                ) {
+                    Task { await load() }
+                }
+                .padding(.horizontal, FFSpacing.md)
+            } else {
+                FFEmptyState(title: "Тренировка не найдена", message: "Выберите другую тренировку в плане.")
+                    .padding(.horizontal, FFSpacing.md)
+            }
+        }
+        .background(FFColors.background)
+        .navigationTitle("Тренировка")
+        .navigationBarTitleDisplayMode(.inline)
+        .task {
+            await load()
+        }
+    }
+
+    private func load() async {
+        guard !isLoading else { return }
+        isLoading = true
+        defer { isLoading = false }
+
+        if let apiClient, let programsClient = apiClient as? ProgramsClientProtocol {
+            let workoutsClient = WorkoutsClient(programsClient: programsClient)
+            let result = await workoutsClient.getWorkoutDetails(programId: programId, workoutId: workoutId)
+            switch result {
+            case let .success(details):
+                self.details = details
+                self.error = nil
+                return
+            case let .failure(apiError):
+                self.error = apiError.userFacing(context: .workoutPlayer)
+            }
+        }
+
+        let cacheStore = CompositeCacheStore()
+        if let cached = await cacheStore.get(
+            "workout.details:\(programId):\(workoutId)",
+            as: WorkoutDetailsModel.self,
+            namespace: userSub,
+        ) {
+            details = cached
+            error = nil
+        } else if error == nil {
+            error = UserFacingError(title: "Нет данных тренировки", message: "Откройте тренировку из плана при подключении к сети.")
+        }
+    }
+}
+
+private struct ProgressTabView: View {
+    var body: some View {
+        ScrollView {
+            VStack(spacing: FFSpacing.md) {
+                FFCard {
+                    VStack(alignment: .leading, spacing: FFSpacing.xs) {
+                        Text("Прогресс")
+                            .font(FFTypography.h1)
+                            .foregroundStyle(FFColors.textPrimary)
+                        Text("История и тренды обновляются по завершённым тренировкам.")
+                            .font(FFTypography.body)
+                            .foregroundStyle(FFColors.textSecondary)
                     }
                 }
-                .tabItem {
-                    Label("Каталог", systemImage: "sparkles.rectangle.stack")
-                }
-                .tag(RootFeature.MainTab.catalog)
 
-                NavigationStack {
-                    ProfilePlaceholderView(me: me, onLogout: onLogout)
-                        .padding(.horizontal, FFSpacing.md)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-                        .background(FFColors.background)
-                        .navigationTitle("Профиль")
+                FFCard {
+                    Text("Последние тренировки и динамика нагрузки появятся здесь.")
+                        .font(FFTypography.body)
+                        .foregroundStyle(FFColors.textSecondary)
                 }
-                .tabItem {
-                    Label("Профиль", systemImage: "person.crop.circle")
-                }
-                .tag(RootFeature.MainTab.profile)
             }
-            .tint(FFColors.accent)
+            .padding(.horizontal, FFSpacing.md)
+            .padding(.vertical, FFSpacing.md)
         }
+        .background(FFColors.background)
+        .navigationTitle("Прогресс")
     }
 }
 

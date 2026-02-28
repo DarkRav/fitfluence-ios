@@ -85,25 +85,23 @@ enum HomePrimaryAction: Equatable {
 @Observable
 final class HomeViewModel {
     private let sessionManager: WorkoutSessionManager
-    private let workoutsProvider: @Sendable () async -> [WorkoutSummary]
+    private let cacheStore: CacheStore
     private let userSub: String
-    private let programId: String
 
     var isLoading = false
     var activeSession: ActiveWorkoutSession?
+    var activeProgramId: String?
     var nextWorkout: WorkoutSummary?
     var lastWorkout: WorkoutSummary?
 
     init(
         userSub: String,
-        programId: String,
         sessionManager: WorkoutSessionManager,
-        workoutsProvider: @escaping @Sendable () async -> [WorkoutSummary],
+        cacheStore: CacheStore = CompositeCacheStore(),
     ) {
         self.userSub = userSub
-        self.programId = programId
         self.sessionManager = sessionManager
-        self.workoutsProvider = workoutsProvider
+        self.cacheStore = cacheStore
     }
 
     var primaryTitle: String {
@@ -123,11 +121,11 @@ final class HomeViewModel {
         if let activeSession {
             return .continueSession(programId: activeSession.programId, workoutId: activeSession.workoutId)
         }
-        if let nextWorkout {
-            return .startNext(programId: programId, workoutId: nextWorkout.id)
+        if let nextWorkout, let activeProgramId {
+            return .startNext(programId: activeProgramId, workoutId: nextWorkout.id)
         }
-        if let lastWorkout {
-            return .repeatLast(programId: programId, workoutId: lastWorkout.id)
+        if let lastWorkout, let activeProgramId {
+            return .repeatLast(programId: activeProgramId, workoutId: lastWorkout.id)
         }
         return .openPicker
     }
@@ -136,13 +134,23 @@ final class HomeViewModel {
     func onAppear() async {
         guard !userSub.isEmpty else { return }
         isLoading = true
-        async let session = sessionManager.latestActiveSession(userSub: userSub)
-        async let workouts = workoutsProvider()
-        let resolvedSession = await session
-        let resolvedWorkouts = await workouts
+        let resolvedSession = await sessionManager.latestActiveSession(userSub: userSub)
         activeSession = resolvedSession
-        nextWorkout = resolvedWorkouts.sorted(by: { $0.dayOrder < $1.dayOrder }).first
-        lastWorkout = resolvedWorkouts.sorted(by: { $0.dayOrder > $1.dayOrder }).first
+
+        if let resolvedSession {
+            activeProgramId = resolvedSession.programId
+            let workouts = await cacheStore.get(
+                "workouts.list:\(resolvedSession.programId)",
+                as: [WorkoutSummary].self,
+                namespace: userSub,
+            ) ?? []
+            nextWorkout = workouts.sorted(by: { $0.dayOrder < $1.dayOrder }).first
+            lastWorkout = workouts.sorted(by: { $0.dayOrder > $1.dayOrder }).first
+        } else {
+            activeProgramId = nil
+            nextWorkout = nil
+            lastWorkout = nil
+        }
         isLoading = false
     }
 }
@@ -223,7 +231,9 @@ struct HomeViewV2: View {
                         .font(FFTypography.body)
                         .foregroundStyle(FFColors.textPrimary)
                     FFButton(title: "Повторить", variant: .secondary) {
-                        onPrimaryAction(.repeatLast(programId: viewModel.primaryAction.programId, workoutId: lastWorkout.id))
+                        if let programId = viewModel.activeProgramId {
+                            onPrimaryAction(.repeatLast(programId: programId, workoutId: lastWorkout.id))
+                        }
                     }
                 } else {
                     Text("Пока нет завершённых тренировок.")
@@ -249,12 +259,12 @@ struct HomeViewV2: View {
 }
 
 private extension HomePrimaryAction {
-    var programId: String {
+    var programId: String? {
         switch self {
         case let .continueSession(programId, _): return programId
         case let .startNext(programId, _): return programId
         case let .repeatLast(programId, _): return programId
-        case .openPicker: return ""
+        case .openPicker: return nil
         }
     }
 }
@@ -264,14 +274,8 @@ private extension HomePrimaryAction {
         HomeViewV2(
             viewModel: HomeViewModel(
                 userSub: "athlete-1",
-                programId: "program-1",
                 sessionManager: WorkoutSessionManager(),
-            ) {
-                [
-                    WorkoutSummary(id: "w1", title: "Силовая A", dayOrder: 1, exerciseCount: 6, estimatedDurationMinutes: 50),
-                    WorkoutSummary(id: "w2", title: "Силовая B", dayOrder: 2, exerciseCount: 5, estimatedDurationMinutes: 45),
-                ]
-            },
+            ),
             onPrimaryAction: { _ in },
             onOpenPlan: {},
         )
