@@ -35,7 +35,7 @@
 - `KEYCLOAK_REALM`
 - `KEYCLOAK_CLIENT_ID`
 - `KEYCLOAK_REDIRECT_URI` (например `fitfluence://oauth/callback`)
-- `KEYCLOAK_SCOPES` (по умолчанию `openid profile email offline_access`)
+- `KEYCLOAK_SCOPES` (для DEV по умолчанию `openid`)
 - `KEYCLOAK_REGISTRATION_HINT_MODE` (`kc_action` или `loginOnly`)
 - `APP_ENVIRONMENT_NAME`
 
@@ -74,10 +74,13 @@
 - Не открывается callback:
   - проверьте `KEYCLOAK_REDIRECT_URI` и URL scheme `fitfluence`
 - Постоянный `401`:
-  - проверьте client id/realm/scopes
-  - проверьте доступность backend `http://localhost:9876`
+  - проверьте доступность backend URL из `Dev.xcconfig` (для телефона это должен быть IP, не `localhost`)
+  - проверьте `spring.security.oauth2.resourceserver.jwt.issuer-uri` в backend: issuer должен совпадать с `iss` в access token
+  - если backend запущен с локальным профилем и IP-хостом Keycloak, задайте `KEYCLOAK_ISSUER_URI=http://<ваш-ip>:9990/realms/fitfluence`
 - Не работает регистрация из кнопки:
   - переключите `KEYCLOAK_REGISTRATION_HINT_MODE` на `loginOnly`
+- `invalid_scope` в логине:
+  - оставьте `KEYCLOAK_SCOPES=openid` для DEV или добавьте `profile/email` в scopes клиента Keycloak
 
 ## Форматирование
 

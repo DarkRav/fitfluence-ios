@@ -48,7 +48,7 @@ final class AuthService: NSObject, AuthServiceProtocol, @unchecked Sendable {
 
         for scopes in scopeVariants {
             do {
-                return .success(try await performLogin(mode: mode, scopes: scopes))
+                return try await .success(performLogin(mode: mode, scopes: scopes))
             } catch let apiError as APIError {
                 let isInvalidScope = if case let .httpError(statusCode, bodySnippet) = apiError {
                     statusCode == 400 && bodySnippet?.contains("invalid_scope") == true
@@ -175,6 +175,10 @@ final class AuthService: NSObject, AuthServiceProtocol, @unchecked Sendable {
         }
 
         let tokenSet = tokenSet(from: tokenResponse)
+        guard !tokenSet.accessToken.isEmpty else {
+            FFLog.error("OIDC login completed without access token")
+            throw APIError.unauthorized
+        }
         try tokenStore.save(tokenSet)
         return tokenSet
     }
@@ -230,6 +234,11 @@ final class AuthService: NSObject, AuthServiceProtocol, @unchecked Sendable {
                        error.code == OIDErrorCodeOAuth.invalidScope.rawValue
                     {
                         resumeOnce(.failure(.httpError(statusCode: 400, bodySnippet: "invalid_scope")))
+                        return
+                    }
+
+                    if error.domain == OIDGeneralErrorDomain, error.code == -3 {
+                        resumeOnce(.failure(.cancelled))
                         return
                     }
 
