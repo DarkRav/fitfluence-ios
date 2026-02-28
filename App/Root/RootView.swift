@@ -154,7 +154,7 @@ private struct AthleteShellView: View {
             .tag(ShellTab.today)
 
             NavigationStack {
-                PlanTabContent(store: store, environment: environment)
+                PlanTabContent(store: store, environment: environment, apiClient: apiClient)
             }
             .tabItem {
                 Label("План", systemImage: "list.bullet.rectangle")
@@ -188,6 +188,7 @@ private struct AthleteShellView: View {
 private struct PlanTabContent: View {
     let store: StoreOf<RootFeature>
     let environment: AppEnvironment
+    let apiClient: APIClientProtocol?
 
     private struct ViewState: Equatable {
         var isProgramDetailsPresented: Bool
@@ -217,6 +218,7 @@ private struct PlanTabContent: View {
                     ProgramDetailsView(
                         store: detailsStore,
                         environment: environment,
+                        apiClient: apiClient,
                     )
                     .navigationTitle("Программа")
                 }
@@ -267,7 +269,7 @@ private struct TodayHubView: View {
     }
 }
 
-private struct WorkoutLaunchView: View {
+struct WorkoutLaunchView: View {
     let userSub: String
     let programId: String
     let workoutId: String

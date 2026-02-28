@@ -4,11 +4,11 @@ import SwiftUI
 struct ProgramDetailsView: View {
     let store: StoreOf<ProgramDetailsFeature>
     let environment: AppEnvironment
+    let apiClient: APIClientProtocol?
 
     private struct ViewState: Equatable {
         let isWorkoutsPresented: Bool
         let isWorkoutPlayerPresented: Bool
-        let isWorkoutCompletionPresented: Bool
     }
 
     var body: some View {
@@ -18,7 +18,6 @@ struct ProgramDetailsView: View {
                 ViewState(
                     isWorkoutsPresented: $0.workoutsList != nil,
                     isWorkoutPlayerPresented: $0.workoutPlayer != nil,
-                    isWorkoutCompletionPresented: $0.workoutCompletion != nil,
                 )
             },
         ) { navViewStore in
@@ -91,24 +90,14 @@ struct ProgramDetailsView: View {
                         },
                     ),
                 ) {
-                    if let playerStore = store.scope(state: \.workoutPlayer, action: \.workoutPlayer) {
-                        WorkoutPlayerView(store: playerStore)
+                    if let playerState = viewStore.workoutPlayer {
+                        WorkoutLaunchView(
+                            userSub: playerState.userSub,
+                            programId: playerState.programId,
+                            workoutId: playerState.workoutId,
+                            apiClient: apiClient,
+                        )
                             .navigationTitle("Тренировка")
-                    }
-                }
-                .navigationDestination(
-                    isPresented: Binding(
-                        get: { navViewStore.isWorkoutCompletionPresented },
-                        set: { isPresented in
-                            if !isPresented {
-                                store.send(.workoutCompletionDismissed)
-                            }
-                        },
-                    ),
-                ) {
-                    if let completionStore = store.scope(state: \.workoutCompletion, action: \.workoutCompletion) {
-                        WorkoutCompletionView(store: completionStore)
-                            .navigationTitle("Завершение")
                     }
                 }
             }
