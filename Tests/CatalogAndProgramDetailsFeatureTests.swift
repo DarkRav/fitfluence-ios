@@ -148,13 +148,20 @@ final class CatalogAndProgramDetailsFeatureTests: XCTestCase {
         )
 
         let store = TestStore(initialState: ProgramDetailsFeature.State(programId: "program-1", userSub: "u1")) {
-            ProgramDetailsFeature(programsClient: mockClient)
+            ProgramDetailsFeature(
+                programsClient: mockClient,
+                progressStore: LocalWorkoutProgressStore(defaults: UserDefaults(suiteName: UUID().uuidString)!),
+                cacheStore: MemoryCacheStore(),
+                networkMonitor: StaticNetworkMonitor(currentStatus: true),
+            )
         }
 
         await store.send(.onAppear) {
             $0.isLoading = true
             $0.error = nil
         }
+
+        await store.receive(.cachedDetailsResponse(nil))
 
         await store.receive(.detailsResponse(.success(sampleDetails))) { [self] in
             $0.isLoading = false
@@ -171,13 +178,20 @@ final class CatalogAndProgramDetailsFeatureTests: XCTestCase {
         )
 
         let store = TestStore(initialState: ProgramDetailsFeature.State(programId: "program-1", userSub: "u1")) {
-            ProgramDetailsFeature(programsClient: mockClient)
+            ProgramDetailsFeature(
+                programsClient: mockClient,
+                progressStore: LocalWorkoutProgressStore(defaults: UserDefaults(suiteName: UUID().uuidString)!),
+                cacheStore: MemoryCacheStore(),
+                networkMonitor: StaticNetworkMonitor(currentStatus: true),
+            )
         }
 
         await store.send(.onAppear) {
             $0.isLoading = true
             $0.error = nil
         }
+
+        await store.receive(.cachedDetailsResponse(nil))
 
         await store.receive(.detailsResponse(.failure(.serverError(statusCode: 503, bodySnippet: nil)))) {
             $0.isLoading = false

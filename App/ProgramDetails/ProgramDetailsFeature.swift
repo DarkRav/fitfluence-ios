@@ -8,6 +8,7 @@ struct ProgramDetailsFeature {
         let programId: String
         let userSub: String
         var details: ProgramDetails?
+        var isShowingCachedData = false
         var workoutsList: WorkoutsListFeature.State?
         var workoutPlayer: WorkoutPlayerFeature.State?
         var workoutCompletion: WorkoutCompletionFeature.State?
@@ -20,6 +21,7 @@ struct ProgramDetailsFeature {
     enum Action: Equatable {
         case onAppear
         case retry
+        case cachedDetailsResponse(ProgramDetails?)
         case detailsResponse(Result<ProgramDetails, APIError>)
         case startProgramTapped
         case startProgramResponse(Result<ProgramEnrollment, APIError>)
@@ -35,13 +37,19 @@ struct ProgramDetailsFeature {
     private let programsClient: ProgramsClientProtocol?
     private let workoutsClient: WorkoutsClientProtocol
     private let progressStore: WorkoutProgressStore
+    private let cacheStore: CacheStore
+    private let networkMonitor: NetworkMonitoring
 
     init(
         programsClient: ProgramsClientProtocol?,
         progressStore: WorkoutProgressStore = LocalWorkoutProgressStore(),
+        cacheStore: CacheStore = CompositeCacheStore(),
+        networkMonitor: NetworkMonitoring = StaticNetworkMonitor(currentStatus: true),
     ) {
         self.programsClient = programsClient
         self.progressStore = progressStore
+        self.cacheStore = cacheStore
+        self.networkMonitor = networkMonitor
         if let programsClient {
             workoutsClient = WorkoutsClient(programsClient: programsClient)
         } else {
@@ -56,20 +64,45 @@ struct ProgramDetailsFeature {
                 guard state.details == nil else { return .none }
                 state.isLoading = true
                 state.error = nil
-                return loadDetails(programId: state.programId)
+                return .concatenate(
+                    loadCachedDetails(programId: state.programId, namespace: state.userSub),
+                    loadDetails(programId: state.programId),
+                )
 
             case .retry:
                 state.isLoading = true
                 state.error = nil
-                return loadDetails(programId: state.programId)
+                return .concatenate(
+                    loadCachedDetails(programId: state.programId, namespace: state.userSub),
+                    loadDetails(programId: state.programId),
+                )
+
+            case let .cachedDetailsResponse(cached):
+                guard let cached else { return .none }
+                state.details = cached
+                state.isShowingCachedData = true
+                return .none
 
             case let .detailsResponse(result):
                 state.isLoading = false
                 switch result {
                 case let .success(details):
                     state.details = details
+                    state.isShowingCachedData = false
                     state.error = nil
+                    let namespace = state.userSub
+                    let key = cacheKey(programId: details.id)
+                    return .run { [cacheStore] _ in
+                        await cacheStore.set(key, value: details, namespace: namespace, ttl: 60 * 30)
+                    }
                 case let .failure(apiError):
+                    if apiError == .offline || !networkMonitor.currentStatus {
+                        if state.details != nil {
+                            state.error = nil
+                            state.isShowingCachedData = true
+                            return .none
+                        }
+                    }
                     state.error = apiError.userFacingError
                 }
                 return .none
@@ -170,6 +203,21 @@ struct ProgramDetailsFeature {
             }
             await send(.detailsResponse(result))
         }
+    }
+
+    private func loadCachedDetails(programId: String, namespace: String) -> Effect<Action> {
+        .run { [cacheStore] send in
+            let cached = await cacheStore.get(
+                cacheKey(programId: programId),
+                as: ProgramDetails.self,
+                namespace: namespace,
+            )
+            await send(.cachedDetailsResponse(cached))
+        }
+    }
+
+    private func cacheKey(programId: String) -> String {
+        "program.details:\(programId)"
     }
 }
 

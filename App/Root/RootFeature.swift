@@ -87,10 +87,12 @@ struct RootFeature {
                 networkMonitor: networkMonitor,
             )
         }
-        .ifLet(\.programDetails, action: \.programDetails) { [apiClient, progressStore] in
+        .ifLet(\.programDetails, action: \.programDetails) { [apiClient, progressStore, cacheStore, networkMonitor] in
             ProgramDetailsFeature(
                 programsClient: apiClient as? ProgramsClientProtocol,
                 progressStore: progressStore,
+                cacheStore: cacheStore,
+                networkMonitor: networkMonitor,
             )
         }
 
