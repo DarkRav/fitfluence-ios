@@ -38,9 +38,11 @@
 		849A338E87813F3C4CB7BF03 /* Environment.swift in Sources */ = {isa = PBXBuildFile; fileRef = 44A1273CE966730AE3C9922B /* Environment.swift */; };
 		8D8127A6EF2465DFDE792FAD /* OIDCAndTokenStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 329834B4D1A96F4EA44A775F /* OIDCAndTokenStoreTests.swift */; };
 		995AB65668749D508DA1F32C /* WorkoutPlayerFeature.swift in Sources */ = {isa = PBXBuildFile; fileRef = E3DD06CBB198BE1F06A76175 /* WorkoutPlayerFeature.swift */; };
+		9BA85066DCAEF7E479AEA974 /* CacheStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A9E1507216045909C1D3BEF3 /* CacheStore.swift */; };
 		A1788B18CB78B7660191A722 /* WorkoutPlayerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 80D4B8754AB2E901312C854C /* WorkoutPlayerView.swift */; };
 		A7468B42E0564F56E4DEA037 /* APIError.swift in Sources */ = {isa = PBXBuildFile; fileRef = D049FFBF6B3F8E522C058CAA /* APIError.swift */; };
 		A894EEF1CB87660C0CDB9600 /* HTTPClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 14C19E971649693B43AC91DB /* HTTPClient.swift */; };
+		AAAA98F84F7E07A8050F518F /* CacheStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F56DB3FDD2708300A0824118 /* CacheStoreTests.swift */; };
 		AB5CB6D21AA03EE03C7DF1D1 /* AthleteProfileClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = D3D152248888DA9E6279DACD /* AthleteProfileClient.swift */; };
 		B1D4335E51D0FCAC21C8DB80 /* MeClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = B61E587FD4EC525652715208 /* MeClient.swift */; };
 		B2EFCC6EFBC62E64F826EFDB /* SessionManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = F4BA13F15E04E7DE0985E8C3 /* SessionManager.swift */; };
@@ -117,6 +119,7 @@
 		A2E5D8994FEA468EC4504CD0 /* Typography.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Typography.swift; sourceTree = "<group>"; };
 		A56CE81EAF5FA874DDFE6201 /* CatalogView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CatalogView.swift; sourceTree = "<group>"; };
 		A97D9C4C6794471BA7C75525 /* FFButton.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFButton.swift; sourceTree = "<group>"; };
+		A9E1507216045909C1D3BEF3 /* CacheStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CacheStore.swift; sourceTree = "<group>"; };
 		AE32622DE77E7E6D8F18CD32 /* StoredAuthTokenProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StoredAuthTokenProvider.swift; sourceTree = "<group>"; };
 		B0CE9CC0E1302819C8010358 /* Logging.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Logging.swift; sourceTree = "<group>"; };
 		B0CF331419F45FF9802465D8 /* ProgramsClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProgramsClient.swift; sourceTree = "<group>"; };
@@ -140,6 +143,7 @@
 		EE8604458F7511FF670AF498 /* WorkoutCompletionView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkoutCompletionView.swift; sourceTree = "<group>"; };
 		F4BA13F15E04E7DE0985E8C3 /* SessionManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionManager.swift; sourceTree = "<group>"; };
 		F4E83E16D03A9159D9FAC56A /* WorkoutsFeatureAndProgressStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkoutsFeatureAndProgressStoreTests.swift; sourceTree = "<group>"; };
+		F56DB3FDD2708300A0824118 /* CacheStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CacheStoreTests.swift; sourceTree = "<group>"; };
 		F985AA318869C8870BDA6187 /* DiagnosticsFeature.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiagnosticsFeature.swift; sourceTree = "<group>"; };
 		FE69D7DA6EBA76E277ABD6C7 /* CatalogAndProgramDetailsFeatureTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CatalogAndProgramDetailsFeatureTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -246,6 +250,7 @@
 				4E24CED28C6227B31F799718 /* Onboarding */,
 				407836AD2D7FC169F347D0C9 /* ProgramDetails */,
 				D292F30B286489A7E8DBAFB9 /* Root */,
+				9CC863E3AD35E5A677BF01A7 /* Storage */,
 				8AAD2A15E46772C722633EDA /* Support */,
 				F6A8F7945D50D0CA6D48B213 /* Workouts */,
 			);
@@ -269,6 +274,14 @@
 				967F2EF94A530FC0D94A6D5C /* PreviewMocks.swift */,
 			);
 			path = Support;
+			sourceTree = "<group>";
+		};
+		9CC863E3AD35E5A677BF01A7 /* Storage */ = {
+			isa = PBXGroup;
+			children = (
+				A9E1507216045909C1D3BEF3 /* CacheStore.swift */,
+			);
+			path = Storage;
 			sourceTree = "<group>";
 		};
 		AAAC776BF68BD9D9EAA0E275 /* DesignSystem */ = {
@@ -302,6 +315,7 @@
 			isa = PBXGroup;
 			children = (
 				4E282B8F338673539A3669DB /* AuthAndSessionFlowTests.swift */,
+				F56DB3FDD2708300A0824118 /* CacheStoreTests.swift */,
 				FE69D7DA6EBA76E277ABD6C7 /* CatalogAndProgramDetailsFeatureTests.swift */,
 				94FD710E5EFA916159BCCE7D /* DesignSystemTests.swift */,
 				E1984067FE9FCB6709C5D963 /* MockURLProtocol.swift */,
@@ -438,6 +452,7 @@
 				AB5CB6D21AA03EE03C7DF1D1 /* AthleteProfileClient.swift in Sources */,
 				CB6448969D574D903A200B23 /* AuthService.swift in Sources */,
 				28A1BACADED54018734A2488 /* AuthTokenProvider.swift in Sources */,
+				9BA85066DCAEF7E479AEA974 /* CacheStore.swift in Sources */,
 				2CFF46CC7D8EE0EE89256960 /* CatalogFeature.swift in Sources */,
 				3FA3EB4628A444E086A3F7CB /* CatalogView.swift in Sources */,
 				2446FADE5A6601002AB8A61D /* Colors.swift in Sources */,
@@ -489,6 +504,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				68E89882A51C1B39345D7DEE /* AuthAndSessionFlowTests.swift in Sources */,
+				AAAA98F84F7E07A8050F518F /* CacheStoreTests.swift in Sources */,
 				F128A068B4197FBB8CFCD9B0 /* CatalogAndProgramDetailsFeatureTests.swift in Sources */,
 				F8D8480922CC1CB246C5C711 /* DesignSystemTests.swift in Sources */,
 				52FBBDB2F37E77D2C7143EBA /* MockURLProtocol.swift in Sources */,
