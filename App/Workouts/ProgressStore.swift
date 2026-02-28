@@ -42,7 +42,14 @@ struct WorkoutProgressSnapshot: Codable, Equatable, Sendable {
         }
 
         let allSets = exercises.values.flatMap(\.sets)
-        if allSets.contains(where: \.isCompleted) {
+        let hasCompletedSet = allSets.contains(where: \.isCompleted)
+        let hasEnteredValues = allSets.contains { set in
+            !set.repsText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                || !set.weightText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                || !set.rpeText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+
+        if hasCompletedSet || hasEnteredValues {
             return .inProgress
         }
 
