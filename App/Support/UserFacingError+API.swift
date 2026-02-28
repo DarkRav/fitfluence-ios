@@ -20,37 +20,37 @@ extension APIError {
     func userFacing(context: UserFacingErrorContext) -> UserFacingError {
         switch self {
         case .offline:
-            return UserFacingError(
+            UserFacingError(
                 kind: .offline,
                 title: "Нет подключения к интернету",
                 message: "Проверьте сеть и попробуйте снова.",
             )
         case .unauthorized:
-            return UserFacingError(
+            UserFacingError(
                 kind: .unauthorized,
                 title: "Сессия истекла",
                 message: "Войдите снова, чтобы продолжить.",
             )
         case .forbidden:
-            return UserFacingError(
+            UserFacingError(
                 kind: .forbidden,
                 title: "Доступ запрещён",
                 message: forbiddenMessage(for: context),
             )
         case .serverError, .timeout, .transportError:
-            return UserFacingError(
+            UserFacingError(
                 kind: .server,
                 title: "Сервис временно недоступен",
                 message: serverMessage(for: context),
             )
         case .decodingError:
-            return UserFacingError(
+            UserFacingError(
                 kind: .decoding,
                 title: "Ошибка данных",
                 message: "Не удалось обработать ответ сервера",
             )
         default:
-            return UserFacingError(
+            UserFacingError(
                 kind: .unknown,
                 title: "Что-то пошло не так",
                 message: unknownMessage(for: context),
@@ -61,37 +61,37 @@ extension APIError {
     private func forbiddenMessage(for context: UserFacingErrorContext) -> String {
         switch context {
         case .catalog:
-            return "У вас нет прав для просмотра каталога."
+            "У вас нет прав для просмотра каталога."
         case .programDetails:
-            return "Недостаточно прав для просмотра программы."
+            "Недостаточно прав для просмотра программы."
         case .workoutsList, .workoutPlayer:
-            return "Недостаточно прав для просмотра тренировок."
+            "Недостаточно прав для просмотра тренировок."
         }
     }
 
     private func serverMessage(for context: UserFacingErrorContext) -> String {
         switch context {
         case .catalog:
-            return "Не удалось загрузить каталог. Попробуйте позже."
+            "Не удалось загрузить каталог. Попробуйте позже."
         case .programDetails:
-            return "Не удалось загрузить программу. Попробуйте позже."
+            "Не удалось загрузить программу. Попробуйте позже."
         case .workoutsList:
-            return "Не удалось загрузить список тренировок. Попробуйте позже."
+            "Не удалось загрузить список тренировок. Попробуйте позже."
         case .workoutPlayer:
-            return "Не удалось загрузить тренировку. Попробуйте позже."
+            "Не удалось загрузить тренировку. Попробуйте позже."
         }
     }
 
     private func unknownMessage(for context: UserFacingErrorContext) -> String {
         switch context {
         case .catalog:
-            return "Не удалось загрузить каталог."
+            "Не удалось загрузить каталог."
         case .programDetails:
-            return "Не удалось загрузить программу."
+            "Не удалось загрузить программу."
         case .workoutsList:
-            return "Не удалось загрузить тренировки."
+            "Не удалось загрузить тренировки."
         case .workoutPlayer:
-            return "Не удалось открыть тренировку."
+            "Не удалось открыть тренировку."
         }
     }
 }
