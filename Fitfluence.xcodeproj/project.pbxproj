@@ -10,22 +10,26 @@
 		04999B39195137AB9BA71B9A /* AppAuth in Frameworks */ = {isa = PBXBuildFile; productRef = 6BE6FBF509B0BB844E656549 /* AppAuth */; };
 		06931F2CD054F4E2CB1A73B4 /* Logging.swift in Sources */ = {isa = PBXBuildFile; fileRef = B0CE9CC0E1302819C8010358 /* Logging.swift */; };
 		0AF9ACEEACEF5516F5A125FC /* APIRequest.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E4CF13A2531205E9575D66B /* APIRequest.swift */; };
+		1AB57DA5730C1782367D6BE4 /* OnboardingFeature.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0E8CAAC9949B18D9481EB13C /* OnboardingFeature.swift */; };
 		1D7E67CC678EE15C79E3AB96 /* Typography.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2E5D8994FEA468EC4504CD0 /* Typography.swift */; };
 		2446FADE5A6601002AB8A61D /* Colors.swift in Sources */ = {isa = PBXBuildFile; fileRef = 87E0FAD6B3FC785EE59C774B /* Colors.swift */; };
 		24A48678A501B841969AB1EC /* RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 870E9DD10FEBC22074CF71BA /* RootView.swift */; };
 		268CC2843BD27BA0CDDE9075 /* ComposableArchitecture in Frameworks */ = {isa = PBXBuildFile; productRef = CF92C8BF8645F9BA258E283B /* ComposableArchitecture */; };
 		28A1BACADED54018734A2488 /* AuthTokenProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 73D40B15217387B49B13527A /* AuthTokenProvider.swift */; };
 		302383A11BF7E3A6A2017B59 /* PreviewMocks.swift in Sources */ = {isa = PBXBuildFile; fileRef = 967F2EF94A530FC0D94A6D5C /* PreviewMocks.swift */; };
+		43CA0760499D122198F6FA3B /* OnboardingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1203A36F8050A4BC9C2E299F /* OnboardingView.swift */; };
 		45E466356D6C79571D6512DF /* APIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 93591F37ED661EF6B961A5D3 /* APIClient.swift */; };
 		47666B7411F0CE528FE8B1F4 /* FFErrorState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 151CCFD42F23601C4661B789 /* FFErrorState.swift */; };
 		52FBBDB2F37E77D2C7143EBA /* MockURLProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = E1984067FE9FCB6709C5D963 /* MockURLProtocol.swift */; };
 		553A3B4DA2F534094E3AA5C8 /* APILogger.swift in Sources */ = {isa = PBXBuildFile; fileRef = ED3B939F25D70B624ECD73AC /* APILogger.swift */; };
 		5C6A1DDAACA62605B0E42581 /* FFLoadingState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2C571FBEBDFDA288B1E05B14 /* FFLoadingState.swift */; };
+		5E6EF9DDF511ED6E69C44691 /* InfluencerProfileClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 862F48B6CFE0972C4137CDAF /* InfluencerProfileClient.swift */; };
 		659A792308E4E63241F9DE2C /* FFBadge.swift in Sources */ = {isa = PBXBuildFile; fileRef = E190F6607FF86AE368CDC6DC /* FFBadge.swift */; };
 		849A338E87813F3C4CB7BF03 /* Environment.swift in Sources */ = {isa = PBXBuildFile; fileRef = 44A1273CE966730AE3C9922B /* Environment.swift */; };
 		8D8127A6EF2465DFDE792FAD /* OIDCAndTokenStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 329834B4D1A96F4EA44A775F /* OIDCAndTokenStoreTests.swift */; };
 		A7468B42E0564F56E4DEA037 /* APIError.swift in Sources */ = {isa = PBXBuildFile; fileRef = D049FFBF6B3F8E522C058CAA /* APIError.swift */; };
 		A894EEF1CB87660C0CDB9600 /* HTTPClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 14C19E971649693B43AC91DB /* HTTPClient.swift */; };
+		AB5CB6D21AA03EE03C7DF1D1 /* AthleteProfileClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = D3D152248888DA9E6279DACD /* AthleteProfileClient.swift */; };
 		B1D4335E51D0FCAC21C8DB80 /* MeClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = B61E587FD4EC525652715208 /* MeClient.swift */; };
 		B2EFCC6EFBC62E64F826EFDB /* SessionManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = F4BA13F15E04E7DE0985E8C3 /* SessionManager.swift */; };
 		B68CFEB25BF04441A03234E5 /* Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 86189A9947AC753259B89A8D /* Theme.swift */; };
@@ -60,6 +64,8 @@
 /* Begin PBXFileReference section */
 		02FB6451DC5112CB7DE94103 /* DiagnosticsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiagnosticsView.swift; sourceTree = "<group>"; };
 		0A3A5018D89BEF09A1424EEF /* Spacing.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Spacing.swift; sourceTree = "<group>"; };
+		0E8CAAC9949B18D9481EB13C /* OnboardingFeature.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingFeature.swift; sourceTree = "<group>"; };
+		1203A36F8050A4BC9C2E299F /* OnboardingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingView.swift; sourceTree = "<group>"; };
 		14C19E971649693B43AC91DB /* HTTPClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HTTPClient.swift; sourceTree = "<group>"; };
 		151CCFD42F23601C4661B789 /* FFErrorState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFErrorState.swift; sourceTree = "<group>"; };
 		2406C59ACFAD49D5F8BF8FC2 /* FitfluenceApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FitfluenceApp.swift; sourceTree = "<group>"; };
@@ -75,6 +81,7 @@
 		73D40B15217387B49B13527A /* AuthTokenProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthTokenProvider.swift; sourceTree = "<group>"; };
 		7D5DAA77BFBBF8EB1EE9084A /* TokenSet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TokenSet.swift; sourceTree = "<group>"; };
 		86189A9947AC753259B89A8D /* Theme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Theme.swift; sourceTree = "<group>"; };
+		862F48B6CFE0972C4137CDAF /* InfluencerProfileClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InfluencerProfileClient.swift; sourceTree = "<group>"; };
 		870E9DD10FEBC22074CF71BA /* RootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootView.swift; sourceTree = "<group>"; };
 		87E0FAD6B3FC785EE59C774B /* Colors.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Colors.swift; sourceTree = "<group>"; };
 		88082B057D7E001AA79962A9 /* AuthService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthService.swift; sourceTree = "<group>"; };
@@ -92,6 +99,7 @@
 		B61E587FD4EC525652715208 /* MeClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeClient.swift; sourceTree = "<group>"; };
 		CAEB6BFF14C57697C73E6CD3 /* RootFeature.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootFeature.swift; sourceTree = "<group>"; };
 		D049FFBF6B3F8E522C058CAA /* APIError.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIError.swift; sourceTree = "<group>"; };
+		D3D152248888DA9E6279DACD /* AthleteProfileClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AthleteProfileClient.swift; sourceTree = "<group>"; };
 		D45116A2BFE9402EC531FE76 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		D4D6772D2C40BCF7FEB3C45C /* FFCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFCard.swift; sourceTree = "<group>"; };
 		E190F6607FF86AE368CDC6DC /* FFBadge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFBadge.swift; sourceTree = "<group>"; };
@@ -134,6 +142,15 @@
 			path = Diagnostics;
 			sourceTree = "<group>";
 		};
+		4E24CED28C6227B31F799718 /* Onboarding */ = {
+			isa = PBXGroup;
+			children = (
+				0E8CAAC9949B18D9481EB13C /* OnboardingFeature.swift */,
+				1203A36F8050A4BC9C2E299F /* OnboardingView.swift */,
+			);
+			path = Onboarding;
+			sourceTree = "<group>";
+		};
 		58F67AC41220B348AE247B79 /* Networking */ = {
 			isa = PBXGroup;
 			children = (
@@ -141,8 +158,10 @@
 				D049FFBF6B3F8E522C058CAA /* APIError.swift */,
 				ED3B939F25D70B624ECD73AC /* APILogger.swift */,
 				9E4CF13A2531205E9575D66B /* APIRequest.swift */,
+				D3D152248888DA9E6279DACD /* AthleteProfileClient.swift */,
 				73D40B15217387B49B13527A /* AuthTokenProvider.swift */,
 				14C19E971649693B43AC91DB /* HTTPClient.swift */,
+				862F48B6CFE0972C4137CDAF /* InfluencerProfileClient.swift */,
 				B61E587FD4EC525652715208 /* MeClient.swift */,
 			);
 			path = Networking;
@@ -170,6 +189,7 @@
 				AAAC776BF68BD9D9EAA0E275 /* DesignSystem */,
 				2B8FF2D42D4065D13B51126A /* Diagnostics */,
 				58F67AC41220B348AE247B79 /* Networking */,
+				4E24CED28C6227B31F799718 /* Onboarding */,
 				D292F30B286489A7E8DBAFB9 /* Root */,
 				8AAD2A15E46772C722633EDA /* Support */,
 			);
@@ -340,6 +360,7 @@
 				A7468B42E0564F56E4DEA037 /* APIError.swift in Sources */,
 				553A3B4DA2F534094E3AA5C8 /* APILogger.swift in Sources */,
 				0AF9ACEEACEF5516F5A125FC /* APIRequest.swift in Sources */,
+				AB5CB6D21AA03EE03C7DF1D1 /* AthleteProfileClient.swift in Sources */,
 				CB6448969D574D903A200B23 /* AuthService.swift in Sources */,
 				28A1BACADED54018734A2488 /* AuthTokenProvider.swift in Sources */,
 				2446FADE5A6601002AB8A61D /* Colors.swift in Sources */,
@@ -355,9 +376,12 @@
 				F540D452CC4979E1CE3FDFED /* FFTextField.swift in Sources */,
 				C091B3E8CBC8FB1F8ABFDC95 /* FitfluenceApp.swift in Sources */,
 				A894EEF1CB87660C0CDB9600 /* HTTPClient.swift in Sources */,
+				5E6EF9DDF511ED6E69C44691 /* InfluencerProfileClient.swift in Sources */,
 				06931F2CD054F4E2CB1A73B4 /* Logging.swift in Sources */,
 				B1D4335E51D0FCAC21C8DB80 /* MeClient.swift in Sources */,
 				BC078A680755A39631921FB9 /* OIDCDiscoveryDocument.swift in Sources */,
+				1AB57DA5730C1782367D6BE4 /* OnboardingFeature.swift in Sources */,
+				43CA0760499D122198F6FA3B /* OnboardingView.swift in Sources */,
 				302383A11BF7E3A6A2017B59 /* PreviewMocks.swift in Sources */,
 				BE14E4CFB655557D8C529CDF /* RootFeature.swift in Sources */,
 				24A48678A501B841969AB1EC /* RootView.swift in Sources */,

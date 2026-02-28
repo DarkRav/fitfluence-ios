@@ -7,9 +7,14 @@ struct HealthResponse: Codable, Equatable {
 protocol APIClientProtocol: Sendable {
     func healthCheck() async -> Result<HealthResponse, APIError>
     func me() async -> Result<MeResponse, APIError>
+    func createProfile(_ request: CreateAthleteProfileRequest) async -> Result<CreateAthleteProfileResponse, APIError>
+    func createProfile(_ request: CreateInfluencerProfileRequest) async
+        -> Result<CreateInfluencerProfileResponse, APIError>
 }
 
-final class APIClient: APIClientProtocol, MeClientProtocol {
+final class APIClient: APIClientProtocol, MeClientProtocol, AthleteProfileClientProtocol,
+    InfluencerProfileClientProtocol
+{
     private let httpClient: HTTPClientProtocol
 
     init(httpClient: HTTPClientProtocol) {
@@ -35,6 +40,28 @@ final class APIClient: APIClientProtocol, MeClientProtocol {
     func me() async -> Result<MeResponse, APIError> {
         let request = APIRequest.get(path: "/v1/me", requiresAuthorization: true)
         return await decode(request, as: MeResponse.self)
+    }
+
+    func createProfile(_ request: CreateAthleteProfileRequest) async -> Result<CreateAthleteProfileResponse, APIError> {
+        do {
+            let payload = try JSONEncoder().encode(request)
+            let apiRequest = APIRequest(path: "/v1/athlete/profile", method: .post, body: payload)
+            return await decode(apiRequest, as: CreateAthleteProfileResponse.self)
+        } catch {
+            return .failure(.unknown)
+        }
+    }
+
+    func createProfile(_ request: CreateInfluencerProfileRequest) async
+        -> Result<CreateInfluencerProfileResponse, APIError>
+    {
+        do {
+            let payload = try JSONEncoder().encode(request)
+            let apiRequest = APIRequest(path: "/v1/influencer/profile", method: .post, body: payload)
+            return await decode(apiRequest, as: CreateInfluencerProfileResponse.self)
+        } catch {
+            return .failure(.unknown)
+        }
     }
 
     private func decode<T: Decodable>(_ request: APIRequest, as _: T.Type) async -> Result<T, APIError> {

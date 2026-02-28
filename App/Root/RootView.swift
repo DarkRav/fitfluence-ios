@@ -21,8 +21,15 @@ struct RootView: View {
                         .padding(.horizontal, FFSpacing.md)
 
                 case let .needsOnboarding(context):
-                    OnboardingGateView(context: context)
+                    if let onboardingStore = store.scope(state: \.onboarding, action: \.onboarding) {
+                        OnboardingView(
+                            store: onboardingStore,
+                        )
                         .padding(.horizontal, FFSpacing.md)
+                    } else {
+                        OnboardingGateView(context: context)
+                            .padding(.horizontal, FFSpacing.md)
+                    }
 
                 case let .authenticated(userContext):
                     MainTabsView(

@@ -5,6 +5,8 @@ struct RootFeature {
     private let sessionManager: SessionManaging
     private let authService: AuthServiceProtocol
     private let apiClient: APIClientProtocol?
+    private let athleteClient: AthleteProfileClientProtocol?
+    private let influencerClient: InfluencerProfileClientProtocol?
 
     init(
         sessionManager: SessionManaging,
@@ -14,6 +16,8 @@ struct RootFeature {
         self.sessionManager = sessionManager
         self.authService = authService
         self.apiClient = apiClient
+        athleteClient = apiClient as? AthleteProfileClientProtocol
+        influencerClient = apiClient as? InfluencerProfileClientProtocol
     }
 
     @ObservableState
@@ -21,6 +25,7 @@ struct RootFeature {
         var sessionState: RootSessionState = .authenticating
         var diagnostics = DiagnosticsFeature.State()
         var selectedMainTab: MainTab = .catalog
+        var onboarding: OnboardingFeature.State?
     }
 
     enum MainTab: Hashable {
@@ -39,12 +44,20 @@ struct RootFeature {
         case logoutTapped
         case sessionResolved(RootSessionState)
         case diagnostics(DiagnosticsFeature.Action)
+        case onboarding(OnboardingFeature.Action)
         case tabSelected(MainTab)
     }
 
     var body: some ReducerOf<Self> {
         Scope(state: \.diagnostics, action: \.diagnostics) {
             DiagnosticsFeature(apiClient: apiClient)
+        }
+        .ifLet(\.onboarding, action: \.onboarding) { [athleteClient, influencerClient, sessionManager] in
+            OnboardingFeature(
+                athleteClient: athleteClient,
+                influencerClient: influencerClient,
+                sessionManager: sessionManager,
+            )
         }
 
         Reduce { state, action in
@@ -92,6 +105,11 @@ struct RootFeature {
 
             case let .sessionResolved(nextState):
                 state.sessionState = nextState
+                if case let .needsOnboarding(context) = nextState {
+                    state.onboarding = OnboardingFeature.State(context: context)
+                } else {
+                    state.onboarding = nil
+                }
                 return .none
 
             case let .tabSelected(tab):
@@ -99,6 +117,21 @@ struct RootFeature {
                 return .none
 
             case .diagnostics:
+                return .none
+
+            case let .onboarding(.delegate(.sessionResolved(nextState))):
+                state.sessionState = nextState
+                if case let .needsOnboarding(context) = nextState {
+                    state.onboarding = OnboardingFeature.State(context: context)
+                } else {
+                    state.onboarding = nil
+                    if case let .authenticated(userContext) = nextState {
+                        state.selectedMainTab = userContext.me.hasInfluencerProfile ? .profile : .catalog
+                    }
+                }
+                return .none
+
+            case .onboarding:
                 return .none
             }
         }
