@@ -25,6 +25,18 @@ targets:
     info:
       path: App/Info.plist
       properties:
+        AppEnvironmentName: $(APP_ENVIRONMENT_NAME)
+        BaseURL: $(BASE_URL)
+        KeycloakURL: $(KEYCLOAK_URL)
+        KeycloakRealm: $(KEYCLOAK_REALM)
+        KeycloakClientId: $(KEYCLOAK_CLIENT_ID)
+        KeycloakRedirectURI: $(KEYCLOAK_REDIRECT_URI)
+        KeycloakScopes: $(KEYCLOAK_SCOPES)
+        KeycloakRegistrationHintMode: $(KEYCLOAK_REGISTRATION_HINT_MODE)
+        CFBundleURLTypes:
+          - CFBundleURLName: fitfluence.oauth
+            CFBundleURLSchemes:
+              - fitfluence
         UILaunchScreen: {}
         UIApplicationSceneManifest:
           UIApplicationSupportsMultipleScenes: false

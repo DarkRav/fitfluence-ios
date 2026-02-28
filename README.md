@@ -30,8 +30,13 @@
 
 Ключи окружения:
 
-- `BASE_URL`
-- `KEYCLOAK_URL`
+- `BASE_URL` — backend base URL
+- `KEYCLOAK_URL` — base URL Keycloak
+- `KEYCLOAK_REALM`
+- `KEYCLOAK_CLIENT_ID`
+- `KEYCLOAK_REDIRECT_URI` (например `fitfluence://oauth/callback`)
+- `KEYCLOAK_SCOPES` (по умолчанию `openid profile email offline_access`)
+- `KEYCLOAK_REGISTRATION_HINT_MODE` (`kc_action` или `loginOnly`)
 - `APP_ENVIRONMENT_NAME`
 
 Подключение выполнено через `Info.plist` и `AppEnvironment` в коде (`/App/Support/Environment.swift`).
@@ -40,6 +45,39 @@
 
 1. В Xcode: `Product` -> `Scheme` -> `Edit Scheme...`
 2. Для `Run` выбрать нужную конфигурацию (`Dev`, `Stage`, `Prod`).
+
+## Auth + Onboarding (Keycloak)
+
+### Настройка Keycloak для локальной проверки
+
+1. Realm:
+   - включить `User registration` (self-registration)
+2. Client (`fitfluence-ios`):
+   - тип: public
+   - Standard Flow (Authorization Code) включён
+   - PKCE: `S256`
+   - Valid redirect URI: `fitfluence://oauth/callback`
+   - Web origins: `*` (для локальной отладки)
+3. Для режима кнопки `Создать аккаунт`:
+   - `KEYCLOAK_REGISTRATION_HINT_MODE=kc_action` — пробует добавить `kc_action=register`
+   - `loginOnly` — всегда открывает обычный login screen
+
+### Demo пользователи (пример)
+
+- `athlete.demo` / `password`
+- `influencer.demo` / `password`
+
+Создайте их в realm вручную, если локальный стенд пустой.
+
+### Troubleshooting
+
+- Не открывается callback:
+  - проверьте `KEYCLOAK_REDIRECT_URI` и URL scheme `fitfluence`
+- Постоянный `401`:
+  - проверьте client id/realm/scopes
+  - проверьте доступность backend `http://localhost:9876`
+- Не работает регистрация из кнопки:
+  - переключите `KEYCLOAK_REGISTRATION_HINT_MODE` на `loginOnly`
 
 ## Форматирование
 
@@ -69,4 +107,4 @@ make format
 make test
 ```
 
-Минимальный набор тестов находится в `/Tests/DesignSystemTests.swift`.
+Тесты находятся в `/Tests`.

@@ -2,6 +2,10 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>AppEnvironmentName</key>
+	<string>$(APP_ENVIRONMENT_NAME)</string>
+	<key>BaseURL</key>
+	<string>$(BASE_URL)</string>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleExecutable</key>
@@ -16,8 +20,31 @@
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
 	<string>1.0</string>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>fitfluence.oauth</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>fitfluence</string>
+			</array>
+		</dict>
+	</array>
 	<key>CFBundleVersion</key>
 	<string>1</string>
+	<key>KeycloakClientId</key>
+	<string>$(KEYCLOAK_CLIENT_ID)</string>
+	<key>KeycloakRealm</key>
+	<string>$(KEYCLOAK_REALM)</string>
+	<key>KeycloakRedirectURI</key>
+	<string>$(KEYCLOAK_REDIRECT_URI)</string>
+	<key>KeycloakRegistrationHintMode</key>
+	<string>$(KEYCLOAK_REGISTRATION_HINT_MODE)</string>
+	<key>KeycloakScopes</key>
+	<string>$(KEYCLOAK_SCOPES)</string>
+	<key>KeycloakURL</key>
+	<string>$(KEYCLOAK_URL)</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

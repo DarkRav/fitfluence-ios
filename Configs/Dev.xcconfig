@@ -1,4 +1,9 @@
 #include "Base.xcconfig"
 BASE_URL = http://localhost:9876
 KEYCLOAK_URL = http://localhost:9990
+KEYCLOAK_REALM = master
+KEYCLOAK_CLIENT_ID = fitfluence-ios
+KEYCLOAK_REDIRECT_URI = fitfluence://oauth/callback
+KEYCLOAK_SCOPES = openid profile email offline_access
+KEYCLOAK_REGISTRATION_HINT_MODE = kc_action
 APP_ENVIRONMENT_NAME = DEV
