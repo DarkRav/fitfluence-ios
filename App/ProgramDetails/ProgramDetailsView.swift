@@ -5,42 +5,66 @@ struct ProgramDetailsView: View {
     let store: StoreOf<ProgramDetailsFeature>
     let environment: AppEnvironment
 
+    private struct ViewState: Equatable {
+        let isWorkoutsPresented: Bool
+    }
+
     var body: some View {
-        WithViewStore(store, observe: { $0 }) { viewStore in
-            ScrollView {
-                VStack(spacing: FFSpacing.md) {
-                    if viewStore.isLoading, viewStore.details == nil {
-                        loadingState
-                    } else if let error = viewStore.error, viewStore.details == nil {
-                        FFErrorState(
-                            title: error.title,
-                            message: error.message,
-                            retryTitle: "Повторить",
-                            onRetry: { viewStore.send(.retry) },
-                        )
-                    } else if let details = viewStore.details {
-                        header(details: details)
-                        about(details: details)
-                        workouts(details: details)
-                        startProgramBlock(details: details, viewStore: viewStore)
-                        if let successMessage = viewStore.successMessage {
-                            FFCard {
-                                Text(successMessage)
-                                    .font(FFTypography.body)
-                                    .foregroundStyle(FFColors.accent)
-                                    .multilineTextAlignment(.leading)
+        WithViewStore(
+            store,
+            observe: { ViewState(isWorkoutsPresented: $0.workoutsList != nil) },
+        ) { navViewStore in
+            WithViewStore(store, observe: { $0 }) { viewStore in
+                ScrollView {
+                    VStack(spacing: FFSpacing.md) {
+                        if viewStore.isLoading, viewStore.details == nil {
+                            loadingState
+                        } else if let error = viewStore.error, viewStore.details == nil {
+                            FFErrorState(
+                                title: error.title,
+                                message: error.message,
+                                retryTitle: "Повторить",
+                                onRetry: { viewStore.send(.retry) },
+                            )
+                        } else if let details = viewStore.details {
+                            header(details: details)
+                            about(details: details)
+                            workouts(details: details)
+                            startProgramBlock(details: details, viewStore: viewStore)
+                            if let successMessage = viewStore.successMessage {
+                                FFCard {
+                                    Text(successMessage)
+                                        .font(FFTypography.body)
+                                        .foregroundStyle(FFColors.accent)
+                                        .multilineTextAlignment(.leading)
+                                }
                             }
+                        } else {
+                            FFEmptyState(title: "Программа не найдена", message: "Попробуйте открыть другую программу.")
                         }
-                    } else {
-                        FFEmptyState(title: "Программа не найдена", message: "Попробуйте открыть другую программу.")
+                    }
+                    .padding(.horizontal, FFSpacing.md)
+                    .padding(.vertical, FFSpacing.md)
+                }
+                .background(FFColors.background)
+                .onAppear {
+                    viewStore.send(.onAppear)
+                }
+                .navigationDestination(
+                    isPresented: Binding(
+                        get: { navViewStore.isWorkoutsPresented },
+                        set: { isPresented in
+                            if !isPresented {
+                                store.send(.workoutsListDismissed)
+                            }
+                        },
+                    ),
+                ) {
+                    if let workoutsStore = store.scope(state: \.workoutsList, action: \.workoutsList) {
+                        WorkoutsListView(store: workoutsStore)
+                            .navigationTitle("Тренировки")
                     }
                 }
-                .padding(.horizontal, FFSpacing.md)
-                .padding(.vertical, FFSpacing.md)
-            }
-            .background(FFColors.background)
-            .onAppear {
-                viewStore.send(.onAppear)
             }
         }
     }
@@ -113,6 +137,12 @@ struct ProgramDetailsView: View {
                     .foregroundStyle(FFColors.textPrimary)
 
                 if let workouts = details.workouts, !workouts.isEmpty {
+                    FFButton(
+                        title: "Открыть тренировки",
+                        variant: .secondary,
+                        action: { store.send(.openWorkoutsTapped) },
+                    )
+
                     ForEach(workouts.sorted(by: { $0.dayOrder < $1.dayOrder })) { workout in
                         VStack(alignment: .leading, spacing: FFSpacing.xs) {
                             Text("День \(workout.dayOrder)")

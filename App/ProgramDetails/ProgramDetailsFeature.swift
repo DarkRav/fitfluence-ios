@@ -7,6 +7,7 @@ struct ProgramDetailsFeature {
     struct State: Equatable {
         let programId: String
         var details: ProgramDetails?
+        var workoutsList: WorkoutsListFeature.State?
         var isLoading = false
         var isStartingProgram = false
         var error: UserFacingError?
@@ -19,12 +20,21 @@ struct ProgramDetailsFeature {
         case detailsResponse(Result<ProgramDetails, APIError>)
         case startProgramTapped
         case startProgramResponse(Result<ProgramEnrollment, APIError>)
+        case openWorkoutsTapped
+        case workoutsList(WorkoutsListFeature.Action)
+        case workoutsListDismissed
     }
 
     private let programsClient: ProgramsClientProtocol?
+    private let workoutsClient: WorkoutsClientProtocol
 
     init(programsClient: ProgramsClientProtocol?) {
         self.programsClient = programsClient
+        if let programsClient {
+            workoutsClient = WorkoutsClient(programsClient: programsClient)
+        } else {
+            workoutsClient = UnavailableWorkoutsClient()
+        }
     }
 
     var body: some ReducerOf<Self> {
@@ -80,7 +90,24 @@ struct ProgramDetailsFeature {
                     state.error = apiError.userFacingError
                 }
                 return .none
+
+            case .openWorkoutsTapped:
+                state.workoutsList = WorkoutsListFeature.State(programId: state.programId)
+                return .none
+
+            case .workoutsListDismissed:
+                state.workoutsList = nil
+                return .none
+
+            case .workoutsList(.delegate(.openWorkout)):
+                return .none
+
+            case .workoutsList:
+                return .none
             }
+        }
+        .ifLet(\.workoutsList, action: \.workoutsList) { [workoutsClient] in
+            WorkoutsListFeature(workoutsClient: workoutsClient)
         }
     }
 
