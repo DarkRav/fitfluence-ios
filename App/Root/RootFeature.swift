@@ -22,6 +22,7 @@ struct RootFeature {
 
     @ObservableState
     struct State: Equatable {
+        var hasBootstrapped = false
         var sessionState: RootSessionState = .authenticating
         var diagnostics = DiagnosticsFeature.State()
         var catalog = CatalogFeature.State()
@@ -73,7 +74,16 @@ struct RootFeature {
 
         Reduce { state, action in
             switch action {
-            case .onAppear, .retryBootstrapTapped:
+            case .onAppear:
+                guard !state.hasBootstrapped else { return .none }
+                state.hasBootstrapped = true
+                state.sessionState = .authenticating
+                return .run { [sessionManager] send in
+                    let resolved = await sessionManager.bootstrap()
+                    await send(.sessionResolved(resolved))
+                }
+
+            case .retryBootstrapTapped:
                 state.sessionState = .authenticating
                 return .run { [sessionManager] send in
                     let resolved = await sessionManager.bootstrap()
