@@ -71,14 +71,18 @@ final class OIDCAndTokenStoreTests: XCTestCase {
             expiresAt: Date().addingTimeInterval(3600),
         )
 
-        try store.clear()
-        try store.save(tokenSet)
+        do {
+            try store.clear()
+            try store.save(tokenSet)
 
-        let loaded = try store.load()
-        XCTAssertEqual(loaded, tokenSet)
+            let loaded = try store.load()
+            XCTAssertEqual(loaded, tokenSet)
 
-        try store.clear()
-        XCTAssertNil(try store.load())
+            try store.clear()
+            XCTAssertNil(try store.load())
+        } catch let TokenStoreError.keychain(status) where status == -34018 {
+            throw XCTSkip("Keychain недоступен в текущем окружении тестов (status: -34018).")
+        }
     }
 
     private var testSession: URLSession {
