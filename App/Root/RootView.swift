@@ -94,13 +94,7 @@ private struct AuthEntryView: View {
 
             FFButton(title: "Войти", variant: .primary, action: onLogin)
 
-            Button("Создать аккаунт", action: onCreateAccount)
-                .font(FFTypography.body.weight(.semibold))
-                .foregroundStyle(FFColors.accent)
-                .frame(maxWidth: .infinity)
-                .frame(minHeight: 44)
-                .background(FFColors.surface)
-                .clipShape(RoundedRectangle(cornerRadius: FFTheme.Radius.control))
+            FFButton(title: "Создать аккаунт", variant: .secondary, action: onCreateAccount)
 
             Spacer()
         }

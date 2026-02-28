@@ -23,6 +23,7 @@ struct FFErrorState: View {
                 FFButton(title: retryTitle, variant: .secondary, action: onRetry)
             }
             .frame(maxWidth: .infinity)
+            .frame(minHeight: 180)
             .padding(.vertical, FFSpacing.md)
         }
     }

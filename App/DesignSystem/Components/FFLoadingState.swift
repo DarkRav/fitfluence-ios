@@ -15,6 +15,7 @@ struct FFLoadingState: View {
                     .multilineTextAlignment(.center)
             }
             .frame(maxWidth: .infinity)
+            .frame(minHeight: 140)
             .padding(.vertical, FFSpacing.md)
         }
     }

@@ -20,6 +20,7 @@ struct FFEmptyState: View {
                     .multilineTextAlignment(.center)
             }
             .frame(maxWidth: .infinity)
+            .frame(minHeight: 180)
             .padding(.vertical, FFSpacing.md)
         }
     }

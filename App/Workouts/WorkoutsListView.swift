@@ -85,7 +85,7 @@ struct WorkoutsListView: View {
 
                     Spacer(minLength: FFSpacing.xs)
 
-                    statusBadge(status: status)
+                    FFBadge(status: badgeStatus(for: status))
                 }
             }
             .contentShape(Rectangle())
@@ -109,24 +109,14 @@ struct WorkoutsListView: View {
         viewStore.workoutStatuses[workout.id] ?? .notStarted
     }
 
-    private func statusBadge(status: WorkoutProgressStatus) -> some View {
-        Text(status.title)
-            .font(FFTypography.caption.weight(.semibold))
-            .foregroundStyle(statusColor(status))
-            .padding(.horizontal, FFSpacing.sm)
-            .padding(.vertical, FFSpacing.xs)
-            .background(statusColor(status).opacity(0.16))
-            .clipShape(Capsule())
-    }
-
-    private func statusColor(_ status: WorkoutProgressStatus) -> Color {
+    private func badgeStatus(for status: WorkoutProgressStatus) -> FFBadge.Status {
         switch status {
         case .notStarted:
-            FFColors.gray300
+            .notStarted
         case .inProgress:
-            FFColors.accent
+            .inProgress
         case .completed:
-            FFColors.primary
+            .completed
         }
     }
 }
