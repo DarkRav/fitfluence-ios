@@ -49,7 +49,8 @@ struct OIDCDiscoveryService: OIDCDiscoveryServiceProtocol {
             }
 
             do {
-                return try JSONDecoder().decode(OIDCDiscoveryDocument.self, from: data)
+                let decoded = try JSONDecoder().decode(OIDCDiscoveryDocument.self, from: data)
+                return normalized(document: decoded)
             } catch {
                 throw APIError.decodingError
             }
@@ -60,5 +61,33 @@ struct OIDCDiscoveryService: OIDCDiscoveryServiceProtocol {
         } catch {
             throw APIError.unknown
         }
+    }
+
+    private func normalized(document: OIDCDiscoveryDocument) -> OIDCDiscoveryDocument {
+        OIDCDiscoveryDocument(
+            issuer: normalizeIfLoopback(document.issuer),
+            authorizationEndpoint: normalizeIfLoopback(document.authorizationEndpoint),
+            tokenEndpoint: normalizeIfLoopback(document.tokenEndpoint),
+            endSessionEndpoint: document.endSessionEndpoint.map(normalizeIfLoopback),
+            userinfoEndpoint: document.userinfoEndpoint.map(normalizeIfLoopback),
+            jwksURI: document.jwksURI.map(normalizeIfLoopback),
+        )
+    }
+
+    private func normalizeIfLoopback(_ url: URL) -> URL {
+        guard let host = url.host?.lowercased(), host == "localhost" || host == "127.0.0.1" else {
+            return url
+        }
+        guard let targetHost = baseURL.host, !targetHost.isEmpty else {
+            return url
+        }
+
+        var components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+        components?.scheme = baseURL.scheme
+        components?.host = targetHost
+        if let port = baseURL.port {
+            components?.port = port
+        }
+        return components?.url ?? url
     }
 }
