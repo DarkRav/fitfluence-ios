@@ -137,6 +137,20 @@ private struct MainTabsView: View {
                 ),
             ) {
                 NavigationStack {
+                    HomeView(
+                        store: store.scope(
+                            state: \.home,
+                            action: \.home,
+                        ),
+                    )
+                    .navigationTitle("Главная")
+                }
+                .tabItem {
+                    Label("Главная", systemImage: "house")
+                }
+                .tag(RootFeature.MainTab.home)
+
+                NavigationStack {
                     CatalogView(
                         store: store.scope(
                             state: \.catalog,

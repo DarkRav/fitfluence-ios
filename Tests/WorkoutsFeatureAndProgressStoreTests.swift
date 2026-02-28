@@ -411,4 +411,16 @@ private actor MockWorkoutProgressStore: WorkoutProgressStore {
     ) async -> [String: WorkoutProgressStatus] {
         Dictionary(uniqueKeysWithValues: workoutIds.map { ($0, statusesValue[$0] ?? .notStarted) })
     }
+
+    func latestActiveSession(userSub _: String) async -> ActiveWorkoutSession? {
+        guard let snapshot = snapshotValue else { return nil }
+        return ActiveWorkoutSession(
+            userSub: snapshot.userSub,
+            programId: snapshot.programId,
+            workoutId: snapshot.workoutId,
+            status: snapshot.status,
+            currentExerciseIndex: snapshot.currentExerciseIndex,
+            lastUpdated: snapshot.lastUpdated,
+        )
+    }
 }

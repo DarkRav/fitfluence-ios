@@ -58,11 +58,21 @@ struct WorkoutProgressSnapshot: Codable, Equatable, Sendable {
     }
 }
 
+struct ActiveWorkoutSession: Equatable, Sendable {
+    let userSub: String
+    let programId: String
+    let workoutId: String
+    let status: WorkoutProgressStatus
+    let currentExerciseIndex: Int?
+    let lastUpdated: Date
+}
+
 protocol WorkoutProgressStore: Sendable {
     func load(userSub: String, programId: String, workoutId: String) async -> WorkoutProgressSnapshot?
     func save(_ snapshot: WorkoutProgressSnapshot) async
     func status(userSub: String, programId: String, workoutId: String) async -> WorkoutProgressStatus
     func statuses(userSub: String, programId: String, workoutIds: [String]) async -> [String: WorkoutProgressStatus]
+    func latestActiveSession(userSub: String) async -> ActiveWorkoutSession?
 }
 
 actor LocalWorkoutProgressStore: WorkoutProgressStore {
@@ -98,6 +108,28 @@ actor LocalWorkoutProgressStore: WorkoutProgressStore {
             result[workoutID] = await status(userSub: userSub, programId: programId, workoutId: workoutID)
         }
         return result
+    }
+
+    func latestActiveSession(userSub: String) async -> ActiveWorkoutSession? {
+        let snapshots = defaults.dictionaryRepresentation()
+            .keys
+            .filter { $0.hasPrefix("\(keyPrefix).\(userSub).") }
+            .compactMap { key -> WorkoutProgressSnapshot? in
+                guard let data = defaults.data(forKey: key) else { return nil }
+                return try? JSONDecoder().decode(WorkoutProgressSnapshot.self, from: data)
+            }
+            .filter { $0.status == .inProgress || ($0.status == .notStarted && !$0.isFinished) }
+            .sorted(by: { $0.lastUpdated > $1.lastUpdated })
+
+        guard let snapshot = snapshots.first else { return nil }
+        return ActiveWorkoutSession(
+            userSub: snapshot.userSub,
+            programId: snapshot.programId,
+            workoutId: snapshot.workoutId,
+            status: snapshot.status,
+            currentExerciseIndex: snapshot.currentExerciseIndex,
+            lastUpdated: snapshot.lastUpdated,
+        )
     }
 
     private func storageKey(userSub: String, programId: String, workoutId: String) -> String {

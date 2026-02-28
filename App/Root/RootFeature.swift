@@ -32,13 +32,15 @@ struct RootFeature {
         var hasBootstrapped = false
         var isOnline = true
         var sessionState: RootSessionState = .authenticating
+        var home = HomeFeature.State(userSub: "anonymous")
         var catalog = CatalogFeature.State()
         var programDetails: ProgramDetailsFeature.State?
-        var selectedMainTab: MainTab = .catalog
+        var selectedMainTab: MainTab = .home
         var onboarding: OnboardingFeature.State?
     }
 
     enum MainTab: Hashable {
+        case home
         case catalog
         case profile
     }
@@ -50,6 +52,7 @@ struct RootFeature {
         case logoutTapped
         case networkStatusChanged(Bool)
         case sessionResolved(RootSessionState)
+        case home(HomeFeature.Action)
         case onboarding(OnboardingFeature.Action)
         case catalog(CatalogFeature.Action)
         case programDetails(ProgramDetailsFeature.Action)
@@ -63,6 +66,13 @@ struct RootFeature {
 
     var body: some ReducerOf<Self> {
         CombineReducers {
+            Scope(state: \.home, action: \.home) { [progressStore, cacheStore] in
+                HomeFeature(
+                    progressStore: progressStore,
+                    cacheStore: cacheStore,
+                )
+            }
+
             Scope(state: \.catalog, action: \.catalog) { [apiClient, cacheStore, networkMonitor] in
                 CatalogFeature(
                     programsClient: apiClient as? ProgramsClientProtocol,
@@ -150,16 +160,44 @@ struct RootFeature {
                     state.onboarding = nil
                 }
                 if case let .authenticated(context) = nextState {
-                    state.catalog.cacheNamespace = context.me.subject ?? "anonymous"
-                    state.selectedMainTab = .catalog
+                    let userSub = context.me.subject ?? "anonymous"
+                    state.catalog.cacheNamespace = userSub
+                    state.home.userSub = userSub
+                    state.selectedMainTab = .home
                 } else if case .unauthenticated = nextState {
                     state.catalog.cacheNamespace = "anonymous"
-                    state.selectedMainTab = .catalog
+                    state.home.userSub = "anonymous"
+                    state.selectedMainTab = .home
                 }
                 return .none
 
             case let .tabSelected(tab):
                 state.selectedMainTab = tab
+                return .none
+
+            case .home(.onAppear):
+                return .none
+
+            case let .home(.delegate(.openCatalog)):
+                state.selectedMainTab = .catalog
+                return .none
+
+            case let .home(.delegate(.openWorkout(programID, workoutID))):
+                state.selectedMainTab = .catalog
+                let userSub: String = if case let .authenticated(context) = state.sessionState {
+                    context.me.subject ?? "anonymous"
+                } else {
+                    "anonymous"
+                }
+                state.programDetails = ProgramDetailsFeature.State(
+                    programId: programID,
+                    userSub: userSub,
+                    workoutPlayer: WorkoutPlayerFeature.State(
+                        userSub: userSub,
+                        programId: programID,
+                        workoutId: workoutID,
+                    ),
+                )
                 return .none
 
             case let .catalog(.delegate(.openProgram(programID))):
@@ -177,6 +215,9 @@ struct RootFeature {
             case .catalog:
                 return .none
 
+            case .home:
+                return .none
+
             case .programDetails:
                 return .none
 
@@ -191,7 +232,7 @@ struct RootFeature {
                 } else {
                     state.onboarding = nil
                     if case .authenticated = nextState {
-                        state.selectedMainTab = .catalog
+                        state.selectedMainTab = .home
                     }
                 }
                 return .none
