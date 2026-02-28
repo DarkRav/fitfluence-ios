@@ -7,12 +7,18 @@ struct ProgramDetailsView: View {
 
     private struct ViewState: Equatable {
         let isWorkoutsPresented: Bool
+        let isWorkoutPlayerPresented: Bool
     }
 
     var body: some View {
         WithViewStore(
             store,
-            observe: { ViewState(isWorkoutsPresented: $0.workoutsList != nil) },
+            observe: {
+                ViewState(
+                    isWorkoutsPresented: $0.workoutsList != nil,
+                    isWorkoutPlayerPresented: $0.workoutPlayer != nil,
+                )
+            },
         ) { navViewStore in
             WithViewStore(store, observe: { $0 }) { viewStore in
                 ScrollView {
@@ -63,6 +69,21 @@ struct ProgramDetailsView: View {
                     if let workoutsStore = store.scope(state: \.workoutsList, action: \.workoutsList) {
                         WorkoutsListView(store: workoutsStore)
                             .navigationTitle("Тренировки")
+                    }
+                }
+                .navigationDestination(
+                    isPresented: Binding(
+                        get: { navViewStore.isWorkoutPlayerPresented },
+                        set: { isPresented in
+                            if !isPresented {
+                                store.send(.workoutPlayerDismissed)
+                            }
+                        },
+                    ),
+                ) {
+                    if let playerStore = store.scope(state: \.workoutPlayer, action: \.workoutPlayer) {
+                        WorkoutPlayerView(store: playerStore)
+                            .navigationTitle("Тренировка")
                     }
                 }
             }
