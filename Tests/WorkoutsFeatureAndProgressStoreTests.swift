@@ -1,10 +1,9 @@
-import ComposableArchitecture
 @testable import FitfluenceApp
 import XCTest
 
 @MainActor
 final class WorkoutsFeatureAndProgressStoreTests: XCTestCase {
-    func testWorkoutsListSuccessLoadsItemsAndStatuses() async {
+    func testWorkoutsListViewModelSuccessLoadsItemsAndStatuses() async {
         let workouts = [
             WorkoutSummary(id: "w1", title: "День 1", dayOrder: 1, exerciseCount: 3, estimatedDurationMinutes: 35),
             WorkoutSummary(id: "w2", title: "День 2", dayOrder: 2, exerciseCount: 4, estimatedDurationMinutes: 42),
@@ -12,297 +11,126 @@ final class WorkoutsFeatureAndProgressStoreTests: XCTestCase {
 
         let workoutsClient = MockWorkoutsClient(
             listResults: [.success(workouts)],
-            detailsResults: [],
+            detailsResults: []
         )
         let progressStore = MockWorkoutProgressStore(
-            statuses: ["w1": .inProgress, "w2": .completed],
+            statuses: ["w1": .inProgress, "w2": .completed]
         )
 
-        let store = TestStore(
-            initialState: WorkoutsListFeature.State(programId: "p1", userSub: "u1"),
-        ) {
-            WorkoutsListFeature(
-                workoutsClient: workoutsClient,
-                progressStore: progressStore,
-                cacheStore: MemoryCacheStore(),
-                networkMonitor: StaticNetworkMonitor(currentStatus: true),
-            )
-        }
+        let viewModel = WorkoutsListViewModel(
+            programId: "p1",
+            userSub: "u1",
+            workoutsClient: workoutsClient,
+            progressStore: progressStore,
+            cacheStore: MemoryCacheStore()
+        )
 
-        await store.send(.onAppear) {
-            $0.isLoading = true
-            $0.error = nil
-        }
+        await viewModel.onAppear()
 
-        await store.receive(.cachedResponse(nil))
-
-        await store.receive(.response(.success(workouts))) {
-            $0.isLoading = false
-            $0.isRefreshing = false
-            $0.workouts = workouts
-            $0.error = nil
-            $0.isShowingCachedData = false
-        }
-
-        await store.receive(.statusesLoaded(["w1": .inProgress, "w2": .completed])) {
-            $0.workoutStatuses = ["w1": .inProgress, "w2": .completed]
-        }
+        XCTAssertEqual(viewModel.workouts, workouts)
+        XCTAssertEqual(viewModel.workoutStatuses["w1"], .inProgress)
+        XCTAssertEqual(viewModel.workoutStatuses["w2"], .completed)
+        XCTAssertFalse(viewModel.isLoading)
+        XCTAssertNil(viewModel.error)
     }
 
-    func testWorkoutsListErrorShowsError() async {
+    func testWorkoutsListViewModelOfflineWithoutCacheShowsError() async {
         let workoutsClient = MockWorkoutsClient(
             listResults: [.failure(.offline)],
-            detailsResults: [],
+            detailsResults: []
         )
 
-        let store = TestStore(
-            initialState: WorkoutsListFeature.State(programId: "p1", userSub: "u1"),
-        ) {
-            WorkoutsListFeature(
-                workoutsClient: workoutsClient,
-                progressStore: MockWorkoutProgressStore(statuses: [:]),
-                cacheStore: MemoryCacheStore(),
-                networkMonitor: StaticNetworkMonitor(currentStatus: true),
-            )
-        }
-
-        await store.send(.onAppear) {
-            $0.isLoading = true
-            $0.error = nil
-        }
-
-        await store.receive(.cachedResponse(nil))
-
-        await store.receive(.response(.failure(.offline))) {
-            $0.isLoading = false
-            $0.isRefreshing = false
-            $0.error = UserFacingError(
-                kind: .offline,
-                title: "Нет подключения к интернету",
-                message: "Проверьте сеть и попробуйте снова.",
-            )
-        }
-    }
-
-    func testWorkoutPlayerLoadsDetailsAndSupportsSetToggle() async {
-        let workoutsClient = MockWorkoutsClient(
-            listResults: [],
-            detailsResults: [.success(sampleWorkoutDetails)],
-        )
-
-        let store = TestStore(
-            initialState: WorkoutPlayerFeature.State(
-                userSub: "u1",
-                programId: "p1",
-                workoutId: "w1",
-            ),
-        ) {
-            WorkoutPlayerFeature(
-                workoutsClient: workoutsClient,
-                progressStore: MockWorkoutProgressStore(statuses: [:]),
-                cacheStore: MemoryCacheStore(),
-            )
-        }
-
-        await store.send(.onAppear) {
-            $0.isLoading = true
-            $0.error = nil
-            $0.progressStorageMode = .localOnly
-        }
-
-        await store.receive(.cachedDetailsResponse(nil))
-
-        await store.receive(.detailsResponse(.success(sampleWorkoutDetails))) { [self] in
-            $0.isLoading = false
-            $0.workout = self.sampleWorkoutDetails
-            $0.currentExerciseIndex = 0
-            $0.perExerciseState = [
-                "ex-1": WorkoutPlayerFeature.ExerciseProgress(
-                    sets: [
-                        WorkoutPlayerFeature.SetProgress(),
-                        WorkoutPlayerFeature.SetProgress(),
-                    ],
-                ),
-            ]
-            $0.isShowingCachedData = false
-            $0.error = nil
-        }
-
-        await store.receive(.loadedProgress(nil))
-
-        await store.send(.toggleSetComplete(exerciseId: "ex-1", setIndex: 0)) {
-            $0.perExerciseState["ex-1"]?.sets[0].isCompleted = true
-            $0.hasChanges = true
-            $0.restTimer = WorkoutPlayerFeature.RestTimerState(
-                totalSeconds: 90,
-                remainingSeconds: 90,
-                isRunning: true,
-            )
-        }
-
-        await store.send(.restTimerSkipTapped) {
-            $0.restTimer = nil
-        }
-    }
-
-    func testWorkoutPlayerRestoresSnapshotAndShowsResumePrompt() async {
-        let workoutsClient = MockWorkoutsClient(
-            listResults: [],
-            detailsResults: [.success(sampleWorkoutDetails)],
-        )
-        let snapshot = WorkoutProgressSnapshot(
-            userSub: "u1",
+        let viewModel = WorkoutsListViewModel(
             programId: "p1",
-            workoutId: "w1",
-            currentExerciseIndex: 0,
-            isFinished: false,
-            lastUpdated: Date(),
-            exercises: [
-                "ex-1": StoredExerciseProgress(sets: [
-                    StoredSetProgress(isCompleted: true, repsText: "10", weightText: "40", rpeText: "8"),
-                    StoredSetProgress(isCompleted: false, repsText: "", weightText: "", rpeText: ""),
-                ]),
-            ],
+            userSub: "u1",
+            workoutsClient: workoutsClient,
+            progressStore: MockWorkoutProgressStore(statuses: [:]),
+            cacheStore: MemoryCacheStore()
         )
 
-        let store = TestStore(
-            initialState: WorkoutPlayerFeature.State(
-                userSub: "u1",
-                programId: "p1",
-                workoutId: "w1",
-            ),
-        ) {
-            WorkoutPlayerFeature(
-                workoutsClient: workoutsClient,
-                progressStore: MockWorkoutProgressStore(statuses: [:], snapshot: snapshot),
-                cacheStore: MemoryCacheStore(),
-            )
-        }
+        await viewModel.onAppear()
 
-        await store.send(.onAppear) {
-            $0.isLoading = true
-            $0.error = nil
-            $0.progressStorageMode = .localOnly
-        }
-        await store.receive(.cachedDetailsResponse(nil))
-        await store.receive(.detailsResponse(.success(sampleWorkoutDetails))) { [self] in
-            $0.isLoading = false
-            $0.workout = self.sampleWorkoutDetails
-            $0.currentExerciseIndex = 0
-            $0.perExerciseState = [
-                "ex-1": WorkoutPlayerFeature.ExerciseProgress(
-                    sets: [
-                        WorkoutPlayerFeature.SetProgress(),
-                        WorkoutPlayerFeature.SetProgress(),
-                    ],
-                ),
-            ]
-            $0.isShowingCachedData = false
-            $0.error = nil
-        }
-        await store.receive(.loadedProgress(snapshot)) {
-            $0.perExerciseState["ex-1"]?.sets[0].isCompleted = true
-            $0.perExerciseState["ex-1"]?.sets[0].repsText = "10"
-            $0.perExerciseState["ex-1"]?.sets[0].weightText = "40"
-            $0.perExerciseState["ex-1"]?.sets[0].rpeText = "8"
-            $0.currentExerciseIndex = 0
-            $0.hasChanges = true
-            $0.isResumePromptPresented = true
-        }
-
-        await store.send(.resumePromptContinueTapped) {
-            $0.isResumePromptPresented = false
-            $0.hasPromptedResume = true
-        }
+        XCTAssertNotNil(viewModel.error)
+        XCTAssertEqual(viewModel.error?.kind, .offline)
+        XCTAssertTrue(viewModel.workouts.isEmpty)
     }
 
-    func testWorkoutPlayerNumericActionsUpdateValues() async {
-        let workoutsClient = MockWorkoutsClient(
-            listResults: [],
-            detailsResults: [],
-        )
-        var state = WorkoutPlayerFeature.State(
-            userSub: "u1",
-            programId: "p1",
-            workoutId: "w1",
-        )
-        state.workout = sampleWorkoutDetails
-        state.perExerciseState = [
-            "ex-1": WorkoutPlayerFeature.ExerciseProgress(
-                sets: [WorkoutPlayerFeature.SetProgress()],
-            ),
+    func testWorkoutsListViewModelOfflineWithCacheShowsCachedData() async {
+        let workouts = [
+            WorkoutSummary(id: "w1", title: "День 1", dayOrder: 1, exerciseCount: 3, estimatedDurationMinutes: 35),
         ]
+        let cacheStore = MemoryCacheStore()
+        await cacheStore.set("workouts.list:p1", value: workouts, namespace: "u1", ttl: 1800)
 
-        let store = TestStore(initialState: state) {
-            WorkoutPlayerFeature(
-                workoutsClient: workoutsClient,
-                progressStore: MockWorkoutProgressStore(statuses: [:]),
-                cacheStore: MemoryCacheStore(),
-            )
-        }
+        let workoutsClient = MockWorkoutsClient(
+            listResults: [.failure(.offline)],
+            detailsResults: []
+        )
 
-        await store.send(.incrementSetReps(exerciseId: "ex-1", setIndex: 0)) {
-            $0.perExerciseState["ex-1"]?.sets[0].repsText = "1"
-            $0.hasChanges = true
-        }
-        await store.send(.incrementSetWeight(exerciseId: "ex-1", setIndex: 0)) {
-            $0.perExerciseState["ex-1"]?.sets[0].weightText = "2.5"
-            $0.hasChanges = true
-        }
-        await store.send(.decrementSetWeight(exerciseId: "ex-1", setIndex: 0)) {
-            $0.perExerciseState["ex-1"]?.sets[0].weightText = "0"
-            $0.hasChanges = true
-        }
+        let viewModel = WorkoutsListViewModel(
+            programId: "p1",
+            userSub: "u1",
+            workoutsClient: workoutsClient,
+            progressStore: MockWorkoutProgressStore(statuses: ["w1": .inProgress]),
+            cacheStore: cacheStore
+        )
+
+        await viewModel.onAppear()
+
+        XCTAssertEqual(viewModel.workouts.count, 1)
+        XCTAssertEqual(viewModel.workouts.first?.id, "w1")
+        XCTAssertTrue(viewModel.isShowingCachedData)
+        XCTAssertNil(viewModel.error)
     }
 
-    func testWorkoutPlayerFinishSendsCompletionDelegate() async {
-        let workoutsClient = MockWorkoutsClient(
-            listResults: [],
-            detailsResults: [],
-        )
-
-        var state = WorkoutPlayerFeature.State(
+    func testWorkoutPlayerViewModelToggleNumericAndUndo() async {
+        let progressStore = MockWorkoutProgressStore(statuses: [:])
+        let sessionManager = WorkoutSessionManager(progressStore: progressStore)
+        let viewModel = WorkoutPlayerViewModel(
             userSub: "u1",
             programId: "p1",
-            workoutId: "w1",
+            workout: sampleWorkoutDetails,
+            sessionManager: sessionManager
         )
-        state.workout = sampleWorkoutDetails
-        state.perExerciseState = [
-            "ex-1": WorkoutPlayerFeature.ExerciseProgress(
-                sets: [
-                    WorkoutPlayerFeature.SetProgress(isCompleted: true),
-                    WorkoutPlayerFeature.SetProgress(isCompleted: true),
-                ],
-            ),
-        ]
 
-        let store = TestStore(initialState: state) {
-            WorkoutPlayerFeature(
-                workoutsClient: workoutsClient,
-                progressStore: MockWorkoutProgressStore(statuses: [:]),
-                cacheStore: MemoryCacheStore(),
-            )
-        }
+        await viewModel.onAppear()
+        await viewModel.toggleSetComplete(setIndex: 0)
+        await viewModel.incrementReps(setIndex: 0)
+        await viewModel.incrementWeight(setIndex: 0)
 
-        await store.send(.finishWorkoutTapped) {
-            $0.completionSummary = WorkoutPlayerFeature.CompletionSummary(
-                completedExercises: 1,
-                totalExercises: 1,
-                completedSets: 2,
-            )
-        }
+        XCTAssertEqual(viewModel.currentExerciseState?.sets.first?.isCompleted, true)
+        XCTAssertEqual(viewModel.currentExerciseState?.sets.first?.repsText, "1")
+        XCTAssertEqual(viewModel.currentExerciseState?.sets.first?.weightText, "2.5")
+        XCTAssertTrue(viewModel.restTimer.isVisible)
 
-        await store.receive(
-            .delegate(
-                .workoutCompleted(
-                    WorkoutPlayerFeature.CompletionSummary(
-                        completedExercises: 1,
-                        totalExercises: 1,
-                        completedSets: 2,
-                    ),
-                ),
-            ),
+        await viewModel.undoLastChange()
+
+        XCTAssertEqual(viewModel.currentExerciseState?.sets.first?.weightText, "")
+        XCTAssertEqual(viewModel.toastMessage, "Последнее действие отменено")
+    }
+
+    func testWorkoutPlayerViewModelFinishProducesSummary() async {
+        let progressStore = MockWorkoutProgressStore(statuses: [:])
+        let sessionManager = WorkoutSessionManager(progressStore: progressStore)
+        let viewModel = WorkoutPlayerViewModel(
+            userSub: "u1",
+            programId: "p1",
+            workout: sampleWorkoutDetails,
+            sessionManager: sessionManager
         )
+
+        await viewModel.onAppear()
+        await viewModel.toggleSetComplete(setIndex: 0)
+        await viewModel.finish()
+
+        XCTAssertTrue(viewModel.isFinished)
+        XCTAssertEqual(viewModel.completionSummary?.completedExercises, 1)
+        XCTAssertEqual(viewModel.completionSummary?.totalExercises, 1)
+        XCTAssertEqual(viewModel.completionSummary?.completedSets, 1)
+        XCTAssertEqual(viewModel.completionSummary?.totalSets, 2)
+
+        let snapshot = await progressStore.load(userSub: "u1", programId: "p1", workoutId: "w1")
+        XCTAssertEqual(snapshot?.isFinished, true)
     }
 
     func testLocalProgressStoreSaveAndLoad() async throws {
@@ -322,7 +150,7 @@ final class WorkoutsFeatureAndProgressStoreTests: XCTestCase {
                 "ex-1": StoredExerciseProgress(sets: [
                     StoredSetProgress(isCompleted: true, repsText: "10", weightText: "40", rpeText: "8"),
                 ]),
-            ],
+            ]
         )
 
         await store.save(snapshot)
@@ -350,7 +178,7 @@ final class WorkoutsFeatureAndProgressStoreTests: XCTestCase {
                 "ex-1": StoredExerciseProgress(sets: [
                     StoredSetProgress(isCompleted: true, repsText: "", weightText: "", rpeText: ""),
                 ]),
-            ],
+            ]
         )
         let notStarted = WorkoutProgressSnapshot(
             userSub: "u1",
@@ -363,7 +191,7 @@ final class WorkoutsFeatureAndProgressStoreTests: XCTestCase {
                 "ex-2": StoredExerciseProgress(sets: [
                     StoredSetProgress(isCompleted: false, repsText: "", weightText: "", rpeText: ""),
                 ]),
-            ],
+            ]
         )
 
         await store.save(inProgress)
@@ -390,9 +218,9 @@ final class WorkoutsFeatureAndProgressStoreTests: XCTestCase {
                     targetRpe: 8,
                     restSeconds: 90,
                     notes: nil,
-                    orderIndex: 0,
+                    orderIndex: 0
                 ),
-            ],
+            ]
         )
     }
 }
@@ -406,7 +234,7 @@ private actor MockWorkoutsClient: WorkoutsClientProtocol {
     init(
         listResults: [Result<[WorkoutSummary], APIError>],
         detailsResults: [Result<WorkoutDetailsModel, APIError>],
-        progressStorageMode: WorkoutProgressStorageMode = .localOnly,
+        progressStorageMode: WorkoutProgressStorageMode = .localOnly
     ) {
         self.listResults = listResults
         self.detailsResults = detailsResults
@@ -448,7 +276,7 @@ private actor MockWorkoutProgressStore: WorkoutProgressStore {
     func statuses(
         userSub _: String,
         programId _: String,
-        workoutIds: [String],
+        workoutIds: [String]
     ) async -> [String: WorkoutProgressStatus] {
         Dictionary(uniqueKeysWithValues: workoutIds.map { ($0, statusesValue[$0] ?? .notStarted) })
     }
@@ -461,7 +289,7 @@ private actor MockWorkoutProgressStore: WorkoutProgressStore {
             workoutId: snapshot.workoutId,
             status: snapshot.status,
             currentExerciseIndex: snapshot.currentExerciseIndex,
-            lastUpdated: snapshot.lastUpdated,
+            lastUpdated: snapshot.lastUpdated
         )
     }
 }
