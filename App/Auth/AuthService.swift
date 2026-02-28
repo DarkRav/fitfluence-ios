@@ -38,57 +38,38 @@ final class AuthService: NSObject, AuthServiceProtocol, @unchecked Sendable {
 
     @MainActor
     func login(mode: LoginEntryMode) async -> Result<TokenSet, APIError> {
-        do {
-            let discovery = try await discoveryService.discover()
+        let configuredScopes = environment.keycloakScopes
+            .split(separator: " ")
+            .map(String.init)
+            .filter { !$0.isEmpty }
 
-            guard
-                let redirectURL = environment.keycloakRedirectURI,
-                !environment.keycloakClientId.isEmpty
-            else {
-                return .failure(.invalidURL)
-            }
+        let primaryScopes = configuredScopes.isEmpty ? ["openid"] : configuredScopes
+        let scopeVariants: [[String]] = primaryScopes == ["openid"] ? [primaryScopes] : [primaryScopes, ["openid"]]
 
-            let configuration = OIDServiceConfiguration(
-                authorizationEndpoint: discovery.authorizationEndpoint,
-                tokenEndpoint: discovery.tokenEndpoint,
-                issuer: discovery.issuer,
-                registrationEndpoint: nil,
-                endSessionEndpoint: discovery.endSessionEndpoint,
-            )
+        for scopes in scopeVariants {
+            do {
+                return .success(try await performLogin(mode: mode, scopes: scopes))
+            } catch let apiError as APIError {
+                let isInvalidScope = if case let .httpError(statusCode, bodySnippet) = apiError {
+                    statusCode == 400 && bodySnippet?.contains("invalid_scope") == true
+                } else {
+                    false
+                }
 
-            let scopes = environment.keycloakScopes
-                .split(separator: " ")
-                .map(String.init)
+                if isInvalidScope, scopes != ["openid"] {
+                    FFLog.info("OIDC login invalid_scope for configured scopes, retry with openid only")
+                    continue
+                }
 
-            let authRequest = OIDAuthorizationRequest(
-                configuration: configuration,
-                clientId: environment.keycloakClientId,
-                clientSecret: nil,
-                scopes: scopes,
-                redirectURL: redirectURL,
-                responseType: OIDResponseTypeCode,
-                additionalParameters: registrationParameters(for: mode),
-            )
-
-            guard let presentingViewController = UIApplication.topViewController() else {
+                FFLog.error("OIDC login failed with APIError: \(String(describing: apiError))")
+                return .failure(apiError)
+            } catch {
+                FFLog.error("OIDC login failed with unexpected error: \(error.localizedDescription)")
                 return .failure(.unknown)
             }
-            let authState = try await present(request: authRequest, from: presentingViewController)
-
-            guard let tokenResponse = authState.lastTokenResponse else {
-                return .failure(.unknown)
-            }
-
-            let tokenSet = tokenSet(from: tokenResponse)
-            try tokenStore.save(tokenSet)
-            return .success(tokenSet)
-        } catch let apiError as APIError {
-            FFLog.error("OIDC login failed with APIError: \(String(describing: apiError))")
-            return .failure(apiError)
-        } catch {
-            FFLog.error("OIDC login failed with unexpected error: \(error.localizedDescription)")
-            return .failure(.unknown)
         }
+
+        return .failure(.unknown)
     }
 
     func refreshIfNeeded() async -> Bool {
@@ -120,7 +101,7 @@ final class AuthService: NSObject, AuthServiceProtocol, @unchecked Sendable {
                     redirectURL: nil,
                     clientID: self.environment.keycloakClientId,
                     clientSecret: nil,
-                    scope: self.environment.keycloakScopes,
+                    scope: nil,
                     refreshToken: refreshToken,
                     codeVerifier: nil,
                     additionalParameters: nil,
@@ -153,6 +134,49 @@ final class AuthService: NSObject, AuthServiceProtocol, @unchecked Sendable {
         guard mode == .createAccount else { return nil }
         guard environment.keycloakRegistrationHintMode == "kc_action" else { return nil }
         return ["kc_action": "register"]
+    }
+
+    @MainActor
+    private func performLogin(mode: LoginEntryMode, scopes: [String]) async throws -> TokenSet {
+        let discovery = try await discoveryService.discover()
+
+        guard
+            let redirectURL = environment.keycloakRedirectURI,
+            !environment.keycloakClientId.isEmpty
+        else {
+            throw APIError.invalidURL
+        }
+
+        let configuration = OIDServiceConfiguration(
+            authorizationEndpoint: discovery.authorizationEndpoint,
+            tokenEndpoint: discovery.tokenEndpoint,
+            issuer: discovery.issuer,
+            registrationEndpoint: nil,
+            endSessionEndpoint: discovery.endSessionEndpoint,
+        )
+
+        let authRequest = OIDAuthorizationRequest(
+            configuration: configuration,
+            clientId: environment.keycloakClientId,
+            clientSecret: nil,
+            scopes: scopes,
+            redirectURL: redirectURL,
+            responseType: OIDResponseTypeCode,
+            additionalParameters: registrationParameters(for: mode),
+        )
+
+        guard let presentingViewController = UIApplication.topViewController() else {
+            throw APIError.unknown
+        }
+        let authState = try await present(request: authRequest, from: presentingViewController)
+
+        guard let tokenResponse = authState.lastTokenResponse else {
+            throw APIError.unknown
+        }
+
+        let tokenSet = tokenSet(from: tokenResponse)
+        try tokenStore.save(tokenSet)
+        return tokenSet
     }
 
     private func tokenSet(from response: OIDTokenResponse, fallbackRefreshToken: String? = nil) -> TokenSet {
@@ -238,9 +262,7 @@ final class AuthService: NSObject, AuthServiceProtocol, @unchecked Sendable {
                 currentAuthorizationFlow = flow
             }
 
-            if flow == nil {
-                resumeOnce(.failure(.unknown))
-            }
+            _ = flow
         }
     }
 
