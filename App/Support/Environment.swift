@@ -5,6 +5,9 @@ struct AppEnvironment: Equatable {
     let baseURL: URL?
     let keycloakURL: URL?
 
+    var backendBaseURL: URL? { baseURL }
+    var keycloakBaseURL: URL? { keycloakURL }
+
     static func from(bundle: Bundle = .main) -> AppEnvironment {
         let dictionary = bundle.infoDictionary ?? [:]
         let name = (dictionary["AppEnvironmentName"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
