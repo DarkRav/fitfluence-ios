@@ -31,6 +31,8 @@ struct WorkoutPlayerFeature {
         var perExerciseState: [String: ExerciseProgress] = [:]
         var isLoading = false
         var error: UserFacingError?
+        var hasChanges = false
+        var isExitConfirmationPresented = false
         var completionSummary: CompletionSummary?
         var progressStorageMode: WorkoutProgressStorageMode = .localOnly
     }
@@ -47,12 +49,16 @@ struct WorkoutPlayerFeature {
         case updateSetReps(exerciseId: String, setIndex: Int, value: String)
         case updateSetWeight(exerciseId: String, setIndex: Int, value: String)
         case updateSetRPE(exerciseId: String, setIndex: Int, value: String)
+        case exitTapped
+        case exitConfirmed
+        case exitConfirmationDismissed
         case finishWorkoutTapped
         case delegate(Delegate)
     }
 
     enum Delegate: Equatable {
         case workoutCompleted(CompletionSummary)
+        case closeRequested
     }
 
     private let workoutsClient: WorkoutsClientProtocol
@@ -154,16 +160,23 @@ struct WorkoutPlayerFeature {
                     stored: snapshot,
                     fallback: state.perExerciseState,
                 )
+                if let index = snapshot.currentExerciseIndex {
+                    let maxIndex = max(0, (state.workout?.exercises.count ?? 1) - 1)
+                    state.currentExerciseIndex = min(max(0, index), maxIndex)
+                }
+                state.hasChanges = snapshot.status != .notStarted
                 return .none
 
             case .nextExerciseTapped:
                 guard let workout = state.workout else { return .none }
                 state.currentExerciseIndex = min(state.currentExerciseIndex + 1, max(0, workout.exercises.count - 1))
-                return .none
+                state.hasChanges = true
+                return persistProgress(state: state)
 
             case .prevExerciseTapped:
                 state.currentExerciseIndex = max(0, state.currentExerciseIndex - 1)
-                return .none
+                state.hasChanges = true
+                return persistProgress(state: state)
 
             case let .toggleSetComplete(exerciseID, setIndex):
                 guard var progress = state.perExerciseState[exerciseID], progress.sets.indices.contains(setIndex) else {
@@ -171,6 +184,7 @@ struct WorkoutPlayerFeature {
                 }
                 progress.sets[setIndex].isCompleted.toggle()
                 state.perExerciseState[exerciseID] = progress
+                state.hasChanges = true
                 return persistProgress(state: state)
 
             case let .updateSetReps(exerciseID, setIndex, value):
@@ -180,6 +194,7 @@ struct WorkoutPlayerFeature {
                     setIndex: setIndex,
                     update: { $0.repsText = value },
                 )
+                state.hasChanges = true
                 return persistProgress(state: state)
 
             case let .updateSetWeight(exerciseID, setIndex, value):
@@ -189,6 +204,7 @@ struct WorkoutPlayerFeature {
                     setIndex: setIndex,
                     update: { $0.weightText = value },
                 )
+                state.hasChanges = true
                 return persistProgress(state: state)
 
             case let .updateSetRPE(exerciseID, setIndex, value):
@@ -198,7 +214,26 @@ struct WorkoutPlayerFeature {
                     setIndex: setIndex,
                     update: { $0.rpeText = value },
                 )
+                state.hasChanges = true
                 return persistProgress(state: state)
+
+            case .exitTapped:
+                if state.hasChanges {
+                    state.isExitConfirmationPresented = true
+                    return .none
+                }
+                return .send(.delegate(.closeRequested))
+
+            case .exitConfirmationDismissed:
+                state.isExitConfirmationPresented = false
+                return .none
+
+            case .exitConfirmed:
+                state.isExitConfirmationPresented = false
+                return .merge(
+                    persistProgress(state: state),
+                    .send(.delegate(.closeRequested)),
+                )
 
             case .finishWorkoutTapped:
                 guard let workout = state.workout else { return .none }
@@ -277,6 +312,7 @@ struct WorkoutPlayerFeature {
             userSub: state.userSub,
             programId: state.programId,
             workoutId: state.workoutId,
+            currentExerciseIndex: state.currentExerciseIndex,
             isFinished: isFinished,
             lastUpdated: Date(),
             exercises: state.perExerciseState.mapValues { value in

@@ -164,6 +164,10 @@ struct ProgramDetailsFeature {
                 state.workoutCompletion = WorkoutCompletionFeature.State(summary: summary)
                 return .none
 
+            case .workoutPlayer(.delegate(.closeRequested)):
+                state.workoutPlayer = nil
+                return .none
+
             case .workoutCompletionDismissed:
                 state.workoutCompletion = nil
                 return .none

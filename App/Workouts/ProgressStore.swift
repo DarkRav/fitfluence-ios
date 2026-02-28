@@ -32,6 +32,7 @@ struct WorkoutProgressSnapshot: Codable, Equatable, Sendable {
     let userSub: String
     let programId: String
     let workoutId: String
+    var currentExerciseIndex: Int?
     var isFinished: Bool
     var lastUpdated: Date
     var exercises: [String: StoredExerciseProgress]

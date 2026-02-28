@@ -9,11 +9,7 @@ struct WorkoutPlayerView: View {
             ScrollView {
                 VStack(spacing: FFSpacing.md) {
                     if viewStore.isShowingCachedData {
-                        FFCard {
-                            Text("Оффлайн. Показаны сохранённые данные.")
-                                .font(FFTypography.caption.weight(.semibold))
-                                .foregroundStyle(FFColors.primary)
-                        }
+                        offlineCard
                     }
 
                     if viewStore.isLoading, viewStore.workout == nil {
@@ -27,30 +23,66 @@ struct WorkoutPlayerView: View {
                             viewStore.send(.retry)
                         }
                     } else if let workout = viewStore.workout {
-                        header(workout: workout, viewStore: viewStore)
+                        topPanel(workout: workout, viewStore: viewStore)
 
                         if workout.exercises.isEmpty {
                             FFEmptyState(
                                 title: "В тренировке нет упражнений",
-                                message: "Добавьте упражнения в программу, чтобы начать тренировку.",
+                                message: "Состав тренировки пока пуст. Вернитесь к программе и выберите другую тренировку.",
                             )
                         } else {
-                            currentExerciseCard(workout: workout, viewStore: viewStore)
-                            controls(workout: workout, viewStore: viewStore)
+                            exerciseCard(workout: workout, viewStore: viewStore)
+                            setsBlock(workout: workout, viewStore: viewStore)
                         }
                     }
                 }
                 .padding(.horizontal, FFSpacing.md)
-                .padding(.vertical, FFSpacing.md)
+                .padding(.top, FFSpacing.md)
+                .padding(.bottom, FFSpacing.xl)
             }
             .background(FFColors.background)
+            .safeAreaInset(edge: .bottom) {
+                if let workout = viewStore.workout, !workout.exercises.isEmpty {
+                    stickyActions(workout: workout, viewStore: viewStore)
+                        .padding(.horizontal, FFSpacing.md)
+                        .padding(.top, FFSpacing.xs)
+                        .background(FFColors.background.opacity(0.96))
+                }
+            }
+            .navigationBarBackButtonHidden(true)
+            .alert(
+                "Завершить тренировку?",
+                isPresented: viewStore.binding(
+                    get: \.isExitConfirmationPresented,
+                    send: { isPresented in
+                        isPresented ? .exitTapped : .exitConfirmationDismissed
+                    },
+                ),
+            ) {
+                Button("Остаться", role: .cancel) {
+                    viewStore.send(.exitConfirmationDismissed)
+                }
+                Button("Выйти", role: .destructive) {
+                    viewStore.send(.exitConfirmed)
+                }
+            } message: {
+                Text("Прогресс сохранится на устройстве.")
+            }
             .onAppear {
                 viewStore.send(.onAppear)
             }
         }
     }
 
-    private func header(
+    private var offlineCard: some View {
+        FFCard {
+            Text("Оффлайн: показаны сохранённые данные")
+                .font(FFTypography.caption.weight(.semibold))
+                .foregroundStyle(FFColors.primary)
+        }
+    }
+
+    private func topPanel(
         workout: WorkoutDetailsModel,
         viewStore: ViewStore<WorkoutPlayerFeature.State, WorkoutPlayerFeature.Action>,
     ) -> some View {
@@ -59,27 +91,39 @@ struct WorkoutPlayerView: View {
 
         return FFCard {
             VStack(alignment: .leading, spacing: FFSpacing.sm) {
-                Text(workout.title)
-                    .font(FFTypography.h2)
-                    .foregroundStyle(FFColors.textPrimary)
+                HStack(alignment: .top, spacing: FFSpacing.sm) {
+                    VStack(alignment: .leading, spacing: FFSpacing.xs) {
+                        Text(workout.title)
+                            .font(FFTypography.h2)
+                            .foregroundStyle(FFColors.textPrimary)
+                            .multilineTextAlignment(.leading)
+                        Text("Упражнение \(current) из \(total)")
+                            .font(FFTypography.caption)
+                            .foregroundStyle(FFColors.textSecondary)
+                    }
 
-                Text("Упражнение \(current) из \(total)")
-                    .font(FFTypography.caption)
-                    .foregroundStyle(FFColors.textSecondary)
+                    Spacer(minLength: FFSpacing.xs)
+
+                    Button("Выйти") {
+                        viewStore.send(.exitTapped)
+                    }
+                    .font(FFTypography.caption.weight(.semibold))
+                    .foregroundStyle(FFColors.danger)
+                    .frame(minWidth: 44, minHeight: 44)
+                    .accessibilityLabel("Выйти из тренировки")
+                }
 
                 ProgressView(value: Double(current), total: Double(total))
                     .tint(FFColors.accent)
 
-                if viewStore.progressStorageMode == .localOnly {
-                    Text("Прогресс пока сохраняется на устройстве.")
-                        .font(FFTypography.caption)
-                        .foregroundStyle(FFColors.textSecondary)
-                }
+                Text("Отметьте выполненные подходы")
+                    .font(FFTypography.caption)
+                    .foregroundStyle(FFColors.textSecondary)
             }
         }
     }
 
-    private func currentExerciseCard(
+    private func exerciseCard(
         workout: WorkoutDetailsModel,
         viewStore: ViewStore<WorkoutPlayerFeature.State, WorkoutPlayerFeature.Action>,
     ) -> some View {
@@ -88,12 +132,14 @@ struct WorkoutPlayerView: View {
         return FFCard {
             VStack(alignment: .leading, spacing: FFSpacing.sm) {
                 Text(exercise.name)
-                    .font(FFTypography.h2)
+                    .font(FFTypography.h1)
                     .foregroundStyle(FFColors.textPrimary)
+                    .multilineTextAlignment(.leading)
 
                 Text(prescriptionText(for: exercise))
                     .font(FFTypography.body)
                     .foregroundStyle(FFColors.textSecondary)
+                    .multilineTextAlignment(.leading)
 
                 if let notes = exercise.notes, !notes.isEmpty {
                     Text(notes)
@@ -101,108 +147,136 @@ struct WorkoutPlayerView: View {
                         .foregroundStyle(FFColors.gray300)
                 }
 
-                Divider()
-                    .overlay(FFColors.gray700)
+                if viewStore.progressStorageMode == .localOnly {
+                    Text("Оффлайн: изменения сохраняются на устройстве")
+                        .font(FFTypography.caption)
+                        .foregroundStyle(FFColors.accent)
+                }
+            }
+        }
+    }
 
-                VStack(alignment: .leading, spacing: FFSpacing.sm) {
-                    Text("Подходы")
-                        .font(FFTypography.body.weight(.semibold))
-                        .foregroundStyle(FFColors.textPrimary)
+    private func setsBlock(
+        workout: WorkoutDetailsModel,
+        viewStore: ViewStore<WorkoutPlayerFeature.State, WorkoutPlayerFeature.Action>,
+    ) -> some View {
+        let exercise = workout.exercises[viewStore.currentExerciseIndex]
+        let progress = viewStore.perExerciseState[exercise.id]
 
-                    let progress = viewStore.perExerciseState[exercise.id]
-                    ForEach(Array((progress?.sets ?? []).enumerated()), id: \.offset) { index, setState in
-                        VStack(alignment: .leading, spacing: FFSpacing.xs) {
-                            HStack {
-                                Text("Подход \(index + 1)")
-                                    .font(FFTypography.caption)
-                                    .foregroundStyle(FFColors.textSecondary)
+        return FFCard {
+            VStack(alignment: .leading, spacing: FFSpacing.sm) {
+                Text("Подходы")
+                    .font(FFTypography.h2)
+                    .foregroundStyle(FFColors.textPrimary)
 
-                                Spacer()
+                ForEach(Array((progress?.sets ?? []).enumerated()), id: \.offset) { index, setState in
+                    VStack(alignment: .leading, spacing: FFSpacing.xs) {
+                        HStack(spacing: FFSpacing.sm) {
+                            Text("Подход \(index + 1)")
+                                .font(FFTypography.body.weight(.semibold))
+                                .foregroundStyle(FFColors.textPrimary)
 
-                                Button(setState.isCompleted ? "Выполнен" : "Отметить") {
-                                    viewStore.send(.toggleSetComplete(exerciseId: exercise.id, setIndex: index))
-                                }
+                            Spacer(minLength: FFSpacing.xs)
+
+                            Button {
+                                viewStore.send(.toggleSetComplete(exerciseId: exercise.id, setIndex: index))
+                            } label: {
+                                Label(
+                                    setState.isCompleted ? "Выполнено" : "Отметить",
+                                    systemImage: setState.isCompleted ? "checkmark.circle.fill" : "circle",
+                                )
                                 .font(FFTypography.caption.weight(.semibold))
                                 .foregroundStyle(setState.isCompleted ? FFColors.accent : FFColors.textSecondary)
-                                .frame(minHeight: 44)
                             }
-
-                            FFTextField(
-                                label: "Вес (кг)",
-                                placeholder: "Например: 40",
-                                text: Binding(
-                                    get: { setState.weightText },
-                                    set: { value in
-                                        viewStore.send(
-                                            .updateSetWeight(exerciseId: exercise.id, setIndex: index, value: value),
-                                        )
-                                    },
-                                ),
-                            )
-
-                            FFTextField(
-                                label: "Повторы",
-                                placeholder: "Например: 10",
-                                text: Binding(
-                                    get: { setState.repsText },
-                                    set: { value in
-                                        viewStore.send(
-                                            .updateSetReps(exerciseId: exercise.id, setIndex: index, value: value),
-                                        )
-                                    },
-                                ),
-                            )
-
-                            FFTextField(
-                                label: "RPE",
-                                placeholder: "Например: 8",
-                                text: Binding(
-                                    get: { setState.rpeText },
-                                    set: { value in
-                                        viewStore.send(
-                                            .updateSetRPE(exerciseId: exercise.id, setIndex: index, value: value),
-                                        )
-                                    },
-                                ),
-                            )
+                            .frame(minHeight: 44)
+                            .accessibilityLabel("Подход \(index + 1)")
+                            .accessibilityValue(setState.isCompleted ? "Выполнено" : "Не выполнено")
                         }
-                        .padding(.vertical, FFSpacing.xs)
+
+                        FFTextField(
+                            label: "Вес",
+                            placeholder: "кг",
+                            text: Binding(
+                                get: { setState.weightText },
+                                set: { value in
+                                    viewStore.send(
+                                        .updateSetWeight(exerciseId: exercise.id, setIndex: index, value: value),
+                                    )
+                                },
+                            ),
+                            helperText: "Например, 40",
+                            keyboardType: .decimalPad,
+                        )
+
+                        FFTextField(
+                            label: "Повторы",
+                            placeholder: "количество",
+                            text: Binding(
+                                get: { setState.repsText },
+                                set: { value in
+                                    viewStore.send(
+                                        .updateSetReps(exerciseId: exercise.id, setIndex: index, value: value),
+                                    )
+                                },
+                            ),
+                            helperText: "Например, 10",
+                            keyboardType: .numberPad,
+                        )
+
+                        FFTextField(
+                            label: "RPE",
+                            placeholder: "уровень",
+                            text: Binding(
+                                get: { setState.rpeText },
+                                set: { value in
+                                    viewStore.send(
+                                        .updateSetRPE(exerciseId: exercise.id, setIndex: index, value: value),
+                                    )
+                                },
+                            ),
+                            helperText: "Например, 8",
+                            keyboardType: .decimalPad,
+                        )
+                    }
+                    .padding(.vertical, FFSpacing.xs)
+
+                    if index < (progress?.sets.count ?? 0) - 1 {
+                        Divider()
+                            .overlay(FFColors.gray700)
                     }
                 }
             }
         }
     }
 
-    private func controls(
+    private func stickyActions(
         workout: WorkoutDetailsModel,
         viewStore: ViewStore<WorkoutPlayerFeature.State, WorkoutPlayerFeature.Action>,
     ) -> some View {
         let isFirst = viewStore.currentExerciseIndex == 0
         let isLast = viewStore.currentExerciseIndex >= max(0, workout.exercises.count - 1)
 
-        return VStack(spacing: FFSpacing.sm) {
-            HStack(spacing: FFSpacing.sm) {
-                FFButton(
-                    title: "Назад",
-                    variant: isFirst ? .disabled : .secondary,
-                    action: { viewStore.send(.prevExerciseTapped) },
-                )
+        return FFCard(padding: FFSpacing.sm) {
+            VStack(spacing: FFSpacing.sm) {
+                HStack(spacing: FFSpacing.sm) {
+                    FFButton(
+                        title: "Назад",
+                        variant: isFirst ? .disabled : .secondary,
+                        action: { viewStore.send(.prevExerciseTapped) },
+                    )
 
-                FFButton(
-                    title: isLast ? "К завершению" : "Далее",
-                    variant: .primary,
-                    action: {
-                        if isLast {
-                            viewStore.send(.finishWorkoutTapped)
-                        } else {
-                            viewStore.send(.nextExerciseTapped)
-                        }
-                    },
-                )
-            }
-
-            FFButton(title: "Завершить тренировку", variant: .destructive) {
-                viewStore.send(.finishWorkoutTapped)
+                    FFButton(
+                        title: isLast ? "Завершить тренировку" : "Следующее упражнение",
+                        variant: .primary,
+                        action: {
+                            if isLast {
+                                viewStore.send(.finishWorkoutTapped)
+                            } else {
+                                viewStore.send(.nextExerciseTapped)
+                            }
+                        },
+                    )
+                }
             }
         }
     }

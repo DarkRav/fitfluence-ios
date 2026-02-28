@@ -192,6 +192,7 @@ final class WorkoutsFeatureAndProgressStoreTests: XCTestCase {
             userSub: "u1",
             programId: "p1",
             workoutId: "w1",
+            currentExerciseIndex: 0,
             isFinished: false,
             lastUpdated: Date(),
             exercises: [
