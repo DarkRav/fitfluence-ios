@@ -150,8 +150,14 @@ struct RootFeature {
                 }
 
             case .logoutTapped:
+                let namespace: String = if case let .authenticated(context) = state.sessionState {
+                    context.me.subject ?? state.catalog.cacheNamespace
+                } else {
+                    state.catalog.cacheNamespace
+                }
                 state.sessionState = .authenticating
-                return .run { [sessionManager] send in
+                return .run { [sessionManager, cacheStore] send in
+                    await cacheStore.clearAll(namespace: namespace)
                     let nextState = await sessionManager.logout()
                     await send(.sessionResolved(nextState))
                 }
