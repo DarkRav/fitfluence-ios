@@ -45,6 +45,8 @@
 	<string>$(KEYCLOAK_SCOPES)</string>
 	<key>KeycloakURL</key>
 	<string>$(KEYCLOAK_URL)</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Приложению нужен доступ к локальной сети для подключения к вашему dev-серверу.</string>
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<key>NSExceptionDomains</key>
