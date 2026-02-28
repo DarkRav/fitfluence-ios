@@ -130,7 +130,7 @@ final class CatalogAndProgramDetailsFeatureTests: XCTestCase {
             startResults: [],
         )
 
-        let store = TestStore(initialState: ProgramDetailsFeature.State(programId: "program-1")) {
+        let store = TestStore(initialState: ProgramDetailsFeature.State(programId: "program-1", userSub: "u1")) {
             ProgramDetailsFeature(programsClient: mockClient)
         }
 
@@ -153,7 +153,7 @@ final class CatalogAndProgramDetailsFeatureTests: XCTestCase {
             startResults: [],
         )
 
-        let store = TestStore(initialState: ProgramDetailsFeature.State(programId: "program-1")) {
+        let store = TestStore(initialState: ProgramDetailsFeature.State(programId: "program-1", userSub: "u1")) {
             ProgramDetailsFeature(programsClient: mockClient)
         }
 
