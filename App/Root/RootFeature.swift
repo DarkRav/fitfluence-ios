@@ -5,6 +5,7 @@ struct RootFeature {
     private let sessionManager: SessionManaging
     private let authService: AuthServiceProtocol
     private let apiClient: APIClientProtocol?
+    private let progressStore: WorkoutProgressStore
     private let athleteClient: AthleteProfileClientProtocol?
     private let influencerClient: InfluencerProfileClientProtocol?
 
@@ -12,10 +13,12 @@ struct RootFeature {
         sessionManager: SessionManaging,
         authService: AuthServiceProtocol,
         apiClient: APIClientProtocol?,
+        progressStore: WorkoutProgressStore = LocalWorkoutProgressStore(),
     ) {
         self.sessionManager = sessionManager
         self.authService = authService
         self.apiClient = apiClient
+        self.progressStore = progressStore
         athleteClient = apiClient as? AthleteProfileClientProtocol
         influencerClient = apiClient as? InfluencerProfileClientProtocol
     }
@@ -68,8 +71,11 @@ struct RootFeature {
         Scope(state: \.catalog, action: \.catalog) { [apiClient] in
             CatalogFeature(programsClient: apiClient as? ProgramsClientProtocol)
         }
-        .ifLet(\.programDetails, action: \.programDetails) { [apiClient] in
-            ProgramDetailsFeature(programsClient: apiClient as? ProgramsClientProtocol)
+        .ifLet(\.programDetails, action: \.programDetails) { [apiClient, progressStore] in
+            ProgramDetailsFeature(
+                programsClient: apiClient as? ProgramsClientProtocol,
+                progressStore: progressStore,
+            )
         }
 
         Reduce { state, action in
@@ -141,7 +147,15 @@ struct RootFeature {
                 return .none
 
             case let .catalog(.delegate(.openProgram(programID))):
-                state.programDetails = ProgramDetailsFeature.State(programId: programID)
+                let userSub: String = if case let .authenticated(context) = state.sessionState {
+                    context.me.subject ?? "anonymous"
+                } else {
+                    "anonymous"
+                }
+                state.programDetails = ProgramDetailsFeature.State(
+                    programId: programID,
+                    userSub: userSub,
+                )
                 return .none
 
             case .catalog:

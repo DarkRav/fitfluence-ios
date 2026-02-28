@@ -22,6 +22,7 @@ struct WorkoutPlayerFeature {
 
     @ObservableState
     struct State: Equatable {
+        let userSub: String
         let programId: String
         let workoutId: String
         var workout: WorkoutDetailsModel?
@@ -37,6 +38,7 @@ struct WorkoutPlayerFeature {
         case onAppear
         case retry
         case detailsResponse(Result<WorkoutDetailsModel, APIError>)
+        case loadedProgress(WorkoutProgressSnapshot?)
         case nextExerciseTapped
         case prevExerciseTapped
         case toggleSetComplete(exerciseId: String, setIndex: Int)
@@ -52,9 +54,11 @@ struct WorkoutPlayerFeature {
     }
 
     private let workoutsClient: WorkoutsClientProtocol
+    private let progressStore: WorkoutProgressStore
 
-    init(workoutsClient: WorkoutsClientProtocol) {
+    init(workoutsClient: WorkoutsClientProtocol, progressStore: WorkoutProgressStore) {
         self.workoutsClient = workoutsClient
+        self.progressStore = progressStore
     }
 
     var body: some ReducerOf<Self> {
@@ -80,9 +84,28 @@ struct WorkoutPlayerFeature {
                     state.currentExerciseIndex = 0
                     state.perExerciseState = makeExerciseProgress(for: workout)
                     state.error = nil
+                    let userSub = state.userSub
+                    let programId = state.programId
+                    let workoutId = state.workoutId
+                    return .run { [progressStore] send in
+                        let snapshot = await progressStore.load(
+                            userSub: userSub,
+                            programId: programId,
+                            workoutId: workoutId,
+                        )
+                        await send(.loadedProgress(snapshot))
+                    }
                 case let .failure(error):
                     state.error = error.workoutPlayerUserFacingError
+                    return .none
                 }
+
+            case let .loadedProgress(snapshot):
+                guard let snapshot else { return .none }
+                state.perExerciseState = mergeStoredProgress(
+                    stored: snapshot,
+                    fallback: state.perExerciseState,
+                )
                 return .none
 
             case .nextExerciseTapped:
@@ -100,37 +123,43 @@ struct WorkoutPlayerFeature {
                 }
                 progress.sets[setIndex].isCompleted.toggle()
                 state.perExerciseState[exerciseID] = progress
-                return .none
+                return persistProgress(state: state)
 
             case let .updateSetReps(exerciseID, setIndex, value):
-                return updateSetState(
+                updateSetState(
                     state: &state,
                     exerciseID: exerciseID,
                     setIndex: setIndex,
                     update: { $0.repsText = value },
                 )
+                return persistProgress(state: state)
 
             case let .updateSetWeight(exerciseID, setIndex, value):
-                return updateSetState(
+                updateSetState(
                     state: &state,
                     exerciseID: exerciseID,
                     setIndex: setIndex,
                     update: { $0.weightText = value },
                 )
+                return persistProgress(state: state)
 
             case let .updateSetRPE(exerciseID, setIndex, value):
-                return updateSetState(
+                updateSetState(
                     state: &state,
                     exerciseID: exerciseID,
                     setIndex: setIndex,
                     update: { $0.rpeText = value },
                 )
+                return persistProgress(state: state)
 
             case .finishWorkoutTapped:
                 guard let workout = state.workout else { return .none }
                 let summary = makeSummary(workout: workout, perExercise: state.perExerciseState)
                 state.completionSummary = summary
-                return .send(.delegate(.workoutCompleted(summary)))
+                return .merge(
+                    persistProgress(state: state, isFinished: true),
+                    .send(.delegate(.workoutCompleted(summary))),
+                )
 
             case .delegate:
                 return .none
@@ -143,13 +172,12 @@ struct WorkoutPlayerFeature {
         exerciseID: String,
         setIndex: Int,
         update: (inout SetProgress) -> Void,
-    ) -> Effect<Action> {
+    ) {
         guard var progress = state.perExerciseState[exerciseID], progress.sets.indices.contains(setIndex) else {
-            return .none
+            return
         }
         update(&progress.sets[setIndex])
         state.perExerciseState[exerciseID] = progress
-        return .none
     }
 
     private func loadWorkout(programId: String, workoutId: String) -> Effect<Action> {
@@ -166,6 +194,52 @@ struct WorkoutPlayerFeature {
             result[exercise.id] = ExerciseProgress(sets: sets)
         }
         return result
+    }
+
+    private func mergeStoredProgress(
+        stored: WorkoutProgressSnapshot,
+        fallback: [String: ExerciseProgress],
+    ) -> [String: ExerciseProgress] {
+        var merged = fallback
+        for (exerciseID, storedExercise) in stored.exercises {
+            guard var current = merged[exerciseID] else { continue }
+            for index in current.sets.indices {
+                guard storedExercise.sets.indices.contains(index) else { continue }
+                let source = storedExercise.sets[index]
+                current.sets[index].isCompleted = source.isCompleted
+                current.sets[index].repsText = source.repsText
+                current.sets[index].weightText = source.weightText
+                current.sets[index].rpeText = source.rpeText
+            }
+            merged[exerciseID] = current
+        }
+        return merged
+    }
+
+    private func persistProgress(state: State, isFinished: Bool = false) -> Effect<Action> {
+        let snapshot = WorkoutProgressSnapshot(
+            userSub: state.userSub,
+            programId: state.programId,
+            workoutId: state.workoutId,
+            isFinished: isFinished,
+            lastUpdated: Date(),
+            exercises: state.perExerciseState.mapValues { value in
+                StoredExerciseProgress(
+                    sets: value.sets.map { set in
+                        StoredSetProgress(
+                            isCompleted: set.isCompleted,
+                            repsText: set.repsText,
+                            weightText: set.weightText,
+                            rpeText: set.rpeText,
+                        )
+                    },
+                )
+            },
+        )
+
+        return .run { [progressStore] _ in
+            await progressStore.save(snapshot)
+        }
     }
 
     private func makeSummary(

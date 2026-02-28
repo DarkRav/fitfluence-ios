@@ -6,6 +6,7 @@ struct ProgramDetailsFeature {
     @ObservableState
     struct State: Equatable {
         let programId: String
+        let userSub: String
         var details: ProgramDetails?
         var workoutsList: WorkoutsListFeature.State?
         var workoutPlayer: WorkoutPlayerFeature.State?
@@ -30,9 +31,14 @@ struct ProgramDetailsFeature {
 
     private let programsClient: ProgramsClientProtocol?
     private let workoutsClient: WorkoutsClientProtocol
+    private let progressStore: WorkoutProgressStore
 
-    init(programsClient: ProgramsClientProtocol?) {
+    init(
+        programsClient: ProgramsClientProtocol?,
+        progressStore: WorkoutProgressStore = LocalWorkoutProgressStore(),
+    ) {
         self.programsClient = programsClient
+        self.progressStore = progressStore
         if let programsClient {
             workoutsClient = WorkoutsClient(programsClient: programsClient)
         } else {
@@ -95,7 +101,10 @@ struct ProgramDetailsFeature {
                 return .none
 
             case .openWorkoutsTapped:
-                state.workoutsList = WorkoutsListFeature.State(programId: state.programId)
+                state.workoutsList = WorkoutsListFeature.State(
+                    programId: state.programId,
+                    userSub: state.userSub,
+                )
                 return .none
 
             case .workoutsListDismissed:
@@ -104,6 +113,7 @@ struct ProgramDetailsFeature {
 
             case let .workoutsList(.delegate(.openWorkout(workoutID))):
                 state.workoutPlayer = WorkoutPlayerFeature.State(
+                    userSub: state.userSub,
                     programId: state.programId,
                     workoutId: workoutID,
                     progressStorageMode: workoutsClient.progressStorageMode,
@@ -124,11 +134,11 @@ struct ProgramDetailsFeature {
                 return .none
             }
         }
-        .ifLet(\.workoutsList, action: \.workoutsList) { [workoutsClient] in
-            WorkoutsListFeature(workoutsClient: workoutsClient)
+        .ifLet(\.workoutsList, action: \.workoutsList) { [workoutsClient, progressStore] in
+            WorkoutsListFeature(workoutsClient: workoutsClient, progressStore: progressStore)
         }
-        .ifLet(\.workoutPlayer, action: \.workoutPlayer) { [workoutsClient] in
-            WorkoutPlayerFeature(workoutsClient: workoutsClient)
+        .ifLet(\.workoutPlayer, action: \.workoutPlayer) { [workoutsClient, progressStore] in
+            WorkoutPlayerFeature(workoutsClient: workoutsClient, progressStore: progressStore)
         }
     }
 

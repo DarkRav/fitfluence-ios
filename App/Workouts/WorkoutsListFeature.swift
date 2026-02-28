@@ -5,7 +5,9 @@ struct WorkoutsListFeature {
     @ObservableState
     struct State: Equatable {
         let programId: String
+        let userSub: String
         var workouts: [WorkoutSummary] = []
+        var workoutStatuses: [String: WorkoutProgressStatus] = [:]
         var isLoading = false
         var isRefreshing = false
         var error: UserFacingError?
@@ -16,6 +18,7 @@ struct WorkoutsListFeature {
         case refresh
         case retry
         case response(Result<[WorkoutSummary], APIError>)
+        case statusesLoaded([String: WorkoutProgressStatus])
         case workoutTapped(String)
         case delegate(Delegate)
     }
@@ -25,9 +28,11 @@ struct WorkoutsListFeature {
     }
 
     private let workoutsClient: WorkoutsClientProtocol
+    private let progressStore: WorkoutProgressStore
 
-    init(workoutsClient: WorkoutsClientProtocol) {
+    init(workoutsClient: WorkoutsClientProtocol, progressStore: WorkoutProgressStore) {
         self.workoutsClient = workoutsClient
+        self.progressStore = progressStore
     }
 
     var body: some ReducerOf<Self> {
@@ -57,9 +62,23 @@ struct WorkoutsListFeature {
                 case let .success(workouts):
                     state.workouts = workouts
                     state.error = nil
+                    let userSub = state.userSub
+                    let programId = state.programId
+                    return .run { [progressStore] send in
+                        let statuses = await progressStore.statuses(
+                            userSub: userSub,
+                            programId: programId,
+                            workoutIds: workouts.map(\.id),
+                        )
+                        await send(.statusesLoaded(statuses))
+                    }
                 case let .failure(error):
                     state.error = error.workoutsUserFacingError
+                    return .none
                 }
+
+            case let .statusesLoaded(statuses):
+                state.workoutStatuses = statuses
                 return .none
 
             case let .workoutTapped(workoutID):

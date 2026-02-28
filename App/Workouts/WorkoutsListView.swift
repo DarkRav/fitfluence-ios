@@ -29,7 +29,10 @@ struct WorkoutsListView: View {
                     ScrollView {
                         VStack(spacing: FFSpacing.sm) {
                             ForEach(viewStore.workouts) { workout in
-                                workoutCard(workout) {
+                                workoutCard(
+                                    workout,
+                                    status: workoutStatus(for: workout, viewStore: viewStore),
+                                ) {
                                     viewStore.send(.workoutTapped(workout.id))
                                 }
                             }
@@ -49,7 +52,11 @@ struct WorkoutsListView: View {
         }
     }
 
-    private func workoutCard(_ workout: WorkoutSummary, onTap: @escaping () -> Void) -> some View {
+    private func workoutCard(
+        _ workout: WorkoutSummary,
+        status: WorkoutProgressStatus,
+        onTap: @escaping () -> Void,
+    ) -> some View {
         Button(action: onTap) {
             FFCard {
                 HStack(alignment: .top, spacing: FFSpacing.sm) {
@@ -70,7 +77,7 @@ struct WorkoutsListView: View {
 
                     Spacer(minLength: FFSpacing.xs)
 
-                    FFBadge(status: .draft)
+                    statusBadge(status: status)
                 }
             }
             .contentShape(Rectangle())
@@ -85,5 +92,33 @@ struct WorkoutsListView: View {
             return "Упражнений: \(workout.exerciseCount) • ~\(duration) мин"
         }
         return "Упражнений: \(workout.exerciseCount)"
+    }
+
+    private func workoutStatus(
+        for workout: WorkoutSummary,
+        viewStore: ViewStore<WorkoutsListFeature.State, WorkoutsListFeature.Action>,
+    ) -> WorkoutProgressStatus {
+        viewStore.workoutStatuses[workout.id] ?? .notStarted
+    }
+
+    private func statusBadge(status: WorkoutProgressStatus) -> some View {
+        Text(status.title)
+            .font(FFTypography.caption.weight(.semibold))
+            .foregroundStyle(statusColor(status))
+            .padding(.horizontal, FFSpacing.sm)
+            .padding(.vertical, FFSpacing.xs)
+            .background(statusColor(status).opacity(0.16))
+            .clipShape(Capsule())
+    }
+
+    private func statusColor(_ status: WorkoutProgressStatus) -> Color {
+        switch status {
+        case .notStarted:
+            FFColors.gray300
+        case .inProgress:
+            FFColors.accent
+        case .completed:
+            FFColors.primary
+        }
     }
 }

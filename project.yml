@@ -36,6 +36,14 @@ targets:
         KeycloakRedirectURI: $(KEYCLOAK_REDIRECT_URI)
         KeycloakScopes: $(KEYCLOAK_SCOPES)
         KeycloakRegistrationHintMode: $(KEYCLOAK_REGISTRATION_HINT_MODE)
+        NSAppTransportSecurity:
+          NSExceptionDomains:
+            localhost:
+              NSExceptionAllowsInsecureHTTPLoads: true
+            127.0.0.1:
+              NSExceptionAllowsInsecureHTTPLoads: true
+            192.168.88.81:
+              NSExceptionAllowsInsecureHTTPLoads: true
         CFBundleURLTypes:
           - CFBundleURLName: fitfluence.oauth
             CFBundleURLSchemes:

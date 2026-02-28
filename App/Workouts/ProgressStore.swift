@@ -1,0 +1,98 @@
+import Foundation
+
+enum WorkoutProgressStatus: String, Equatable, Sendable {
+    case notStarted
+    case inProgress
+    case completed
+
+    var title: String {
+        switch self {
+        case .notStarted:
+            "Не начата"
+        case .inProgress:
+            "В процессе"
+        case .completed:
+            "Завершена"
+        }
+    }
+}
+
+struct StoredSetProgress: Codable, Equatable, Sendable {
+    var isCompleted: Bool
+    var repsText: String
+    var weightText: String
+    var rpeText: String
+}
+
+struct StoredExerciseProgress: Codable, Equatable, Sendable {
+    var sets: [StoredSetProgress]
+}
+
+struct WorkoutProgressSnapshot: Codable, Equatable, Sendable {
+    let userSub: String
+    let programId: String
+    let workoutId: String
+    var isFinished: Bool
+    var lastUpdated: Date
+    var exercises: [String: StoredExerciseProgress]
+
+    var status: WorkoutProgressStatus {
+        if isFinished {
+            return .completed
+        }
+
+        let allSets = exercises.values.flatMap(\.sets)
+        if allSets.contains(where: \.isCompleted) {
+            return .inProgress
+        }
+
+        return .notStarted
+    }
+}
+
+protocol WorkoutProgressStore: Sendable {
+    func load(userSub: String, programId: String, workoutId: String) async -> WorkoutProgressSnapshot?
+    func save(_ snapshot: WorkoutProgressSnapshot) async
+    func status(userSub: String, programId: String, workoutId: String) async -> WorkoutProgressStatus
+    func statuses(userSub: String, programId: String, workoutIds: [String]) async -> [String: WorkoutProgressStatus]
+}
+
+actor LocalWorkoutProgressStore: WorkoutProgressStore {
+    private let defaults: UserDefaults
+    private let keyPrefix = "fitfluence.workout.progress"
+
+    init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
+    }
+
+    func load(userSub: String, programId: String, workoutId: String) async -> WorkoutProgressSnapshot? {
+        let key = storageKey(userSub: userSub, programId: programId, workoutId: workoutId)
+        guard let data = defaults.data(forKey: key) else { return nil }
+        return try? JSONDecoder().decode(WorkoutProgressSnapshot.self, from: data)
+    }
+
+    func save(_ snapshot: WorkoutProgressSnapshot) async {
+        guard let data = try? JSONEncoder().encode(snapshot) else { return }
+        let key = storageKey(userSub: snapshot.userSub, programId: snapshot.programId, workoutId: snapshot.workoutId)
+        defaults.set(data, forKey: key)
+    }
+
+    func status(userSub: String, programId: String, workoutId: String) async -> WorkoutProgressStatus {
+        guard let snapshot = await load(userSub: userSub, programId: programId, workoutId: workoutId) else {
+            return .notStarted
+        }
+        return snapshot.status
+    }
+
+    func statuses(userSub: String, programId: String, workoutIds: [String]) async -> [String: WorkoutProgressStatus] {
+        var result: [String: WorkoutProgressStatus] = [:]
+        for workoutID in workoutIds {
+            result[workoutID] = await status(userSub: userSub, programId: programId, workoutId: workoutID)
+        }
+        return result
+    }
+
+    private func storageKey(userSub: String, programId: String, workoutId: String) -> String {
+        "\(keyPrefix).\(userSub).\(programId).\(workoutId)"
+    }
+}

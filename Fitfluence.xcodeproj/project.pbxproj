@@ -47,6 +47,7 @@
 		BC078A680755A39631921FB9 /* OIDCDiscoveryDocument.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5C86524522FD187BCB6065C5 /* OIDCDiscoveryDocument.swift */; };
 		BE14E4CFB655557D8C529CDF /* RootFeature.swift in Sources */ = {isa = PBXBuildFile; fileRef = CAEB6BFF14C57697C73E6CD3 /* RootFeature.swift */; };
 		C091B3E8CBC8FB1F8ABFDC95 /* FitfluenceApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2406C59ACFAD49D5F8BF8FC2 /* FitfluenceApp.swift */; };
+		C2DCB05753276584C7BFA617 /* ProgressStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 415ABAB15959835E84390C9B /* ProgressStore.swift */; };
 		C32507921BC5A60036A562D7 /* TokenStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3B0C590AD2E0CF52FB2BE38B /* TokenStore.swift */; };
 		C3535BA80F21F23FCA8AE684 /* Spacing.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A3A5018D89BEF09A1424EEF /* Spacing.swift */; };
 		CB6448969D574D903A200B23 /* AuthService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 88082B057D7E001AA79962A9 /* AuthService.swift */; };
@@ -88,6 +89,7 @@
 		329834B4D1A96F4EA44A775F /* OIDCAndTokenStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OIDCAndTokenStoreTests.swift; sourceTree = "<group>"; };
 		3B0C590AD2E0CF52FB2BE38B /* TokenStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TokenStore.swift; sourceTree = "<group>"; };
 		3FD093E71E8AB61F81BD9F1E /* CatalogFeature.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CatalogFeature.swift; sourceTree = "<group>"; };
+		415ABAB15959835E84390C9B /* ProgressStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProgressStore.swift; sourceTree = "<group>"; };
 		44A1273CE966730AE3C9922B /* Environment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Environment.swift; sourceTree = "<group>"; };
 		4BB48B9AF4D57EE8E899CC9E /* Stage.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Stage.xcconfig; sourceTree = "<group>"; };
 		4E282B8F338673539A3669DB /* AuthAndSessionFlowTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthAndSessionFlowTests.swift; sourceTree = "<group>"; };
@@ -325,6 +327,7 @@
 		F6A8F7945D50D0CA6D48B213 /* Workouts */ = {
 			isa = PBXGroup;
 			children = (
+				415ABAB15959835E84390C9B /* ProgressStore.swift */,
 				E3DD06CBB198BE1F06A76175 /* WorkoutPlayerFeature.swift */,
 				80D4B8754AB2E901312C854C /* WorkoutPlayerView.swift */,
 				7EEDCA84EDE9877A99455D47 /* WorkoutsClient.swift */,
@@ -452,6 +455,7 @@
 				4025B7C04F0147C4EF0AB949 /* ProgramDetailsFeature.swift in Sources */,
 				2C1FC3EF8C6F16B005027DF1 /* ProgramDetailsView.swift in Sources */,
 				7BC195B6A8FE68F18A9E8127 /* ProgramsClient.swift in Sources */,
+				C2DCB05753276584C7BFA617 /* ProgressStore.swift in Sources */,
 				BE14E4CFB655557D8C529CDF /* RootFeature.swift in Sources */,
 				24A48678A501B841969AB1EC /* RootView.swift in Sources */,
 				B2EFCC6EFBC62E64F826EFDB /* SessionManager.swift in Sources */,
