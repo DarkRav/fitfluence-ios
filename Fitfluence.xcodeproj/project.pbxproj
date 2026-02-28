@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		04999B39195137AB9BA71B9A /* AppAuth in Frameworks */ = {isa = PBXBuildFile; productRef = 6BE6FBF509B0BB844E656549 /* AppAuth */; };
 		06931F2CD054F4E2CB1A73B4 /* Logging.swift in Sources */ = {isa = PBXBuildFile; fileRef = B0CE9CC0E1302819C8010358 /* Logging.swift */; };
 		0AF9ACEEACEF5516F5A125FC /* APIRequest.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E4CF13A2531205E9575D66B /* APIRequest.swift */; };
 		1D7E67CC678EE15C79E3AB96 /* Typography.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2E5D8994FEA468EC4504CD0 /* Typography.swift */; };
@@ -33,6 +34,7 @@
 		C091B3E8CBC8FB1F8ABFDC95 /* FitfluenceApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2406C59ACFAD49D5F8BF8FC2 /* FitfluenceApp.swift */; };
 		C32507921BC5A60036A562D7 /* TokenStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3B0C590AD2E0CF52FB2BE38B /* TokenStore.swift */; };
 		C3535BA80F21F23FCA8AE684 /* Spacing.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A3A5018D89BEF09A1424EEF /* Spacing.swift */; };
+		CB6448969D574D903A200B23 /* AuthService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 88082B057D7E001AA79962A9 /* AuthService.swift */; };
 		D0381F8271688F1DD55ECF64 /* FFButton.swift in Sources */ = {isa = PBXBuildFile; fileRef = A97D9C4C6794471BA7C75525 /* FFButton.swift */; };
 		D0EDEA7F9D27535EA83A0F26 /* FFEmptyState.swift in Sources */ = {isa = PBXBuildFile; fileRef = E40B5498BB99116B3021C4E4 /* FFEmptyState.swift */; };
 		D69C1CB30BD7205B98ECCCC3 /* TokenSet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D5DAA77BFBBF8EB1EE9084A /* TokenSet.swift */; };
@@ -72,6 +74,7 @@
 		86189A9947AC753259B89A8D /* Theme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Theme.swift; sourceTree = "<group>"; };
 		870E9DD10FEBC22074CF71BA /* RootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootView.swift; sourceTree = "<group>"; };
 		87E0FAD6B3FC785EE59C774B /* Colors.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Colors.swift; sourceTree = "<group>"; };
+		88082B057D7E001AA79962A9 /* AuthService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthService.swift; sourceTree = "<group>"; };
 		8B5464E69784604F0C29B39C /* Prod.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Prod.xcconfig; sourceTree = "<group>"; };
 		9244A63DF5237F20107DDA2E /* Dev.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Dev.xcconfig; sourceTree = "<group>"; };
 		93591F37ED661EF6B961A5D3 /* APIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIClient.swift; sourceTree = "<group>"; };
@@ -99,6 +102,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				268CC2843BD27BA0CDDE9075 /* ComposableArchitecture in Frameworks */,
+				04999B39195137AB9BA71B9A /* AppAuth in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -140,6 +144,7 @@
 		80ACD2B45A2E912217541181 /* Auth */ = {
 			isa = PBXGroup;
 			children = (
+				88082B057D7E001AA79962A9 /* AuthService.swift */,
 				5C86524522FD187BCB6065C5 /* OIDCDiscoveryDocument.swift */,
 				7D5DAA77BFBBF8EB1EE9084A /* TokenSet.swift */,
 				3B0C590AD2E0CF52FB2BE38B /* TokenStore.swift */,
@@ -272,6 +277,7 @@
 			name = FitfluenceApp;
 			packageProductDependencies = (
 				CF92C8BF8645F9BA258E283B /* ComposableArchitecture */,
+				6BE6FBF509B0BB844E656549 /* AppAuth */,
 			);
 			productName = FitfluenceApp;
 			productReference = 274454899BAE117E3568041E /* FitfluenceApp.app */;
@@ -303,6 +309,7 @@
 			mainGroup = D8483A9F23B30991585174C3;
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
+				080986477868F448E7815FB3 /* XCRemoteSwiftPackageReference "AppAuth-iOS" */,
 				1B554A44E2195B8050B95C49 /* XCRemoteSwiftPackageReference "swift-composable-architecture" */,
 			);
 			preferredProjectObjectVersion = 77;
@@ -324,6 +331,7 @@
 				A7468B42E0564F56E4DEA037 /* APIError.swift in Sources */,
 				553A3B4DA2F534094E3AA5C8 /* APILogger.swift in Sources */,
 				0AF9ACEEACEF5516F5A125FC /* APIRequest.swift in Sources */,
+				CB6448969D574D903A200B23 /* AuthService.swift in Sources */,
 				28A1BACADED54018734A2488 /* AuthTokenProvider.swift in Sources */,
 				2446FADE5A6601002AB8A61D /* Colors.swift in Sources */,
 				DE67CA63B6CB763CE7FF9FD8 /* DiagnosticsFeature.swift in Sources */,
@@ -713,6 +721,14 @@
 /* End XCConfigurationList section */
 
 /* Begin XCRemoteSwiftPackageReference section */
+		080986477868F448E7815FB3 /* XCRemoteSwiftPackageReference "AppAuth-iOS" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/openid/AppAuth-iOS";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 1.7.6;
+			};
+		};
 		1B554A44E2195B8050B95C49 /* XCRemoteSwiftPackageReference "swift-composable-architecture" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/pointfreeco/swift-composable-architecture";
@@ -724,6 +740,11 @@
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
+		6BE6FBF509B0BB844E656549 /* AppAuth */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 080986477868F448E7815FB3 /* XCRemoteSwiftPackageReference "AppAuth-iOS" */;
+			productName = AppAuth;
+		};
 		CF92C8BF8645F9BA258E283B /* ComposableArchitecture */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = 1B554A44E2195B8050B95C49 /* XCRemoteSwiftPackageReference "swift-composable-architecture" */;
