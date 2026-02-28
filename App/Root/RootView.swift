@@ -138,11 +138,32 @@ private struct MainTabsView: View {
                 ),
             ) {
                 NavigationStack {
-                    CatalogPlaceholderView(environment: environment)
-                        .padding(.horizontal, FFSpacing.md)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-                        .background(FFColors.background)
-                        .navigationTitle("Каталог")
+                    CatalogView(
+                        store: store.scope(
+                            state: \.catalog,
+                            action: \.catalog,
+                        ),
+                        environment: environment,
+                    )
+                    .navigationTitle("Каталог")
+                    .navigationDestination(
+                        isPresented: Binding(
+                            get: { store.withState { $0.programDetails != nil } },
+                            set: { isPresented in
+                                if !isPresented {
+                                    store.send(.programDetailsDismissed)
+                                }
+                            },
+                        ),
+                    ) {
+                        if let detailsStore = store.scope(state: \.programDetails, action: \.programDetails) {
+                            ProgramDetailsView(
+                                store: detailsStore,
+                                environment: environment,
+                            )
+                            .navigationTitle("Программа")
+                        }
+                    }
                 }
                 .tabItem {
                     Label("Каталог", systemImage: "sparkles.rectangle.stack")
@@ -194,31 +215,6 @@ private struct MainTabsView: View {
             }
             .tint(FFColors.accent)
         }
-    }
-}
-
-private struct CatalogPlaceholderView: View {
-    let environment: AppEnvironment
-
-    var body: some View {
-        VStack(spacing: FFSpacing.md) {
-            FFCard {
-                VStack(alignment: .leading, spacing: FFSpacing.xs) {
-                    FFBadge(status: .draft)
-                    Text("Каталог программ")
-                        .font(FFTypography.h2)
-                        .foregroundStyle(FFColors.textPrimary)
-                    Text("Скоро здесь появятся программы тренировок с подборками по целям.")
-                        .font(FFTypography.body)
-                        .foregroundStyle(FFColors.textSecondary)
-                    Text("Окружение: \(environment.name)")
-                        .font(FFTypography.caption)
-                        .foregroundStyle(FFColors.gray300)
-                }
-            }
-            FFEmptyState(title: "Каталог формируется", message: "Добавим первые программы в ближайших итерациях")
-        }
-        .padding(.top, FFSpacing.md)
     }
 }
 

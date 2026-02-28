@@ -24,6 +24,8 @@ struct RootFeature {
     struct State: Equatable {
         var sessionState: RootSessionState = .authenticating
         var diagnostics = DiagnosticsFeature.State()
+        var catalog = CatalogFeature.State()
+        var programDetails: ProgramDetailsFeature.State?
         var selectedMainTab: MainTab = .catalog
         var onboarding: OnboardingFeature.State?
     }
@@ -45,6 +47,9 @@ struct RootFeature {
         case sessionResolved(RootSessionState)
         case diagnostics(DiagnosticsFeature.Action)
         case onboarding(OnboardingFeature.Action)
+        case catalog(CatalogFeature.Action)
+        case programDetails(ProgramDetailsFeature.Action)
+        case programDetailsDismissed
         case tabSelected(MainTab)
     }
 
@@ -58,6 +63,12 @@ struct RootFeature {
                 influencerClient: influencerClient,
                 sessionManager: sessionManager,
             )
+        }
+        Scope(state: \.catalog, action: \.catalog) { [apiClient] in
+            CatalogFeature(programsClient: apiClient as? ProgramsClientProtocol)
+        }
+        .ifLet(\.programDetails, action: \.programDetails) { [apiClient] in
+            ProgramDetailsFeature(programsClient: apiClient as? ProgramsClientProtocol)
         }
 
         Reduce { state, action in
@@ -117,6 +128,20 @@ struct RootFeature {
                 return .none
 
             case .diagnostics:
+                return .none
+
+            case let .catalog(.delegate(.openProgram(programID))):
+                state.programDetails = ProgramDetailsFeature.State(programId: programID)
+                return .none
+
+            case .catalog:
+                return .none
+
+            case .programDetails:
+                return .none
+
+            case .programDetailsDismissed:
+                state.programDetails = nil
                 return .none
 
             case let .onboarding(.delegate(.sessionResolved(nextState))):
