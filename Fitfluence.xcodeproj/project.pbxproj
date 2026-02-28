@@ -59,6 +59,7 @@
 		CB6448969D574D903A200B23 /* AuthService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 88082B057D7E001AA79962A9 /* AuthService.swift */; };
 		D0381F8271688F1DD55ECF64 /* FFButton.swift in Sources */ = {isa = PBXBuildFile; fileRef = A97D9C4C6794471BA7C75525 /* FFButton.swift */; };
 		D0EDEA7F9D27535EA83A0F26 /* FFEmptyState.swift in Sources */ = {isa = PBXBuildFile; fileRef = E40B5498BB99116B3021C4E4 /* FFEmptyState.swift */; };
+		D34BBA531B3DE3454AA05356 /* TemplateLibraryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1A5EE0FB696AC968E52E7C79 /* TemplateLibraryView.swift */; };
 		D69C1CB30BD7205B98ECCCC3 /* TokenSet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D5DAA77BFBBF8EB1EE9084A /* TokenSet.swift */; };
 		D7932E90DA35D8CD26261D66 /* FFRemoteImage.swift in Sources */ = {isa = PBXBuildFile; fileRef = E4EE124DB6FA8A5986B4A1F8 /* FFRemoteImage.swift */; };
 		DE67CA63B6CB763CE7FF9FD8 /* DiagnosticsFeature.swift in Sources */ = {isa = PBXBuildFile; fileRef = F985AA318869C8870BDA6187 /* DiagnosticsFeature.swift */; };
@@ -89,6 +90,7 @@
 		1203A36F8050A4BC9C2E299F /* OnboardingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingView.swift; sourceTree = "<group>"; };
 		14C19E971649693B43AC91DB /* HTTPClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HTTPClient.swift; sourceTree = "<group>"; };
 		151CCFD42F23601C4661B789 /* FFErrorState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFErrorState.swift; sourceTree = "<group>"; };
+		1A5EE0FB696AC968E52E7C79 /* TemplateLibraryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TemplateLibraryView.swift; sourceTree = "<group>"; };
 		2406C59ACFAD49D5F8BF8FC2 /* FitfluenceApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FitfluenceApp.swift; sourceTree = "<group>"; };
 		274454899BAE117E3568041E /* FitfluenceApp.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = FitfluenceApp.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		2C571FBEBDFDA288B1E05B14 /* FFLoadingState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFLoadingState.swift; sourceTree = "<group>"; };
@@ -167,6 +169,7 @@
 			isa = PBXGroup;
 			children = (
 				D7ADF6ADDAF5414D4B59CDCA /* QuickWorkoutBuilderView.swift */,
+				1A5EE0FB696AC968E52E7C79 /* TemplateLibraryView.swift */,
 				2E16BBE6F885A8F976874EE8 /* TrainingInsightsView.swift */,
 				FD06968D96E5E12F603103BA /* TrainingStore.swift */,
 			);
@@ -505,6 +508,7 @@
 				B2EFCC6EFBC62E64F826EFDB /* SessionManager.swift in Sources */,
 				C3535BA80F21F23FCA8AE684 /* Spacing.swift in Sources */,
 				FE01694F22BC7CAF07E8763B /* StoredAuthTokenProvider.swift in Sources */,
+				D34BBA531B3DE3454AA05356 /* TemplateLibraryView.swift in Sources */,
 				B68CFEB25BF04441A03234E5 /* Theme.swift in Sources */,
 				D69C1CB30BD7205B98ECCCC3 /* TokenSet.swift in Sources */,
 				C32507921BC5A60036A562D7 /* TokenStore.swift in Sources */,

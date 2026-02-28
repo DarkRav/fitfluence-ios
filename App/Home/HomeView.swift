@@ -270,6 +270,7 @@ struct HomeViewV2: View {
     @State var viewModel: HomeViewModel
     let onPrimaryAction: (HomePrimaryAction) -> Void
     let onOpenPlan: () -> Void
+    let onOpenTemplates: () -> Void
 
     var body: some View {
         ScrollView {
@@ -384,6 +385,9 @@ struct HomeViewV2: View {
                 FFButton(title: "Открыть план", variant: .secondary) {
                     onOpenPlan()
                 }
+                FFButton(title: "Шаблоны тренировок", variant: .secondary) {
+                    onOpenTemplates()
+                }
             }
         }
     }
@@ -445,6 +449,7 @@ private extension [String: JSONValue] {
             ),
             onPrimaryAction: { _ in },
             onOpenPlan: {},
+            onOpenTemplates: {},
         )
     }
 }

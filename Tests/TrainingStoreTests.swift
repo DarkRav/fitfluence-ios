@@ -75,5 +75,12 @@ final class TrainingStoreTests: XCTestCase {
         XCTAssertEqual(templatesU1.first?.name, "Upper A")
         XCTAssertEqual(templatesU2.count, 1)
         XCTAssertEqual(templatesU2.first?.name, "Lower A")
+
+        await store.deleteTemplate(userSub: "u1", templateId: "t1")
+        let afterDeleteU1 = await store.templates(userSub: "u1")
+        let afterDeleteU2 = await store.templates(userSub: "u2")
+
+        XCTAssertTrue(afterDeleteU1.isEmpty)
+        XCTAssertEqual(afterDeleteU2.count, 1)
     }
 }

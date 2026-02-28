@@ -277,6 +277,7 @@ private struct TodayHubView: View {
 
     @State private var route: WorkoutRoute?
     @State private var isQuickBuilderPresented = false
+    @State private var isTemplateLibraryPresented = false
     @State private var quickWorkout: QuickWorkoutRoute?
 
     private struct WorkoutRoute: Identifiable, Hashable {
@@ -314,6 +315,9 @@ private struct TodayHubView: View {
                 }
             },
             onOpenPlan: onOpenPlan,
+            onOpenTemplates: {
+                isTemplateLibraryPresented = true
+            },
         )
         .navigationDestination(item: $route) { route in
             WorkoutLaunchView(
@@ -338,6 +342,16 @@ private struct TodayHubView: View {
                 QuickWorkoutBuilderView { workout in
                     quickWorkout = QuickWorkoutRoute(workout: workout)
                 }
+            }
+        }
+        .sheet(isPresented: $isTemplateLibraryPresented) {
+            NavigationStack {
+                TemplateLibraryView(
+                    viewModel: TemplateLibraryViewModel(userSub: me.subject ?? "anonymous"),
+                    onStartTemplate: { workout in
+                        quickWorkout = QuickWorkoutRoute(workout: workout)
+                    },
+                )
             }
         }
     }

@@ -70,6 +70,7 @@ protocol TrainingStore: Sendable {
     func history(userSub: String, source: WorkoutSource?, limit: Int?) async -> [CompletedWorkoutRecord]
     func lastCompleted(userSub: String) async -> CompletedWorkoutRecord?
     func saveTemplate(_ template: WorkoutTemplateDraft) async
+    func deleteTemplate(userSub: String, templateId: String) async
     func templates(userSub: String) async -> [WorkoutTemplateDraft]
     func schedule(_ plan: TrainingDayPlan) async
     func plans(userSub: String, month: Date) async -> [TrainingDayPlan]
@@ -131,6 +132,11 @@ actor LocalTrainingStore: TrainingStore {
         items.append(template)
         items.sort { $0.updatedAt > $1.updatedAt }
         await saveArray(items, key: templatesKey(userSub: template.userSub))
+    }
+
+    func deleteTemplate(userSub: String, templateId: String) async {
+        let items = await templates(userSub: userSub).filter { $0.id != templateId }
+        await saveArray(items, key: templatesKey(userSub: userSub))
     }
 
     func templates(userSub: String) async -> [WorkoutTemplateDraft] {
