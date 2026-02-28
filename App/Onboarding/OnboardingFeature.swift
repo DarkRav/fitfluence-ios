@@ -140,6 +140,13 @@ struct OnboardingFeature {
                     }
 
                 case let .failure(error):
+                    if error.isConflict {
+                        state.successMessage = "Профиль уже создан."
+                        return .run { [sessionManager] send in
+                            let nextState = await sessionManager.postLoginBootstrap()
+                            await send(.postSubmitStateResolved(nextState))
+                        }
+                    }
                     state.errorMessage = error.userMessage
                     return .none
                 }
@@ -186,6 +193,13 @@ struct OnboardingFeature {
                         await send(.postSubmitStateResolved(nextState))
                     }
                 case let .failure(error):
+                    if error.isConflict {
+                        state.successMessage = "Профиль уже создан."
+                        return .run { [sessionManager] send in
+                            let nextState = await sessionManager.postLoginBootstrap()
+                            await send(.postSubmitStateResolved(nextState))
+                        }
+                    }
                     if case let .httpError(statusCode, _) = error, statusCode == 404 {
                         state.step = .influencerNotSupported
                     } else {
@@ -211,6 +225,13 @@ struct OnboardingFeature {
 }
 
 private extension APIError {
+    var isConflict: Bool {
+        if case let .httpError(statusCode, _) = self {
+            return statusCode == 409
+        }
+        return false
+    }
+
     var userMessage: String {
         switch self {
         case .offline:
