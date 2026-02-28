@@ -1,6 +1,6 @@
 #include "Base.xcconfig"
-BASE_URL = http://localhost:9876
-KEYCLOAK_URL = http://localhost:9990
+BASE_URL = http://192.168.88.81:9876
+KEYCLOAK_URL = http://192.168.88.81:9990
 KEYCLOAK_REALM = master
 KEYCLOAK_CLIENT_ID = fitfluence-ios
 KEYCLOAK_REDIRECT_URI = fitfluence://oauth/callback
