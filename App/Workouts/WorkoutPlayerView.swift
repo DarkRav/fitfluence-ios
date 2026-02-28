@@ -1,4 +1,5 @@
 import ComposableArchitecture
+import Foundation
 import SwiftUI
 
 struct WorkoutPlayerView: View {
@@ -43,10 +44,15 @@ struct WorkoutPlayerView: View {
             .background(FFColors.background)
             .safeAreaInset(edge: .bottom) {
                 if let workout = viewStore.workout, !workout.exercises.isEmpty {
-                    stickyActions(workout: workout, viewStore: viewStore)
-                        .padding(.horizontal, FFSpacing.md)
-                        .padding(.top, FFSpacing.xs)
-                        .background(FFColors.background.opacity(0.96))
+                    VStack(spacing: FFSpacing.xs) {
+                        if let restTimer = viewStore.restTimer {
+                            restTimerCard(restTimer: restTimer, viewStore: viewStore)
+                        }
+                        stickyActions(workout: workout, viewStore: viewStore)
+                    }
+                    .padding(.horizontal, FFSpacing.md)
+                    .padding(.top, FFSpacing.xs)
+                    .background(FFColors.background.opacity(0.96))
                 }
             }
             .navigationBarBackButtonHidden(true)
@@ -311,6 +317,43 @@ struct WorkoutPlayerView: View {
                 }
             }
         }
+    }
+
+    private func restTimerCard(
+        restTimer: WorkoutPlayerFeature.RestTimerState,
+        viewStore: ViewStore<WorkoutPlayerFeature.State, WorkoutPlayerFeature.Action>,
+    ) -> some View {
+        FFCard(padding: FFSpacing.sm) {
+            VStack(alignment: .leading, spacing: FFSpacing.xs) {
+                Text("Отдых: \(formattedTime(restTimer.remainingSeconds))")
+                    .font(FFTypography.h2)
+                    .foregroundStyle(FFColors.textPrimary)
+
+                HStack(spacing: FFSpacing.sm) {
+                    FFButton(
+                        title: restTimer.isRunning ? "Пауза" : "Продолжить",
+                        variant: .secondary,
+                        action: { viewStore.send(.restTimerPauseTapped) },
+                    )
+                    FFButton(
+                        title: "Сброс",
+                        variant: .secondary,
+                        action: { viewStore.send(.restTimerResetTapped) },
+                    )
+                    FFButton(
+                        title: "Пропустить",
+                        variant: .destructive,
+                        action: { viewStore.send(.restTimerSkipTapped) },
+                    )
+                }
+            }
+        }
+    }
+
+    private func formattedTime(_ totalSeconds: Int) -> String {
+        let minutes = totalSeconds / 60
+        let seconds = totalSeconds % 60
+        return String(format: "%02d:%02d", minutes, seconds)
     }
 
     private func numericStepperRow(

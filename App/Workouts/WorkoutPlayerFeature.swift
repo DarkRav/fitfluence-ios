@@ -3,6 +3,12 @@ import Foundation
 
 @Reducer
 struct WorkoutPlayerFeature {
+    struct RestTimerState: Equatable, Sendable {
+        let totalSeconds: Int
+        var remainingSeconds: Int
+        var isRunning: Bool
+    }
+
     struct SetProgress: Equatable, Sendable {
         var isCompleted = false
         var repsText = ""
@@ -35,6 +41,7 @@ struct WorkoutPlayerFeature {
         var isExitConfirmationPresented = false
         var isResumePromptPresented = false
         var hasPromptedResume = false
+        var restTimer: RestTimerState?
         var completionSummary: CompletionSummary?
         var progressStorageMode: WorkoutProgressStorageMode = .localOnly
     }
@@ -60,6 +67,10 @@ struct WorkoutPlayerFeature {
         case exitConfirmationDismissed
         case resumePromptContinueTapped
         case resumePromptStartOverTapped
+        case restTimerTicked
+        case restTimerPauseTapped
+        case restTimerResetTapped
+        case restTimerSkipTapped
         case finishWorkoutTapped
         case delegate(Delegate)
     }
@@ -73,6 +84,10 @@ struct WorkoutPlayerFeature {
     private let progressStore: WorkoutProgressStore
     private let cacheStore: CacheStore
     private let networkMonitor: NetworkMonitoring
+
+    private enum CancelID {
+        case restTimer
+    }
 
     init(
         workoutsClient: WorkoutsClientProtocol,
@@ -199,7 +214,10 @@ struct WorkoutPlayerFeature {
                     applyCarryOverValues(state: &state, exerciseID: exerciseID, setIndex: setIndex)
                 }
                 state.hasChanges = true
-                return persistProgress(state: state)
+                return .merge(
+                    persistProgress(state: state),
+                    startRestTimerIfNeeded(state: &state),
+                )
 
             case let .updateSetReps(exerciseID, setIndex, value):
                 updateSetState(
@@ -296,9 +314,40 @@ struct WorkoutPlayerFeature {
                 state.hasChanges = false
                 return persistProgress(state: state)
 
+            case .restTimerTicked:
+                guard var restTimer = state.restTimer, restTimer.isRunning else { return .none }
+                restTimer.remainingSeconds = max(0, restTimer.remainingSeconds - 1)
+                state.restTimer = restTimer
+                if restTimer.remainingSeconds == 0 {
+                    state.restTimer?.isRunning = false
+                    return .cancel(id: CancelID.restTimer)
+                }
+                return .none
+
+            case .restTimerPauseTapped:
+                guard var restTimer = state.restTimer else { return .none }
+                restTimer.isRunning.toggle()
+                state.restTimer = restTimer
+                if restTimer.isRunning {
+                    return runRestTimerEffect()
+                }
+                return .cancel(id: CancelID.restTimer)
+
+            case .restTimerResetTapped:
+                guard var restTimer = state.restTimer else { return .none }
+                restTimer.remainingSeconds = restTimer.totalSeconds
+                restTimer.isRunning = true
+                state.restTimer = restTimer
+                return runRestTimerEffect()
+
+            case .restTimerSkipTapped:
+                state.restTimer = nil
+                return .cancel(id: CancelID.restTimer)
+
             case .exitConfirmed:
                 state.isExitConfirmationPresented = false
                 return .merge(
+                    .cancel(id: CancelID.restTimer),
                     persistProgress(state: state),
                     .send(.delegate(.closeRequested)),
                 )
@@ -308,6 +357,7 @@ struct WorkoutPlayerFeature {
                 let summary = makeSummary(workout: workout, perExercise: state.perExerciseState)
                 state.completionSummary = summary
                 return .merge(
+                    .cancel(id: CancelID.restTimer),
                     persistProgress(state: state, isFinished: true),
                     .send(.delegate(.workoutCompleted(summary))),
                 )
@@ -356,6 +406,31 @@ struct WorkoutPlayerFeature {
             let result = await workoutsClient.getWorkoutDetails(programId: programId, workoutId: workoutId)
             await send(.detailsResponse(result))
         }
+    }
+
+    private func startRestTimerIfNeeded(state: inout State) -> Effect<Action> {
+        guard let workout = state.workout else { return .none }
+        guard workout.exercises.indices.contains(state.currentExerciseIndex) else { return .none }
+        let exercise = workout.exercises[state.currentExerciseIndex]
+        guard let restSeconds = exercise.restSeconds, restSeconds > 0 else {
+            return .none
+        }
+        state.restTimer = RestTimerState(
+            totalSeconds: restSeconds,
+            remainingSeconds: restSeconds,
+            isRunning: true,
+        )
+        return runRestTimerEffect()
+    }
+
+    private func runRestTimerEffect() -> Effect<Action> {
+        .run { send in
+            while !Task.isCancelled {
+                try await Task.sleep(for: .seconds(1))
+                await send(.restTimerTicked)
+            }
+        }
+        .cancellable(id: CancelID.restTimer, cancelInFlight: true)
     }
 
     private func loadCachedWorkout(programId: String, workoutId: String, namespace: String) -> Effect<Action> {
