@@ -35,13 +35,13 @@ enum APIError: Error, Equatable {
     static func from(urlError: URLError) -> APIError {
         switch urlError.code {
         case .notConnectedToInternet:
-            return .offline
+            .offline
         case .timedOut:
-            return .timeout
+            .timeout
         case .cancelled:
-            return .cancelled
+            .cancelled
         default:
-            return .transportError(urlError)
+            .transportError(urlError)
         }
     }
 
@@ -55,15 +55,15 @@ enum APIError: Error, Equatable {
              (.unauthorized, .unauthorized),
              (.forbidden, .forbidden),
              (.unknown, .unknown):
-            return true
+            true
         case let (.transportError(left), .transportError(right)):
-            return left.code == right.code
+            left.code == right.code
         case let (.httpError(lStatus, lSnippet), .httpError(rStatus, rSnippet)):
-            return lStatus == rStatus && lSnippet == rSnippet
+            lStatus == rStatus && lSnippet == rSnippet
         case let (.serverError(lStatus, lSnippet), .serverError(rStatus, rSnippet)):
-            return lStatus == rStatus && lSnippet == rSnippet
+            lStatus == rStatus && lSnippet == rSnippet
         default:
-            return false
+            false
         }
     }
 }

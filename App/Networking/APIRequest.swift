@@ -25,7 +25,7 @@ extension APIRequest {
             queryItems: queryItems,
             body: nil,
             requiresAuthorization: requiresAuthorization,
-            timeoutInterval: nil
+            timeoutInterval: nil,
         )
     }
 }

@@ -7,12 +7,15 @@ enum APILogger {
         url: URL,
         statusCode: Int?,
         durationMs: Int,
-        error: APIError?
+        error: APIError?,
     ) {
-#if DEBUG
+        #if DEBUG
         let statusPart = statusCode.map(String.init) ?? "-"
         let errorPart = error.map { " error=\($0)" } ?? ""
-        FFLog.info("[API] id=\(requestID.uuidString) method=\(method) url=\(url.absoluteString) status=\(statusPart) durationMs=\(durationMs)\(errorPart)")
-#endif
+        FFLog
+            .info(
+                "[API] id=\(requestID.uuidString) method=\(method) url=\(url.absoluteString) status=\(statusPart) durationMs=\(durationMs)\(errorPart)",
+            )
+        #endif
     }
 }

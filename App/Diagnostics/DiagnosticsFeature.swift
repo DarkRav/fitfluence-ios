@@ -31,12 +31,10 @@ struct DiagnosticsFeature {
             case .checkConnectionTapped:
                 state.phase = .loading
                 return .run { [apiClient] send in
-                    let result: Result<HealthResponse, APIError>
-
-                    if let apiClient {
-                        result = await apiClient.healthCheck()
+                    let result: Result<HealthResponse, APIError> = if let apiClient {
+                        await apiClient.healthCheck()
                     } else {
-                        result = .failure(.invalidURL)
+                        .failure(.invalidURL)
                     }
 
                     await send(.healthResponse(result))

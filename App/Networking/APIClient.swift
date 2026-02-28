@@ -18,7 +18,7 @@ final class APIClient: APIClientProtocol {
     static func live(
         environment: AppEnvironment,
         session: URLSession = .shared,
-        tokenProvider: AuthTokenProvider = NoAuthTokenProvider()
+        tokenProvider: AuthTokenProvider = NoAuthTokenProvider(),
     ) -> APIClient? {
         guard let baseURL = environment.backendBaseURL else {
             return nil

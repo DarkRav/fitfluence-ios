@@ -18,9 +18,9 @@ struct RootFeature {
         case catalog
         case workouts
         case profile
-#if DEBUG
+        #if DEBUG
         case diagnostics
-#endif
+        #endif
     }
 
     enum Action: Equatable {

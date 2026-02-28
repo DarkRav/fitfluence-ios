@@ -49,13 +49,13 @@ struct RootView: View {
                 }
                 .tag(RootFeature.Tab.profile)
 
-#if DEBUG
+                #if DEBUG
                 NavigationStack {
                     DiagnosticsView(
                         store: store.scope(
                             state: \.diagnostics,
-                            action: \.diagnostics
-                        )
+                            action: \.diagnostics,
+                        ),
                     )
                     .padding(.horizontal, FFSpacing.md)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
@@ -66,7 +66,7 @@ struct RootView: View {
                     Label("Диагностика", systemImage: "waveform.path.ecg")
                 }
                 .tag(RootFeature.Tab.diagnostics)
-#endif
+                #endif
             }
             .tint(FFColors.accent)
         }

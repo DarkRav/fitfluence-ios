@@ -26,7 +26,7 @@ struct DiagnosticsView: View {
                 case .idle:
                     FFEmptyState(
                         title: "Ожидаем проверку",
-                        message: "Нажмите кнопку, чтобы проверить доступность backend"
+                        message: "Нажмите кнопку, чтобы проверить доступность backend",
                     )
 
                 case .loading:
@@ -49,7 +49,7 @@ struct DiagnosticsView: View {
                     FFErrorState(
                         title: "Проверка не пройдена",
                         message: error.userMessage,
-                        retryTitle: "Повторить"
+                        retryTitle: "Повторить",
                     ) {
                         viewStore.send(.checkConnectionTapped)
                     }
@@ -66,19 +66,19 @@ private extension APIError {
     var userMessage: String {
         switch self {
         case .offline:
-            return "Нет подключения к интернету"
+            "Нет подключения к интернету"
         case .timeout, .transportError, .httpError:
-            return "Сервер недоступен"
+            "Сервер недоступен"
         case .unauthorized:
-            return "Требуется авторизация"
+            "Требуется авторизация"
         case .forbidden:
-            return "Доступ запрещён"
+            "Доступ запрещён"
         case .serverError:
-            return "Ошибка сервера"
+            "Ошибка сервера"
         case .decodingError:
-            return "Не удалось обработать ответ"
+            "Не удалось обработать ответ"
         case .cancelled, .invalidURL, .unknown:
-            return "Неизвестная ошибка"
+            "Неизвестная ошибка"
         }
     }
 }

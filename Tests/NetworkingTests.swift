@@ -38,7 +38,12 @@ final class NetworkingTests: XCTestCase {
 
     func testStatusCode401MapsToUnauthorized() async {
         MockURLProtocol.requestHandler = { request in
-            let response = HTTPURLResponse(url: try XCTUnwrap(request.url), statusCode: 401, httpVersion: nil, headerFields: nil)!
+            let response = try HTTPURLResponse(
+                url: XCTUnwrap(request.url),
+                statusCode: 401,
+                httpVersion: nil,
+                headerFields: nil,
+            )!
             return (response, Data("{}".utf8))
         }
 
@@ -56,7 +61,12 @@ final class NetworkingTests: XCTestCase {
 
     func testStatusCode403MapsToForbidden() async {
         MockURLProtocol.requestHandler = { request in
-            let response = HTTPURLResponse(url: try XCTUnwrap(request.url), statusCode: 403, httpVersion: nil, headerFields: nil)!
+            let response = try HTTPURLResponse(
+                url: XCTUnwrap(request.url),
+                statusCode: 403,
+                httpVersion: nil,
+                headerFields: nil,
+            )!
             return (response, Data("{}".utf8))
         }
 
@@ -74,7 +84,12 @@ final class NetworkingTests: XCTestCase {
 
     func testStatusCode500MapsToServerError() async {
         MockURLProtocol.requestHandler = { request in
-            let response = HTTPURLResponse(url: try XCTUnwrap(request.url), statusCode: 503, httpVersion: nil, headerFields: nil)!
+            let response = try HTTPURLResponse(
+                url: XCTUnwrap(request.url),
+                statusCode: 503,
+                httpVersion: nil,
+                headerFields: nil,
+            )!
             return (response, Data("service unavailable".utf8))
         }
 
@@ -92,7 +107,12 @@ final class NetworkingTests: XCTestCase {
 
     func testDecodingFailureMapsToDecodingError() async {
         MockURLProtocol.requestHandler = { request in
-            let response = HTTPURLResponse(url: try XCTUnwrap(request.url), statusCode: 200, httpVersion: nil, headerFields: nil)!
+            let response = try HTTPURLResponse(
+                url: XCTUnwrap(request.url),
+                statusCode: 200,
+                httpVersion: nil,
+                headerFields: nil,
+            )!
             return (response, Data("{\"unexpected\": true}".utf8))
         }
 

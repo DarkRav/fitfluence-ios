@@ -19,7 +19,7 @@ final class HTTPClient: HTTPClientProtocol {
     init(
         baseURL: URL,
         session: URLSession = .shared,
-        tokenProvider: AuthTokenProvider = NoAuthTokenProvider()
+        tokenProvider: AuthTokenProvider = NoAuthTokenProvider(),
     ) {
         self.baseURL = baseURL
         self.session = session
@@ -40,7 +40,7 @@ final class HTTPClient: HTTPClientProtocol {
                 url: baseURL,
                 statusCode: nil,
                 durationMs: elapsedMs(since: start),
-                error: .invalidURL
+                error: .invalidURL,
             )
             throw APIError.invalidURL
         }
@@ -54,7 +54,7 @@ final class HTTPClient: HTTPClientProtocol {
                     url: urlRequest.url ?? baseURL,
                     statusCode: nil,
                     durationMs: elapsedMs(since: start),
-                    error: .unknown
+                    error: .unknown,
                 )
                 throw APIError.unknown
             }
@@ -66,7 +66,7 @@ final class HTTPClient: HTTPClientProtocol {
                     url: urlRequest.url ?? baseURL,
                     statusCode: httpResponse.statusCode,
                     durationMs: elapsedMs(since: start),
-                    error: statusError
+                    error: statusError,
                 )
                 throw statusError
             }
@@ -78,14 +78,14 @@ final class HTTPClient: HTTPClientProtocol {
                 url: urlRequest.url ?? baseURL,
                 statusCode: httpResponse.statusCode,
                 durationMs: duration,
-                error: nil
+                error: nil,
             )
 
             return HTTPResponse(
                 data: data,
                 statusCode: httpResponse.statusCode,
                 requestID: requestID,
-                durationMs: duration
+                durationMs: duration,
             )
         } catch let urlError as URLError {
             let apiError = APIError.from(urlError: urlError)
@@ -95,7 +95,7 @@ final class HTTPClient: HTTPClientProtocol {
                 url: urlRequest.url ?? baseURL,
                 statusCode: nil,
                 durationMs: elapsedMs(since: start),
-                error: apiError
+                error: apiError,
             )
             throw apiError
         } catch let apiError as APIError {
@@ -107,7 +107,7 @@ final class HTTPClient: HTTPClientProtocol {
                 url: urlRequest.url ?? baseURL,
                 statusCode: nil,
                 durationMs: elapsedMs(since: start),
-                error: .unknown
+                error: .unknown,
             )
             throw APIError.unknown
         }
@@ -117,7 +117,7 @@ final class HTTPClient: HTTPClientProtocol {
         let sanitizedPath = request.path.hasPrefix("/") ? String(request.path.dropFirst()) : request.path
         guard var components = URLComponents(
             url: baseURL.appendingPathComponent(sanitizedPath),
-            resolvingAgainstBaseURL: false
+            resolvingAgainstBaseURL: false,
         ) else {
             throw APIError.invalidURL
         }
