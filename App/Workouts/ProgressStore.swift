@@ -33,6 +33,8 @@ struct WorkoutProgressSnapshot: Codable, Equatable, Sendable {
     let programId: String
     let workoutId: String
     var currentExerciseIndex: Int?
+    var startedAt: Date? = nil
+    var source: WorkoutSource? = nil
     var isFinished: Bool
     var lastUpdated: Date
     var exercises: [String: StoredExerciseProgress]
@@ -160,6 +162,8 @@ struct WorkoutSessionState: Equatable, Sendable {
     var programId: String
     var workoutId: String
     var workoutTitle: String
+    var source: WorkoutSource
+    var startedAt: Date
     var currentExerciseIndex: Int
     var lastUpdated: Date
     var exercises: [SessionExerciseState]
@@ -184,16 +188,22 @@ enum SessionUndoAction: Equatable, Sendable {
 
 actor WorkoutSessionManager {
     private let progressStore: WorkoutProgressStore
+    private let trainingStore: TrainingStore
     private var undoStacks: [String: [SessionUndoAction]] = [:]
 
-    init(progressStore: WorkoutProgressStore = LocalWorkoutProgressStore()) {
+    init(
+        progressStore: WorkoutProgressStore = LocalWorkoutProgressStore(),
+        trainingStore: TrainingStore = LocalTrainingStore(),
+    ) {
         self.progressStore = progressStore
+        self.trainingStore = trainingStore
     }
 
     func loadOrCreateSession(
         userSub: String,
         programId: String,
         workout: WorkoutDetailsModel,
+        source: WorkoutSource = .program,
     ) async -> WorkoutSessionState {
         let key = sessionKey(userSub: userSub, programId: programId, workoutId: workout.id)
 
@@ -206,6 +216,8 @@ actor WorkoutSessionManager {
             programId: programId,
             workoutId: workout.id,
             workoutTitle: workout.title,
+            source: source,
+            startedAt: Date(),
             currentExerciseIndex: 0,
             lastUpdated: Date(),
             exercises: workout.exercises.map { exercise in
@@ -342,12 +354,48 @@ actor WorkoutSessionManager {
     }
 
     func finish(_ session: WorkoutSessionState) async {
+        let finishedAt = Date()
+        let completedSets = session.exercises.flatMap(\.sets).filter(\.isCompleted)
+        let volume = completedSets.reduce(0.0) { partial, set in
+            let reps = Double(set.repsText) ?? 0
+            let weight = Double(set.weightText) ?? 0
+            return partial + reps * weight
+        }
+        let rpeValues = completedSets.compactMap { Int($0.rpeText) }
+        let averageRPE = rpeValues.isEmpty ? nil : Int(round(Double(rpeValues.reduce(0, +)) / Double(rpeValues.count)))
+
+        let record = CompletedWorkoutRecord(
+            id: UUID().uuidString,
+            userSub: session.userSub,
+            programId: session.programId,
+            workoutId: session.workoutId,
+            workoutTitle: session.workoutTitle,
+            source: session.source,
+            startedAt: session.startedAt,
+            finishedAt: finishedAt,
+            durationSeconds: max(0, Int(finishedAt.timeIntervalSince(session.startedAt))),
+            completedSets: session.completedSetsCount,
+            totalSets: session.totalSetsCount,
+            volume: volume,
+            notes: nil,
+            overallRPE: averageRPE,
+        )
+
         let snapshot = snapshot(from: session, isFinished: true)
         await progressStore.save(snapshot)
+        await trainingStore.appendHistory(record)
     }
 
     func latestActiveSession(userSub: String) async -> ActiveWorkoutSession? {
         await progressStore.latestActiveSession(userSub: userSub)
+    }
+
+    func lastCompletedWorkout(userSub: String) async -> CompletedWorkoutRecord? {
+        await trainingStore.lastCompleted(userSub: userSub)
+    }
+
+    func weeklySummary(userSub: String, weekStart: Date) async -> WeeklyTrainingSummary {
+        await trainingStore.weeklySummary(userSub: userSub, weekStart: weekStart)
     }
 
     private func mutate(
@@ -430,6 +478,8 @@ actor WorkoutSessionManager {
             programId: snapshot.programId,
             workoutId: snapshot.workoutId,
             workoutTitle: workout.title,
+            source: snapshot.source ?? .program,
+            startedAt: snapshot.startedAt ?? snapshot.lastUpdated,
             currentExerciseIndex: max(0, min(snapshot.currentExerciseIndex ?? 0, max(0, exercises.count - 1))),
             lastUpdated: snapshot.lastUpdated,
             exercises: exercises,
@@ -453,6 +503,8 @@ actor WorkoutSessionManager {
             programId: session.programId,
             workoutId: session.workoutId,
             currentExerciseIndex: session.currentExerciseIndex,
+            startedAt: session.startedAt,
+            source: session.source,
             isFinished: isFinished,
             lastUpdated: session.lastUpdated,
             exercises: exercises,

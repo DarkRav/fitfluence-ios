@@ -45,24 +45,34 @@
 	<string>$(KEYCLOAK_SCOPES)</string>
 	<key>KeycloakURL</key>
 	<string>$(KEYCLOAK_URL)</string>
-	<key>NSLocalNetworkUsageDescription</key>
-	<string>Приложению нужен доступ к локальной сети для подключения к вашему dev-серверу.</string>
-	<key>NSBonjourServices</key>
-	<array>
-		<string>_http._tcp</string>
-		<string>_https._tcp</string>
-	</array>
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<key>NSExceptionDomains</key>
 		<dict>
+			<key>127.0.0.1</key>
+			<dict>
+				<key>NSExceptionAllowsInsecureHTTPLoads</key>
+				<true/>
+			</dict>
 			<key>192.168.88.81</key>
+			<dict>
+				<key>NSExceptionAllowsInsecureHTTPLoads</key>
+				<true/>
+			</dict>
+			<key>localhost</key>
 			<dict>
 				<key>NSExceptionAllowsInsecureHTTPLoads</key>
 				<true/>
 			</dict>
 		</dict>
 	</dict>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_http._tcp</string>
+		<string>_https._tcp</string>
+	</array>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Приложению нужен доступ к локальной сети для подключения к вашему dev-серверу.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

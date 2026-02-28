@@ -167,7 +167,7 @@ private struct AthleteShellView: View {
             .tag(ShellTab.plan)
 
             NavigationStack {
-                ProgressTabView()
+                ProgressTabView(userSub: me.subject ?? "anonymous")
             }
             .tabItem {
                 Label("Прогресс", systemImage: "chart.line.uptrend.xyaxis")
@@ -175,11 +175,15 @@ private struct AthleteShellView: View {
             .tag(ShellTab.progress)
 
             NavigationStack {
-                ProfilePlaceholderView(me: me, onLogout: onLogout)
-                    .padding(.horizontal, FFSpacing.md)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-                    .background(FFColors.background)
-                    .navigationTitle("Профиль")
+                ProfilePlaceholderView(
+                    me: me,
+                    userSub: me.subject ?? "anonymous",
+                    onLogout: onLogout,
+                )
+                .padding(.horizontal, FFSpacing.md)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                .background(FFColors.background)
+                .navigationTitle("Профиль")
             }
             .tabItem {
                 Label("Профиль", systemImage: "person.crop.circle")
@@ -272,6 +276,8 @@ private struct TodayHubView: View {
     let onOpenPlan: () -> Void
 
     @State private var route: WorkoutRoute?
+    @State private var isQuickBuilderPresented = false
+    @State private var quickWorkout: QuickWorkoutRoute?
 
     private struct WorkoutRoute: Identifiable, Hashable {
         let programId: String
@@ -281,11 +287,19 @@ private struct TodayHubView: View {
         }
     }
 
+    private struct QuickWorkoutRoute: Identifiable {
+        let workout: WorkoutDetailsModel
+        var id: String {
+            workout.id
+        }
+    }
+
     var body: some View {
         HomeViewV2(
             viewModel: HomeViewModel(
                 userSub: me.subject ?? "anonymous",
                 sessionManager: WorkoutSessionManager(),
+                programsClient: apiClient as? ProgramsClientProtocol,
             ),
             onPrimaryAction: { action in
                 switch action {
@@ -295,6 +309,8 @@ private struct TodayHubView: View {
                     route = WorkoutRoute(programId: programId, workoutId: workoutId)
                 case .openPicker:
                     onOpenPlan()
+                case .quickWorkout:
+                    isQuickBuilderPresented = true
                 }
             },
             onOpenPlan: onOpenPlan,
@@ -307,6 +323,23 @@ private struct TodayHubView: View {
                 apiClient: apiClient,
             )
         }
+        .navigationDestination(item: $quickWorkout) { route in
+            WorkoutLaunchView(
+                userSub: me.subject ?? "anonymous",
+                programId: "freestyle",
+                workoutId: route.workout.id,
+                apiClient: apiClient,
+                presetWorkout: route.workout,
+                source: .freestyle,
+            )
+        }
+        .sheet(isPresented: $isQuickBuilderPresented) {
+            NavigationStack {
+                QuickWorkoutBuilderView { workout in
+                    quickWorkout = QuickWorkoutRoute(workout: workout)
+                }
+            }
+        }
     }
 }
 
@@ -315,6 +348,8 @@ struct WorkoutLaunchView: View {
     let programId: String
     let workoutId: String
     let apiClient: APIClientProtocol?
+    var presetWorkout: WorkoutDetailsModel?
+    var source: WorkoutSource = .program
 
     @State private var details: WorkoutDetailsModel?
     @State private var error: UserFacingError?
@@ -333,6 +368,7 @@ struct WorkoutLaunchView: View {
                         userSub: userSub,
                         programId: programId,
                         workout: details,
+                        source: source,
                     ),
                     onExit: { dismiss() },
                     onFinish: { summary in
@@ -373,6 +409,12 @@ struct WorkoutLaunchView: View {
         isLoading = true
         defer { isLoading = false }
 
+        if let presetWorkout {
+            details = presetWorkout
+            error = nil
+            return
+        }
+
         if let apiClient, let programsClient = apiClient as? ProgramsClientProtocol {
             let workoutsClient = WorkoutsClient(programsClient: programsClient)
             let result = await workoutsClient.getWorkoutDetails(programId: programId, workoutId: workoutId)
@@ -410,37 +452,20 @@ extension WorkoutPlayerViewModel.CompletionSummary: Identifiable {
 }
 
 private struct ProgressTabView: View {
-    var body: some View {
-        ScrollView {
-            VStack(spacing: FFSpacing.md) {
-                FFCard {
-                    VStack(alignment: .leading, spacing: FFSpacing.xs) {
-                        Text("Прогресс")
-                            .font(FFTypography.h1)
-                            .foregroundStyle(FFColors.textPrimary)
-                        Text("История и тренды обновляются по завершённым тренировкам.")
-                            .font(FFTypography.body)
-                            .foregroundStyle(FFColors.textSecondary)
-                    }
-                }
+    let userSub: String
 
-                FFCard {
-                    Text("Последние тренировки и динамика нагрузки появятся здесь.")
-                        .font(FFTypography.body)
-                        .foregroundStyle(FFColors.textSecondary)
-                }
-            }
-            .padding(.horizontal, FFSpacing.md)
-            .padding(.vertical, FFSpacing.md)
-        }
-        .background(FFColors.background)
-        .navigationTitle("Прогресс")
+    var body: some View {
+        TrainingInsightsView(viewModel: TrainingInsightsViewModel(userSub: userSub))
     }
 }
 
 private struct ProfilePlaceholderView: View {
     let me: MeResponse
+    let userSub: String
     let onLogout: () -> Void
+    @State private var storageMB = "0.0"
+    @State private var streakDays = 0
+    @State private var lastWorkoutText = "—"
 
     var body: some View {
         VStack(spacing: FFSpacing.md) {
@@ -452,6 +477,29 @@ private struct ProfilePlaceholderView: View {
                     Text(me.email ?? "Email не предоставлен")
                         .font(FFTypography.body)
                         .foregroundStyle(FFColors.textSecondary)
+                    Text("ID: \(userSub)")
+                        .font(FFTypography.caption)
+                        .foregroundStyle(FFColors.gray300)
+                }
+            }
+
+            FFCard {
+                VStack(alignment: .leading, spacing: FFSpacing.xs) {
+                    Text("Синхронизация и данные")
+                        .font(FFTypography.h2)
+                        .foregroundStyle(FFColors.textPrimary)
+                    Text("Синхронизация: онлайн при доступности сети")
+                        .font(FFTypography.body)
+                        .foregroundStyle(FFColors.textSecondary)
+                    Text("Локальное хранилище: \(storageMB) МБ")
+                        .font(FFTypography.caption)
+                        .foregroundStyle(FFColors.textSecondary)
+                    Text("Серия тренировок: \(streakDays) дн")
+                        .font(FFTypography.caption)
+                        .foregroundStyle(FFColors.textSecondary)
+                    Text("Последняя тренировка: \(lastWorkoutText)")
+                        .font(FFTypography.caption)
+                        .foregroundStyle(FFColors.textSecondary)
                 }
             }
 
@@ -460,5 +508,19 @@ private struct ProfilePlaceholderView: View {
             Spacer()
         }
         .padding(.top, FFSpacing.md)
+        .task {
+            let store = LocalTrainingStore()
+            let size = await store.storageSizeBytes(userSub: userSub)
+            storageMB = String(format: "%.2f", Double(size) / (1024 * 1024))
+            let weekStart = Calendar.current.date(from: Calendar.current.dateComponents(
+                [.yearForWeekOfYear, .weekOfYear],
+                from: Date(),
+            )) ?? Date()
+            let summary = await store.weeklySummary(userSub: userSub, weekStart: weekStart)
+            streakDays = summary.streakDays
+            if let last = await store.lastCompleted(userSub: userSub) {
+                lastWorkoutText = last.finishedAt.formatted(date: .abbreviated, time: .shortened)
+            }
+        }
     }
 }

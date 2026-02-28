@@ -75,6 +75,7 @@ final class WorkoutPlayerViewModel {
     private let workout: WorkoutDetailsModel
     private let userSub: String
     private let programId: String
+    private let source: WorkoutSource
 
     var restTimer = RestTimerModel()
     var isLoading = false
@@ -87,11 +88,13 @@ final class WorkoutPlayerViewModel {
         userSub: String,
         programId: String,
         workout: WorkoutDetailsModel,
+        source: WorkoutSource = .program,
         sessionManager: WorkoutSessionManager = WorkoutSessionManager(),
     ) {
         self.userSub = userSub
         self.programId = programId
         self.workout = workout
+        self.source = source
         self.sessionManager = sessionManager
     }
 
@@ -120,7 +123,12 @@ final class WorkoutPlayerViewModel {
 
     func onAppear() async {
         isLoading = true
-        session = await sessionManager.loadOrCreateSession(userSub: userSub, programId: programId, workout: workout)
+        session = await sessionManager.loadOrCreateSession(
+            userSub: userSub,
+            programId: programId,
+            workout: workout,
+            source: source,
+        )
         isLoading = false
     }
 

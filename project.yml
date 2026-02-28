@@ -44,6 +44,10 @@ targets:
               NSExceptionAllowsInsecureHTTPLoads: true
             192.168.88.81:
               NSExceptionAllowsInsecureHTTPLoads: true
+        NSLocalNetworkUsageDescription: Приложению нужен доступ к локальной сети для подключения к вашему dev-серверу.
+        NSBonjourServices:
+          - _http._tcp
+          - _https._tcp
         CFBundleURLTypes:
           - CFBundleURLName: fitfluence.oauth
             CFBundleURLSchemes:
