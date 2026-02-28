@@ -17,7 +17,7 @@ struct ProgramDetailsView: View {
             observe: {
                 ViewState(
                     isWorkoutsPresented: $0.workoutsList != nil,
-                    isWorkoutPlayerPresented: $0.workoutPlayer != nil,
+                    isWorkoutPlayerPresented: $0.selectedWorkout != nil,
                 )
             },
         ) { navViewStore in
@@ -85,12 +85,12 @@ struct ProgramDetailsView: View {
                         get: { navViewStore.isWorkoutPlayerPresented },
                         set: { isPresented in
                             if !isPresented {
-                                store.send(.workoutPlayerDismissed)
+                                store.send(.selectedWorkoutDismissed)
                             }
                         },
                     ),
                 ) {
-                    if let playerState = viewStore.workoutPlayer {
+                    if let playerState = viewStore.selectedWorkout {
                         WorkoutLaunchView(
                             userSub: playerState.userSub,
                             programId: playerState.programId,

@@ -5,13 +5,18 @@ import Foundation
 struct ProgramDetailsFeature {
     @ObservableState
     struct State: Equatable {
+        struct SelectedWorkout: Equatable {
+            let userSub: String
+            let programId: String
+            let workoutId: String
+        }
+
         let programId: String
         let userSub: String
         var details: ProgramDetails?
         var isShowingCachedData = false
         var workoutsList: WorkoutsListFeature.State?
-        var workoutPlayer: WorkoutPlayerFeature.State?
-        var workoutCompletion: WorkoutCompletionFeature.State?
+        var selectedWorkout: SelectedWorkout?
         var isLoading = false
         var isStartingProgram = false
         var error: UserFacingError?
@@ -28,10 +33,7 @@ struct ProgramDetailsFeature {
         case openWorkoutsTapped
         case workoutsList(WorkoutsListFeature.Action)
         case workoutsListDismissed
-        case workoutPlayer(WorkoutPlayerFeature.Action)
-        case workoutPlayerDismissed
-        case workoutCompletion(WorkoutCompletionFeature.Action)
-        case workoutCompletionDismissed
+        case selectedWorkoutDismissed
     }
 
     private let programsClient: ProgramsClientProtocol?
@@ -148,42 +150,18 @@ struct ProgramDetailsFeature {
                 return .none
 
             case let .workoutsList(.delegate(.openWorkout(workoutID))):
-                state.workoutPlayer = WorkoutPlayerFeature.State(
+                state.selectedWorkout = State.SelectedWorkout(
                     userSub: state.userSub,
                     programId: state.programId,
                     workoutId: workoutID,
-                    progressStorageMode: workoutsClient.progressStorageMode,
                 )
                 return .none
 
-            case .workoutPlayerDismissed:
-                state.workoutPlayer = nil
-                return .none
-
-            case let .workoutPlayer(.delegate(.workoutCompleted(summary))):
-                state.workoutCompletion = WorkoutCompletionFeature.State(summary: summary)
-                return .none
-
-            case .workoutPlayer(.delegate(.closeRequested)):
-                state.workoutPlayer = nil
-                return .none
-
-            case .workoutCompletionDismissed:
-                state.workoutCompletion = nil
-                return .none
-
-            case .workoutCompletion(.delegate(.close)):
-                state.workoutCompletion = nil
-                state.workoutPlayer = nil
+            case .selectedWorkoutDismissed:
+                state.selectedWorkout = nil
                 return .none
 
             case .workoutsList:
-                return .none
-
-            case .workoutPlayer:
-                return .none
-
-            case .workoutCompletion:
                 return .none
             }
         }
@@ -194,22 +172,6 @@ struct ProgramDetailsFeature {
                 cacheStore: cacheStore,
                 networkMonitor: networkMonitor,
             )
-        }
-        .ifLet(\.workoutPlayer, action: \.workoutPlayer) { [
-            workoutsClient,
-            progressStore,
-            cacheStore,
-            networkMonitor,
-        ] in
-            WorkoutPlayerFeature(
-                workoutsClient: workoutsClient,
-                progressStore: progressStore,
-                cacheStore: cacheStore,
-                networkMonitor: networkMonitor,
-            )
-        }
-        .ifLet(\.workoutCompletion, action: \.workoutCompletion) {
-            WorkoutCompletionFeature()
         }
     }
 

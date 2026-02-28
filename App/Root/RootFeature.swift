@@ -134,8 +134,7 @@ struct RootFeature {
                 case .catalog(.programsResponse(.failure(.unauthorized), _)),
                      .programDetails(.detailsResponse(.failure(.unauthorized))),
                      .programDetails(.startProgramResponse(.failure(.unauthorized))),
-                     .programDetails(.workoutsList(.response(.failure(.unauthorized)))),
-                     .programDetails(.workoutPlayer(.detailsResponse(.failure(.unauthorized)))):
+                     .programDetails(.workoutsList(.response(.failure(.unauthorized)))):
                     return forceLogout(&state)
 
                 case let .networkStatusChanged(status):
