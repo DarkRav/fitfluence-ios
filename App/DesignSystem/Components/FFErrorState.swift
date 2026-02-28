@@ -9,9 +9,13 @@ struct FFErrorState: View {
     var body: some View {
         FFCard {
             VStack(spacing: FFSpacing.sm) {
+                Image(systemName: "exclamationmark.triangle")
+                    .font(.system(size: 24, weight: .semibold))
+                    .foregroundStyle(FFColors.danger)
                 Text(title)
                     .font(FFTypography.h2)
                     .foregroundStyle(FFColors.textPrimary)
+                    .multilineTextAlignment(.center)
                 Text(message)
                     .font(FFTypography.body)
                     .foregroundStyle(FFColors.textSecondary)

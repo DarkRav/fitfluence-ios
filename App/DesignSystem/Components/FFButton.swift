@@ -10,23 +10,52 @@ struct FFButton: View {
 
     let title: String
     var variant: Variant = .primary
+    var isLoading = false
     var action: () -> Void
 
     var body: some View {
         Button(action: action) {
-            Text(title)
-                .font(FFTypography.body.weight(.semibold))
-                .frame(maxWidth: .infinity)
-                .frame(minHeight: 44)
+            HStack(spacing: FFSpacing.xs) {
+                if isLoading {
+                    ProgressView()
+                        .tint(foregroundColor)
+                        .controlSize(.small)
+                }
+                Text(title)
+                    .font(FFTypography.body.weight(.semibold))
+                    .lineLimit(1)
+            }
+            .frame(maxWidth: .infinity)
+            .frame(minHeight: 44)
+            .contentShape(Rectangle())
         }
-        .buttonStyle(FFButtonStyle(variant: variant))
+        .buttonStyle(FFButtonStyle(variant: effectiveVariant, isLoading: isLoading))
         .hoverEffect(.highlight)
-        .disabled(variant == .disabled)
+        .disabled(isLoading || variant == .disabled)
+        .accessibilityLabel(title)
+    }
+
+    private var effectiveVariant: Variant {
+        isLoading ? .disabled : variant
+    }
+
+    private var foregroundColor: Color {
+        switch effectiveVariant {
+        case .primary:
+            FFColors.background
+        case .secondary:
+            FFColors.accent
+        case .destructive:
+            FFColors.textPrimary
+        case .disabled:
+            FFColors.gray500
+        }
     }
 }
 
 private struct FFButtonStyle: ButtonStyle {
     let variant: FFButton.Variant
+    let isLoading: Bool
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
@@ -40,8 +69,8 @@ private struct FFButtonStyle: ButtonStyle {
                 }
             }
             .clipShape(RoundedRectangle(cornerRadius: FFTheme.Radius.control))
-            .scaleEffect(configuration.isPressed ? 0.98 : 1)
             .opacity(configuration.isPressed ? 0.9 : 1)
+            .scaleEffect(configuration.isPressed && !isLoading ? 0.98 : 1)
             .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
     }
 
@@ -75,6 +104,7 @@ private struct FFButtonStyle: ButtonStyle {
 #Preview {
     VStack(spacing: FFSpacing.sm) {
         FFButton(title: "Сохранить", variant: .primary) {}
+        FFButton(title: "Синхронизируем", variant: .primary, isLoading: true) {}
         FFButton(title: "Подробнее", variant: .secondary) {}
         FFButton(title: "Удалить", variant: .destructive) {}
         FFButton(title: "Недоступно", variant: .disabled) {}

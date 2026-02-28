@@ -12,6 +12,7 @@ struct FFTextField: View {
     let placeholder: String
     @Binding var text: String
     var helperText: String?
+    var keyboardType: UIKeyboardType = .default
     var state: FieldState = .normal
 
     @FocusState private var isFocused: Bool
@@ -23,6 +24,9 @@ struct FFTextField: View {
                 .foregroundStyle(FFColors.textSecondary)
 
             TextField(placeholder, text: $text)
+                .keyboardType(keyboardType)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
                 .font(FFTypography.body)
                 .foregroundStyle(FFColors.textPrimary)
                 .padding(.horizontal, FFSpacing.md)
@@ -40,6 +44,7 @@ struct FFTextField: View {
                 Text(statusText)
                     .font(FFTypography.caption)
                     .foregroundStyle(statusColor)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
     }

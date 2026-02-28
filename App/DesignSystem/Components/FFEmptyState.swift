@@ -6,10 +6,14 @@ struct FFEmptyState: View {
 
     var body: some View {
         FFCard {
-            VStack(spacing: FFSpacing.xs) {
+            VStack(spacing: FFSpacing.sm) {
+                Image(systemName: "tray")
+                    .font(.system(size: 24, weight: .semibold))
+                    .foregroundStyle(FFColors.gray300)
                 Text(title)
                     .font(FFTypography.h2)
                     .foregroundStyle(FFColors.textPrimary)
+                    .multilineTextAlignment(.center)
                 Text(message)
                     .font(FFTypography.body)
                     .foregroundStyle(FFColors.textSecondary)

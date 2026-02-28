@@ -44,7 +44,7 @@ struct FFBadge: View {
 
     var body: some View {
         Text(status.title)
-            .font(FFTypography.caption)
+            .font(FFTypography.caption.weight(.semibold))
             .padding(.horizontal, FFSpacing.sm)
             .padding(.vertical, FFSpacing.xs)
             .foregroundStyle(status.foreground)
