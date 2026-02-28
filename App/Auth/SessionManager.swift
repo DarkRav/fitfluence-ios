@@ -1,0 +1,86 @@
+import Foundation
+
+enum RootSessionState: Equatable, Sendable {
+    case unauthenticated
+    case authenticating
+    case needsOnboarding(OnboardingContext)
+    case authenticated(UserContext)
+    case error(UserFacingError)
+}
+
+struct UserFacingError: Equatable, Sendable {
+    let title: String
+    let message: String
+}
+
+protocol SessionManaging: Sendable {
+    func bootstrap() async -> RootSessionState
+    func postLoginBootstrap() async -> RootSessionState
+    func logout() async -> RootSessionState
+}
+
+final class SessionManager: SessionManaging, @unchecked Sendable {
+    private let authService: AuthServiceProtocol
+    private let meClient: MeClientProtocol
+
+    init(authService: AuthServiceProtocol, meClient: MeClientProtocol) {
+        self.authService = authService
+        self.meClient = meClient
+    }
+
+    func bootstrap() async -> RootSessionState {
+        guard await authService.currentTokenSet() != nil else {
+            return .unauthenticated
+        }
+
+        guard await authService.refreshIfNeeded() else {
+            await authService.logout()
+            return .unauthenticated
+        }
+
+        return await resolveMeState()
+    }
+
+    func postLoginBootstrap() async -> RootSessionState {
+        await resolveMeState()
+    }
+
+    func logout() async -> RootSessionState {
+        await authService.logout()
+        return .unauthenticated
+    }
+
+    private func resolveMeState() async -> RootSessionState {
+        let meResult = await meClient.me()
+
+        switch meResult {
+        case let .success(me):
+            let requiredProfiles = RequiredProfiles(
+                requiresAthleteProfile: me.requiresAthleteProfile,
+                requiresInfluencerProfile: me.requiresInfluencerProfile,
+            )
+
+            if requiredProfiles.requiresAthleteProfile || requiredProfiles.requiresInfluencerProfile {
+                return .needsOnboarding(
+                    OnboardingContext(me: me, requiredProfiles: requiredProfiles),
+                )
+            }
+
+            return .authenticated(UserContext(me: me))
+
+        case let .failure(error):
+            switch error {
+            case .unauthorized, .forbidden:
+                await authService.logout()
+                return .unauthenticated
+            default:
+                return .error(
+                    UserFacingError(
+                        title: "Ошибка сессии",
+                        message: "Не удалось загрузить профиль пользователя.",
+                    ),
+                )
+            }
+        }
+    }
+}

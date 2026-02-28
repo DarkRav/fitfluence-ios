@@ -6,9 +6,10 @@ struct HealthResponse: Codable, Equatable {
 
 protocol APIClientProtocol: Sendable {
     func healthCheck() async -> Result<HealthResponse, APIError>
+    func me() async -> Result<MeResponse, APIError>
 }
 
-final class APIClient: APIClientProtocol {
+final class APIClient: APIClientProtocol, MeClientProtocol {
     private let httpClient: HTTPClientProtocol
 
     init(httpClient: HTTPClientProtocol) {
@@ -28,17 +29,23 @@ final class APIClient: APIClientProtocol {
 
     func healthCheck() async -> Result<HealthResponse, APIError> {
         let request = APIRequest.get(path: "/actuator/health", requiresAuthorization: false)
+        return await decode(request, as: HealthResponse.self)
+    }
 
+    func me() async -> Result<MeResponse, APIError> {
+        let request = APIRequest.get(path: "/v1/me", requiresAuthorization: true)
+        return await decode(request, as: MeResponse.self)
+    }
+
+    private func decode<T: Decodable>(_ request: APIRequest, as _: T.Type) async -> Result<T, APIError> {
         do {
             let response = try await httpClient.send(request)
-            do {
-                let decoded = try JSONDecoder().decode(HealthResponse.self, from: response.data)
-                return .success(decoded)
-            } catch {
-                return .failure(.decodingError)
-            }
+            let decoded = try JSONDecoder().decode(T.self, from: response.data)
+            return .success(decoded)
         } catch let apiError as APIError {
             return .failure(apiError)
+        } catch is DecodingError {
+            return .failure(.decodingError)
         } catch {
             return .failure(.unknown)
         }

@@ -9,10 +9,7 @@ enum LoginEntryMode: String, Sendable {
 
 protocol AuthServiceProtocol: Sendable {
     @MainActor
-    func login(
-        presentingViewController: UIViewController,
-        mode: LoginEntryMode
-    ) async -> Result<TokenSet, APIError>
+    func login(mode: LoginEntryMode) async -> Result<TokenSet, APIError>
 
     func refreshIfNeeded() async -> Bool
     func refresh() async -> Bool
@@ -29,7 +26,7 @@ final class AuthService: NSObject, AuthServiceProtocol, @unchecked Sendable {
     init(
         environment: AppEnvironment,
         discoveryService: OIDCDiscoveryServiceProtocol,
-        tokenStore: TokenStore = KeychainTokenStore()
+        tokenStore: TokenStore = KeychainTokenStore(),
     ) {
         self.environment = environment
         self.discoveryService = discoveryService
@@ -37,10 +34,7 @@ final class AuthService: NSObject, AuthServiceProtocol, @unchecked Sendable {
     }
 
     @MainActor
-    func login(
-        presentingViewController: UIViewController,
-        mode: LoginEntryMode
-    ) async -> Result<TokenSet, APIError> {
+    func login(mode: LoginEntryMode) async -> Result<TokenSet, APIError> {
         do {
             let discovery = try await discoveryService.discover()
 
@@ -56,7 +50,7 @@ final class AuthService: NSObject, AuthServiceProtocol, @unchecked Sendable {
                 tokenEndpoint: discovery.tokenEndpoint,
                 issuer: discovery.issuer,
                 registrationEndpoint: nil,
-                endSessionEndpoint: discovery.endSessionEndpoint
+                endSessionEndpoint: discovery.endSessionEndpoint,
             )
 
             let scopes = environment.keycloakScopes
@@ -70,9 +64,12 @@ final class AuthService: NSObject, AuthServiceProtocol, @unchecked Sendable {
                 scopes: scopes,
                 redirectURL: redirectURL,
                 responseType: OIDResponseTypeCode,
-                additionalParameters: registrationParameters(for: mode)
+                additionalParameters: registrationParameters(for: mode),
             )
 
+            guard let presentingViewController = UIApplication.topViewController() else {
+                return .failure(.unknown)
+            }
             let authState = try await present(request: authRequest, from: presentingViewController)
 
             guard let tokenResponse = authState.lastTokenResponse else {
@@ -96,19 +93,19 @@ final class AuthService: NSObject, AuthServiceProtocol, @unchecked Sendable {
     }
 
     func refresh() async -> Bool {
-        await refreshCoordinator.run {
+        await refreshCoordinator.run { [self] in
             do {
-                guard let tokenSet = try tokenStore.load(), let refreshToken = tokenSet.refreshToken else {
+                guard let refreshToken = try self.tokenStore.load()?.refreshToken else {
                     return false
                 }
 
-                let discovery = try await discoveryService.discover()
+                let discovery = try await self.discoveryService.discover()
                 let configuration = OIDServiceConfiguration(
                     authorizationEndpoint: discovery.authorizationEndpoint,
                     tokenEndpoint: discovery.tokenEndpoint,
                     issuer: discovery.issuer,
                     registrationEndpoint: nil,
-                    endSessionEndpoint: discovery.endSessionEndpoint
+                    endSessionEndpoint: discovery.endSessionEndpoint,
                 )
 
                 let tokenRequest = OIDTokenRequest(
@@ -116,20 +113,20 @@ final class AuthService: NSObject, AuthServiceProtocol, @unchecked Sendable {
                     grantType: OIDGrantTypeRefreshToken,
                     authorizationCode: nil,
                     redirectURL: nil,
-                    clientID: environment.keycloakClientId,
+                    clientID: self.environment.keycloakClientId,
                     clientSecret: nil,
-                    scope: environment.keycloakScopes,
+                    scope: self.environment.keycloakScopes,
                     refreshToken: refreshToken,
                     codeVerifier: nil,
-                    additionalParameters: nil
+                    additionalParameters: nil,
                 )
 
-                let response = try await perform(tokenRequest: tokenRequest)
-                let nextTokenSet = tokenSet(from: response, fallbackRefreshToken: refreshToken)
-                try tokenStore.save(nextTokenSet)
+                let response = try await self.perform(tokenRequest: tokenRequest)
+                let nextTokenSet = self.tokenSet(from: response, fallbackRefreshToken: refreshToken)
+                try self.tokenStore.save(nextTokenSet)
                 return true
             } catch {
-                try? tokenStore.clear()
+                try? self.tokenStore.clear()
                 return false
             }
         }
@@ -160,16 +157,21 @@ final class AuthService: NSObject, AuthServiceProtocol, @unchecked Sendable {
             idToken: response.idToken,
             tokenType: response.tokenType ?? "Bearer",
             scope: response.scope,
-            expiresAt: response.accessTokenExpirationDate
+            expiresAt: response.accessTokenExpirationDate,
         )
     }
 
     @MainActor
-    private func present(request: OIDAuthorizationRequest, from presentingViewController: UIViewController) async throws -> OIDAuthState {
+    private func present(
+        request: OIDAuthorizationRequest,
+        from presentingViewController: UIViewController,
+    ) async throws -> OIDAuthState {
         try await withCheckedThrowingContinuation { continuation in
             OIDAuthState.authState(byPresenting: request, presenting: presentingViewController) { authState, error in
                 if let error = error as NSError? {
-                    if error.domain == OIDOAuthAuthorizationErrorDomain, error.code == OIDErrorCodeOAuth.accessDenied.rawValue {
+                    if error.domain == OIDOAuthAuthorizationErrorDomain,
+                       error.code == OIDErrorCodeOAuth.accessDenied.rawValue
+                    {
                         continuation.resume(throwing: APIError.cancelled)
                     } else {
                         continuation.resume(throwing: APIError.unknown)
@@ -190,7 +192,8 @@ final class AuthService: NSObject, AuthServiceProtocol, @unchecked Sendable {
         try await withCheckedThrowingContinuation { continuation in
             OIDAuthorizationService.perform(tokenRequest) { response, error in
                 if let error = error as NSError? {
-                    if error.domain == NSURLErrorDomain, let code = URLError.Code(rawValue: error.code) {
+                    if error.domain == NSURLErrorDomain {
+                        let code = URLError.Code(rawValue: error.code)
                         continuation.resume(throwing: APIError.from(urlError: URLError(code)))
                     } else {
                         continuation.resume(throwing: APIError.unknown)
@@ -206,6 +209,27 @@ final class AuthService: NSObject, AuthServiceProtocol, @unchecked Sendable {
                 continuation.resume(returning: response)
             }
         }
+    }
+}
+
+private extension UIApplication {
+    static func topViewController(
+        base: UIViewController? = UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .flatMap(\.windows)
+            .first(where: \.isKeyWindow)?
+            .rootViewController,
+    ) -> UIViewController? {
+        if let navigationController = base as? UINavigationController {
+            return topViewController(base: navigationController.visibleViewController)
+        }
+        if let tabBarController = base as? UITabBarController, let selected = tabBarController.selectedViewController {
+            return topViewController(base: selected)
+        }
+        if let presented = base?.presentedViewController {
+            return topViewController(base: presented)
+        }
+        return base
     }
 }
 

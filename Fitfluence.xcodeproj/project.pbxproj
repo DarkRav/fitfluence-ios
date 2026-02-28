@@ -26,6 +26,8 @@
 		8D8127A6EF2465DFDE792FAD /* OIDCAndTokenStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 329834B4D1A96F4EA44A775F /* OIDCAndTokenStoreTests.swift */; };
 		A7468B42E0564F56E4DEA037 /* APIError.swift in Sources */ = {isa = PBXBuildFile; fileRef = D049FFBF6B3F8E522C058CAA /* APIError.swift */; };
 		A894EEF1CB87660C0CDB9600 /* HTTPClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 14C19E971649693B43AC91DB /* HTTPClient.swift */; };
+		B1D4335E51D0FCAC21C8DB80 /* MeClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = B61E587FD4EC525652715208 /* MeClient.swift */; };
+		B2EFCC6EFBC62E64F826EFDB /* SessionManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = F4BA13F15E04E7DE0985E8C3 /* SessionManager.swift */; };
 		B68CFEB25BF04441A03234E5 /* Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 86189A9947AC753259B89A8D /* Theme.swift */; };
 		B9F03E8D15122E06EEABC9B3 /* DiagnosticsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 02FB6451DC5112CB7DE94103 /* DiagnosticsView.swift */; };
 		BAE62E7712F38E9F49845685 /* NetworkingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 59F8273C6875008A5C9A3300 /* NetworkingTests.swift */; };
@@ -42,6 +44,7 @@
 		F12AF47E2E6A7061D391E5F6 /* FFCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4D6772D2C40BCF7FEB3C45C /* FFCard.swift */; };
 		F540D452CC4979E1CE3FDFED /* FFTextField.swift in Sources */ = {isa = PBXBuildFile; fileRef = B202B94DE2C375FB67F019B3 /* FFTextField.swift */; };
 		F8D8480922CC1CB246C5C711 /* DesignSystemTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 94FD710E5EFA916159BCCE7D /* DesignSystemTests.swift */; };
+		FE01694F22BC7CAF07E8763B /* StoredAuthTokenProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE32622DE77E7E6D8F18CD32 /* StoredAuthTokenProvider.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -83,8 +86,10 @@
 		9E4CF13A2531205E9575D66B /* APIRequest.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIRequest.swift; sourceTree = "<group>"; };
 		A2E5D8994FEA468EC4504CD0 /* Typography.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Typography.swift; sourceTree = "<group>"; };
 		A97D9C4C6794471BA7C75525 /* FFButton.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFButton.swift; sourceTree = "<group>"; };
+		AE32622DE77E7E6D8F18CD32 /* StoredAuthTokenProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StoredAuthTokenProvider.swift; sourceTree = "<group>"; };
 		B0CE9CC0E1302819C8010358 /* Logging.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Logging.swift; sourceTree = "<group>"; };
 		B202B94DE2C375FB67F019B3 /* FFTextField.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFTextField.swift; sourceTree = "<group>"; };
+		B61E587FD4EC525652715208 /* MeClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeClient.swift; sourceTree = "<group>"; };
 		CAEB6BFF14C57697C73E6CD3 /* RootFeature.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootFeature.swift; sourceTree = "<group>"; };
 		D049FFBF6B3F8E522C058CAA /* APIError.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIError.swift; sourceTree = "<group>"; };
 		D45116A2BFE9402EC531FE76 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
@@ -93,6 +98,7 @@
 		E1984067FE9FCB6709C5D963 /* MockURLProtocol.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MockURLProtocol.swift; sourceTree = "<group>"; };
 		E40B5498BB99116B3021C4E4 /* FFEmptyState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFEmptyState.swift; sourceTree = "<group>"; };
 		ED3B939F25D70B624ECD73AC /* APILogger.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APILogger.swift; sourceTree = "<group>"; };
+		F4BA13F15E04E7DE0985E8C3 /* SessionManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionManager.swift; sourceTree = "<group>"; };
 		F985AA318869C8870BDA6187 /* DiagnosticsFeature.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiagnosticsFeature.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -137,6 +143,7 @@
 				9E4CF13A2531205E9575D66B /* APIRequest.swift */,
 				73D40B15217387B49B13527A /* AuthTokenProvider.swift */,
 				14C19E971649693B43AC91DB /* HTTPClient.swift */,
+				B61E587FD4EC525652715208 /* MeClient.swift */,
 			);
 			path = Networking;
 			sourceTree = "<group>";
@@ -146,6 +153,8 @@
 			children = (
 				88082B057D7E001AA79962A9 /* AuthService.swift */,
 				5C86524522FD187BCB6065C5 /* OIDCDiscoveryDocument.swift */,
+				F4BA13F15E04E7DE0985E8C3 /* SessionManager.swift */,
+				AE32622DE77E7E6D8F18CD32 /* StoredAuthTokenProvider.swift */,
 				7D5DAA77BFBBF8EB1EE9084A /* TokenSet.swift */,
 				3B0C590AD2E0CF52FB2BE38B /* TokenStore.swift */,
 			);
@@ -347,11 +356,14 @@
 				C091B3E8CBC8FB1F8ABFDC95 /* FitfluenceApp.swift in Sources */,
 				A894EEF1CB87660C0CDB9600 /* HTTPClient.swift in Sources */,
 				06931F2CD054F4E2CB1A73B4 /* Logging.swift in Sources */,
+				B1D4335E51D0FCAC21C8DB80 /* MeClient.swift in Sources */,
 				BC078A680755A39631921FB9 /* OIDCDiscoveryDocument.swift in Sources */,
 				302383A11BF7E3A6A2017B59 /* PreviewMocks.swift in Sources */,
 				BE14E4CFB655557D8C529CDF /* RootFeature.swift in Sources */,
 				24A48678A501B841969AB1EC /* RootView.swift in Sources */,
+				B2EFCC6EFBC62E64F826EFDB /* SessionManager.swift in Sources */,
 				C3535BA80F21F23FCA8AE684 /* Spacing.swift in Sources */,
+				FE01694F22BC7CAF07E8763B /* StoredAuthTokenProvider.swift in Sources */,
 				B68CFEB25BF04441A03234E5 /* Theme.swift in Sources */,
 				D69C1CB30BD7205B98ECCCC3 /* TokenSet.swift in Sources */,
 				C32507921BC5A60036A562D7 /* TokenStore.swift in Sources */,

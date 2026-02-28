@@ -2,19 +2,28 @@ import ComposableArchitecture
 
 @Reducer
 struct RootFeature {
+    private let sessionManager: SessionManaging
+    private let authService: AuthServiceProtocol
     private let apiClient: APIClientProtocol?
 
-    init(apiClient: APIClientProtocol? = nil) {
+    init(
+        sessionManager: SessionManaging,
+        authService: AuthServiceProtocol,
+        apiClient: APIClientProtocol?,
+    ) {
+        self.sessionManager = sessionManager
+        self.authService = authService
         self.apiClient = apiClient
     }
 
     @ObservableState
     struct State: Equatable {
-        var selectedTab: Tab = .catalog
+        var sessionState: RootSessionState = .authenticating
         var diagnostics = DiagnosticsFeature.State()
+        var selectedMainTab: MainTab = .catalog
     }
 
-    enum Tab: Hashable {
+    enum MainTab: Hashable {
         case catalog
         case workouts
         case profile
@@ -24,8 +33,13 @@ struct RootFeature {
     }
 
     enum Action: Equatable {
-        case tabSelected(Tab)
+        case onAppear
+        case retryBootstrapTapped
+        case loginTapped(LoginEntryMode)
+        case logoutTapped
+        case sessionResolved(RootSessionState)
         case diagnostics(DiagnosticsFeature.Action)
+        case tabSelected(MainTab)
     }
 
     var body: some ReducerOf<Self> {
@@ -35,9 +49,55 @@ struct RootFeature {
 
         Reduce { state, action in
             switch action {
-            case let .tabSelected(tab):
-                state.selectedTab = tab
+            case .onAppear, .retryBootstrapTapped:
+                state.sessionState = .authenticating
+                return .run { [sessionManager] send in
+                    let resolved = await sessionManager.bootstrap()
+                    await send(.sessionResolved(resolved))
+                }
+
+            case let .loginTapped(mode):
+                state.sessionState = .authenticating
+                return .run { [authService, sessionManager] send in
+                    let result = await authService.login(mode: mode)
+
+                    switch result {
+                    case .success:
+                        let nextState = await sessionManager.postLoginBootstrap()
+                        await send(.sessionResolved(nextState))
+                    case let .failure(error):
+                        if error == .cancelled {
+                            await send(.sessionResolved(.unauthenticated))
+                        } else {
+                            await send(
+                                .sessionResolved(
+                                    .error(
+                                        UserFacingError(
+                                            title: "Ошибка входа",
+                                            message: "Не удалось выполнить вход через Keycloak.",
+                                        ),
+                                    ),
+                                ),
+                            )
+                        }
+                    }
+                }
+
+            case .logoutTapped:
+                state.sessionState = .authenticating
+                return .run { [sessionManager] send in
+                    let nextState = await sessionManager.logout()
+                    await send(.sessionResolved(nextState))
+                }
+
+            case let .sessionResolved(nextState):
+                state.sessionState = nextState
                 return .none
+
+            case let .tabSelected(tab):
+                state.selectedMainTab = tab
+                return .none
+
             case .diagnostics:
                 return .none
             }

@@ -18,16 +18,31 @@ final class OIDCAndTokenStoreTests: XCTestCase {
               "end_session_endpoint": "http://localhost:9990/realms/master/protocol/openid-connect/logout"
             }
             """
-            let response = HTTPURLResponse(url: try XCTUnwrap(request.url), statusCode: 200, httpVersion: nil, headerFields: nil)!
+            let response = try HTTPURLResponse(
+                url: XCTUnwrap(request.url),
+                statusCode: 200,
+                httpVersion: nil,
+                headerFields: nil,
+            )!
             return (response, Data(json.utf8))
         }
 
-        let service = OIDCDiscoveryService(baseURL: URL(string: "http://localhost:9990")!, realm: "master", session: testSession)
+        let service = try OIDCDiscoveryService(
+            baseURL: XCTUnwrap(URL(string: "http://localhost:9990")),
+            realm: "master",
+            session: testSession,
+        )
         let document = try await service.discover()
 
         XCTAssertEqual(document.issuer.absoluteString, "http://localhost:9990/realms/master")
-        XCTAssertEqual(document.authorizationEndpoint.absoluteString, "http://localhost:9990/realms/master/protocol/openid-connect/auth")
-        XCTAssertEqual(document.tokenEndpoint.absoluteString, "http://localhost:9990/realms/master/protocol/openid-connect/token")
+        XCTAssertEqual(
+            document.authorizationEndpoint.absoluteString,
+            "http://localhost:9990/realms/master/protocol/openid-connect/auth",
+        )
+        XCTAssertEqual(
+            document.tokenEndpoint.absoluteString,
+            "http://localhost:9990/realms/master/protocol/openid-connect/token",
+        )
     }
 
     func testTokenSetExpiryChecks() {
