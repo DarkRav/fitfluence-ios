@@ -6,6 +6,10 @@ struct RootView: View {
 
     var body: some View {
         Text("Fitfluence")
-            .font(.title)
+            .font(FFTypography.h1)
+            .foregroundStyle(FFColors.textPrimary)
+            .padding(FFSpacing.md)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(FFColors.background)
     }
 }
