@@ -11,7 +11,7 @@ struct FitfluenceApp: App {
     init() {
         let tokenStore = KeychainTokenStore()
 
-        let keycloakBaseURL = environment.keycloakBaseURL ?? URL(string: "http://localhost:9990")!
+        let keycloakBaseURL = environment.keycloakBaseURL ?? URL(string: "https://invalid.fitfluence.local")!
         let discoveryService = OIDCDiscoveryService(
             baseURL: keycloakBaseURL,
             realm: environment.keycloakRealm,
@@ -38,6 +38,8 @@ struct FitfluenceApp: App {
         )
 
         FFLog.info("Запуск приложения в окружении: \(environment.name)")
+        FFLog.info("Backend URL: \(environment.backendBaseURL?.absoluteString ?? "не задан")")
+        FFLog.info("Keycloak URL: \(environment.keycloakBaseURL?.absoluteString ?? "не задан")")
     }
 
     var body: some Scene {
