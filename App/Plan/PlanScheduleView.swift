@@ -27,7 +27,7 @@ final class PlanScheduleViewModel {
     var selectedDay: Date = .init()
     var isLoading = false
     var monthPlans: [TrainingDayPlan] = []
-    var history: [CompletedWorkoutRecord] = []
+    var upcomingPlans: [TrainingDayPlan] = []
     var weekSummary: WeeklyTrainingSummary?
 
     init(
@@ -51,15 +51,19 @@ final class PlanScheduleViewModel {
         isLoading = true
         defer { isLoading = false }
 
-        async let plans = trainingStore.plans(userSub: userSub, month: selectedMonth)
-        async let loadedHistory = trainingStore.history(userSub: userSub, source: nil, limit: 200)
+        let today = Date()
+        let nextMonth = calendar.date(byAdding: .month, value: 1, to: today) ?? today
+
+        async let selectedPlans = trainingStore.plans(userSub: userSub, month: selectedMonth)
+        async let currentPlans = trainingStore.plans(userSub: userSub, month: today)
+        async let nextPlans = trainingStore.plans(userSub: userSub, month: nextMonth)
         async let week = trainingStore.weeklySummary(
             userSub: userSub,
             weekStart: weekStart(for: selectedDay),
         )
 
-        monthPlans = await plans
-        history = await loadedHistory
+        monthPlans = await selectedPlans
+        upcomingPlans = await (currentPlans) + nextPlans
         weekSummary = await week
     }
 
@@ -69,6 +73,13 @@ final class PlanScheduleViewModel {
             userSub: userSub,
             weekStart: weekStart(for: selectedDay),
         )
+    }
+
+    func selectDayFromAdjacentMonth(_ day: Date) async {
+        guard let targetMonth = calendar.dateInterval(of: .month, for: day)?.start else { return }
+        selectedMonth = calendar.startOfDay(for: targetMonth)
+        selectedDay = calendar.startOfDay(for: day)
+        await reload()
     }
 
     func goToPreviousMonth() async {
@@ -127,28 +138,13 @@ final class PlanScheduleViewModel {
     }
 
     func dayStatus(_ day: Date) -> TrainingDayStatus? {
-        let normalized = calendar.startOfDay(for: day)
-        let plansForDay = monthPlans.filter { calendar.isDate($0.day, inSameDayAs: normalized) }
-        let hasCompleted = history.contains { calendar.isDate($0.finishedAt, inSameDayAs: normalized) }
-
-        if hasCompleted || plansForDay.contains(where: { $0.status == .completed }) {
-            return .completed
-        }
-        if plansForDay.contains(where: { $0.status == .missed }) {
-            return .missed
-        }
-        if plansForDay.contains(where: { $0.status == .planned }) {
-            return .planned
-        }
-        return nil
+        let plans = plansForDay(in: monthPlans, day: day)
+        return dayStatus(for: plans)
     }
 
     func dayItems(for day: Date) -> [DayScheduleItem] {
-        let normalized = calendar.startOfDay(for: day)
-        let plansForDay = monthPlans.filter { calendar.isDate($0.day, inSameDayAs: normalized) }
-        let planWorkoutIds = Set(plansForDay.compactMap(\.workoutId))
-
-        var items = plansForDay.map { plan in
+        let plans = plansForDay(in: monthPlans, day: day)
+        let items = plans.map { plan in
             DayScheduleItem(
                 id: "plan-\(plan.id)",
                 title: plan.title,
@@ -157,21 +153,6 @@ final class PlanScheduleViewModel {
                 status: plan.status,
             )
         }
-
-        let completed = history
-            .filter { calendar.isDate($0.finishedAt, inSameDayAs: normalized) }
-            .filter { !planWorkoutIds.contains($0.workoutId) }
-            .map { record in
-                DayScheduleItem(
-                    id: "history-\(record.id)",
-                    title: record.workoutTitle,
-                    subtitle: "Завершено в \(record.finishedAt.formatted(date: .omitted, time: .shortened))",
-                    source: record.source,
-                    status: .completed,
-                )
-            }
-
-        items.append(contentsOf: completed)
         return items.sorted { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }
     }
 
@@ -179,12 +160,14 @@ final class PlanScheduleViewModel {
         let today = calendar.startOfDay(for: Date())
         return (0 ..< 7).compactMap { offset in
             guard let day = calendar.date(byAdding: .day, value: offset, to: today) else { return nil }
-            let items = dayItems(for: day)
+            let plans = plansForDay(in: upcomingPlans, day: day)
+            guard !plans.isEmpty else { return nil }
+            let status = dayStatus(for: plans)
             return UpcomingDayItem(
                 id: day,
                 day: day,
-                status: dayStatus(day),
-                title: items.first?.title ?? "Без тренировки",
+                status: status,
+                title: upcomingTitle(from: plans),
             )
         }
     }
@@ -217,6 +200,34 @@ final class PlanScheduleViewModel {
         let normalized = calendar.startOfDay(for: date)
         return calendar.dateInterval(of: .weekOfYear, for: normalized)?.start ?? normalized
     }
+
+    private func plansForDay(in plans: [TrainingDayPlan], day: Date) -> [TrainingDayPlan] {
+        let normalized = calendar.startOfDay(for: day)
+        return plans.filter { calendar.isDate($0.day, inSameDayAs: normalized) }
+    }
+
+    private func dayStatus(for plans: [TrainingDayPlan]) -> TrainingDayStatus? {
+        if plans.contains(where: { $0.status == .completed }) {
+            return .completed
+        }
+        if plans.contains(where: { $0.status == .missed }) {
+            return .missed
+        }
+        if plans.contains(where: { $0.status == .planned }) {
+            return .planned
+        }
+        return nil
+    }
+
+    private func upcomingTitle(from plans: [TrainingDayPlan]) -> String {
+        let sorted = plans.sorted { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }
+        guard let first = sorted.first else { return "Тренировка" }
+        let remaining = sorted.count - 1
+        if remaining > 0 {
+            return "\(first.title) + ещё \(remaining)"
+        }
+        return first.title
+    }
 }
 
 struct PlanScheduleScreen: View {
@@ -229,7 +240,9 @@ struct PlanScheduleScreen: View {
                 calendarCard
                 dayScheduleCard
                 weekSummaryCard
-                upcomingCard
+                if !viewModel.upcomingDays.isEmpty {
+                    upcomingCard
+                }
             }
             .padding(.horizontal, FFSpacing.md)
             .padding(.vertical, FFSpacing.md)
@@ -251,12 +264,9 @@ struct PlanScheduleScreen: View {
                         .font(FFTypography.h2)
                         .foregroundStyle(FFColors.textPrimary)
                     Spacer()
-                    Button("Сегодня") {
+                    headerControl(title: "Сегодня") {
                         Task { await viewModel.jumpToToday() }
                     }
-                    .font(FFTypography.caption.weight(.semibold))
-                    .foregroundStyle(FFColors.accent)
-                    .frame(minHeight: 44)
                 }
 
                 HStack {
@@ -299,7 +309,13 @@ struct PlanScheduleScreen: View {
         let status = viewModel.dayStatus(day)
 
         return Button {
-            Task { await viewModel.selectDay(day) }
+            Task {
+                if viewModel.isInCurrentMonth(day) {
+                    await viewModel.selectDay(day)
+                } else {
+                    await viewModel.selectDayFromAdjacentMonth(day)
+                }
+            }
         } label: {
             VStack(spacing: 4) {
                 Text(day.formatted(.dateTime.day()))
@@ -309,7 +325,7 @@ struct PlanScheduleScreen: View {
                     .fill(statusColor(status))
                     .frame(width: 6, height: 6)
             }
-            .frame(maxWidth: .infinity, minHeight: 42)
+            .frame(maxWidth: .infinity, minHeight: 44)
             .padding(.vertical, 4)
             .background(isSelected ? FFColors.surface : .clear)
             .clipShape(RoundedRectangle(cornerRadius: FFTheme.Radius.control))
@@ -354,20 +370,20 @@ struct PlanScheduleScreen: View {
                     FFButton(title: "Открыть каталог программ", variant: .secondary, action: onOpenCatalog)
                 } else {
                     ForEach(items) { item in
-                        HStack(alignment: .top, spacing: FFSpacing.sm) {
-                            VStack(alignment: .leading, spacing: FFSpacing.xxs) {
-                                Text(item.title)
-                                    .font(FFTypography.body.weight(.semibold))
-                                    .foregroundStyle(FFColors.textPrimary)
-                                Text("\(item.subtitle) • \(viewModel.sourceTitle(item.source))")
-                                    .font(FFTypography.caption)
-                                    .foregroundStyle(FFColors.textSecondary)
+                        infoRowContainer {
+                            HStack(alignment: .top, spacing: FFSpacing.sm) {
+                                VStack(alignment: .leading, spacing: FFSpacing.xxs) {
+                                    Text(item.title)
+                                        .font(FFTypography.body.weight(.semibold))
+                                        .foregroundStyle(FFColors.textPrimary)
+                                    Text("\(item.subtitle) • \(viewModel.sourceTitle(item.source))")
+                                        .font(FFTypography.caption)
+                                        .foregroundStyle(FFColors.textSecondary)
+                                }
+                                Spacer(minLength: FFSpacing.xs)
+                                statusPill(item.status)
                             }
-                            Spacer(minLength: FFSpacing.xs)
-                            statusPill(item.status)
                         }
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.vertical, FFSpacing.xxs)
                     }
                 }
             }
@@ -438,26 +454,27 @@ struct PlanScheduleScreen: View {
                     .foregroundStyle(FFColors.textPrimary)
 
                 ForEach(viewModel.upcomingDays) { item in
-                    HStack(spacing: FFSpacing.sm) {
-                        Text(item.day.formatted(.dateTime.weekday(.abbreviated).day()))
-                            .font(FFTypography.caption.weight(.semibold))
-                            .foregroundStyle(FFColors.textSecondary)
-                            .frame(width: 64, alignment: .leading)
-                        VStack(alignment: .leading, spacing: FFSpacing.xxs) {
-                            Text(item.title)
-                                .font(FFTypography.body)
-                                .foregroundStyle(FFColors.textPrimary)
-                                .lineLimit(1)
-                            Text(viewModel.statusTitle(item.status))
-                                .font(FFTypography.caption)
+                    infoRowContainer {
+                        HStack(spacing: FFSpacing.sm) {
+                            Text(item.day.formatted(.dateTime.weekday(.abbreviated).day()))
+                                .font(FFTypography.caption.weight(.semibold))
                                 .foregroundStyle(FFColors.textSecondary)
+                                .frame(width: 64, alignment: .leading)
+                            VStack(alignment: .leading, spacing: FFSpacing.xxs) {
+                                Text(item.title)
+                                    .font(FFTypography.body)
+                                    .foregroundStyle(FFColors.textPrimary)
+                                    .lineLimit(1)
+                                Text(viewModel.statusTitle(item.status))
+                                    .font(FFTypography.caption)
+                                    .foregroundStyle(FFColors.textSecondary)
+                            }
+                            Spacer()
+                            Circle()
+                                .fill(statusColor(item.status))
+                                .frame(width: 8, height: 8)
                         }
-                        Spacer()
-                        Circle()
-                            .fill(statusColor(item.status))
-                            .frame(width: 8, height: 8)
                     }
-                    .padding(.vertical, FFSpacing.xxs)
                 }
             }
         }
@@ -477,6 +494,36 @@ struct PlanScheduleScreen: View {
                 }
         }
         .buttonStyle(.plain)
+    }
+
+    private func headerControl(title: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(title)
+                .font(FFTypography.caption.weight(.semibold))
+                .foregroundStyle(FFColors.textPrimary)
+                .frame(minHeight: 44)
+                .padding(.horizontal, FFSpacing.sm)
+                .background(FFColors.surface)
+                .clipShape(RoundedRectangle(cornerRadius: FFTheme.Radius.control))
+                .overlay {
+                    RoundedRectangle(cornerRadius: FFTheme.Radius.control)
+                        .stroke(FFColors.gray700, lineWidth: 1)
+                }
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func infoRowContainer(@ViewBuilder content: () -> some View) -> some View {
+        content()
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, FFSpacing.sm)
+            .padding(.vertical, FFSpacing.xs)
+            .background(FFColors.surface)
+            .clipShape(RoundedRectangle(cornerRadius: FFTheme.Radius.control))
+            .overlay {
+                RoundedRectangle(cornerRadius: FFTheme.Radius.control)
+                    .stroke(FFColors.gray700, lineWidth: 1)
+            }
     }
 }
 
