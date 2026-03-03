@@ -65,20 +65,57 @@ final class OIDCAndTokenStoreTests: XCTestCase {
         }
 
         let service = try OIDCDiscoveryService(
-            baseURL: XCTUnwrap(URL(string: "http://192.168.88.81:9990")),
+            baseURL: XCTUnwrap(URL(string: "http://192.168.88.137:9990")),
             realm: "fitfluence",
             session: testSession,
         )
         let document = try await service.discover()
 
-        XCTAssertEqual(document.issuer.absoluteString, "http://192.168.88.81:9990/realms/fitfluence")
+        XCTAssertEqual(document.issuer.absoluteString, "http://192.168.88.137:9990/realms/fitfluence")
         XCTAssertEqual(
             document.authorizationEndpoint.absoluteString,
-            "http://192.168.88.81:9990/realms/fitfluence/protocol/openid-connect/auth",
+            "http://192.168.88.137:9990/realms/fitfluence/protocol/openid-connect/auth",
         )
         XCTAssertEqual(
             document.tokenEndpoint.absoluteString,
-            "http://192.168.88.81:9990/realms/fitfluence/protocol/openid-connect/token",
+            "http://192.168.88.137:9990/realms/fitfluence/protocol/openid-connect/token",
+        )
+    }
+
+    func testOIDCDiscoveryRewritesStaleIPEndpointsToConfiguredHost() async throws {
+        MockURLProtocol.requestHandler = { request in
+            let json = """
+            {
+              "issuer": "http://192.168.88.81:9990/realms/fitfluence",
+              "authorization_endpoint": "http://192.168.88.81:9990/realms/fitfluence/protocol/openid-connect/auth",
+              "token_endpoint": "http://192.168.88.81:9990/realms/fitfluence/protocol/openid-connect/token",
+              "end_session_endpoint": "http://192.168.88.81:9990/realms/fitfluence/protocol/openid-connect/logout"
+            }
+            """
+            let response = try HTTPURLResponse(
+                url: XCTUnwrap(request.url),
+                statusCode: 200,
+                httpVersion: nil,
+                headerFields: nil,
+            )!
+            return (response, Data(json.utf8))
+        }
+
+        let service = try OIDCDiscoveryService(
+            baseURL: XCTUnwrap(URL(string: "http://192.168.88.137:9990")),
+            realm: "fitfluence",
+            session: testSession,
+        )
+        let document = try await service.discover()
+
+        XCTAssertEqual(document.issuer.absoluteString, "http://192.168.88.137:9990/realms/fitfluence")
+        XCTAssertEqual(
+            document.authorizationEndpoint.absoluteString,
+            "http://192.168.88.137:9990/realms/fitfluence/protocol/openid-connect/auth",
+        )
+        XCTAssertEqual(
+            document.tokenEndpoint.absoluteString,
+            "http://192.168.88.137:9990/realms/fitfluence/protocol/openid-connect/token",
         )
     }
 

@@ -84,12 +84,20 @@ struct OIDCDiscoveryService: OIDCDiscoveryServiceProtocol {
     }
 
     private func normalizeIfLoopback(_ url: URL) -> URL {
-        guard let host = url.host?.lowercased(), host == "localhost" || host == "127.0.0.1" else {
+        guard let host = url.host?.lowercased() else {
             return url
         }
-        guard let targetHost = baseURL.host, !targetHost.isEmpty else {
+        let isLoopback = host == "localhost" || host == "127.0.0.1"
+
+        // Keycloak can return stale absolute URLs in discovery after host/IP changes.
+        // For endpoints bound to our configured realm we trust runtime baseURL host.
+        let realmBasePath = "/realms/\(realm)"
+        let belongsToRealm = url.path == realmBasePath || url.path.hasPrefix("\(realmBasePath)/")
+        let shouldRewriteHost = isLoopback || (belongsToRealm && host != (baseURL.host ?? "").lowercased())
+        guard shouldRewriteHost else {
             return url
         }
+        guard let targetHost = baseURL.host, !targetHost.isEmpty else { return url }
 
         var components = URLComponents(url: url, resolvingAgainstBaseURL: false)
         components?.scheme = baseURL.scheme
