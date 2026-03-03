@@ -23,22 +23,26 @@ struct FFTextField: View {
                 .font(FFTypography.caption)
                 .foregroundStyle(FFColors.textSecondary)
 
-            TextField(placeholder, text: $text)
-                .keyboardType(keyboardType)
-                .textInputAutocapitalization(.never)
-                .autocorrectionDisabled()
-                .font(FFTypography.body)
-                .foregroundStyle(FFColors.textPrimary)
-                .padding(.horizontal, FFSpacing.md)
-                .frame(minHeight: 44)
-                .background(FFColors.surface)
-                .overlay {
-                    RoundedRectangle(cornerRadius: FFTheme.Radius.control)
-                        .stroke(borderColor, lineWidth: borderWidth)
-                }
-                .clipShape(RoundedRectangle(cornerRadius: FFTheme.Radius.control))
-                .focused($isFocused)
-                .disabled(state == .disabled)
+            TextField(
+                "",
+                text: $text,
+                prompt: Text(placeholder).foregroundStyle(FFColors.gray500),
+            )
+            .keyboardType(keyboardType)
+            .textInputAutocapitalization(.never)
+            .autocorrectionDisabled()
+            .font(FFTypography.body)
+            .foregroundStyle(FFColors.textPrimary)
+            .padding(.horizontal, FFSpacing.md)
+            .frame(minHeight: 44)
+            .background(FFColors.surface)
+            .overlay {
+                RoundedRectangle(cornerRadius: FFTheme.Radius.control)
+                    .stroke(borderColor, lineWidth: borderWidth)
+            }
+            .clipShape(RoundedRectangle(cornerRadius: FFTheme.Radius.control))
+            .focused($isFocused)
+            .disabled(state == .disabled)
 
             if let statusText {
                 Text(statusText)

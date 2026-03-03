@@ -37,7 +37,7 @@ struct QuickWorkoutBuilderView: View {
                             Text("Соберите тренировку за минуту")
                                 .font(FFTypography.h2)
                                 .foregroundStyle(FFColors.textPrimary)
-                            Text("Выберите упражнения и запустите сессию без лишних шагов.")
+                            Text("Добавьте упражнения, настройте параметры и запускайте тренировку.")
                                 .font(FFTypography.body)
                                 .foregroundStyle(FFColors.textSecondary)
                         }
@@ -48,7 +48,7 @@ struct QuickWorkoutBuilderView: View {
                             label: "Поиск упражнения",
                             placeholder: "Например, присед или тяга",
                             text: $searchQuery,
-                            helperText: "Поиск по встроенной базе",
+                            helperText: "Выберите упражнения для своей сессии",
                         )
                     }
 
@@ -146,9 +146,12 @@ struct QuickWorkoutBuilderView: View {
                     Text(exercise.name)
                         .font(FFTypography.body.weight(.semibold))
                         .foregroundStyle(FFColors.textPrimary)
-                    Text(
-                        "\(exercise.sets) подхода • \(exercise.repsMin)-\(exercise.repsMax) повт • отдых \(exercise.restSeconds) сек",
-                    )
+                    Text(exerciseDescription(
+                        sets: exercise.sets,
+                        repsMin: exercise.repsMin,
+                        repsMax: exercise.repsMax,
+                        restSeconds: exercise.restSeconds,
+                    ))
                     .font(FFTypography.caption)
                     .foregroundStyle(FFColors.textSecondary)
                 }
@@ -166,29 +169,109 @@ struct QuickWorkoutBuilderView: View {
     }
 
     private func selectedExerciseRow(index: Int, exercise: DraftExercise) -> some View {
-        HStack(spacing: FFSpacing.xs) {
-            VStack(alignment: .leading, spacing: FFSpacing.xxs) {
-                Text("\(index + 1). \(exercise.name)")
-                    .font(FFTypography.body.weight(.semibold))
-                    .foregroundStyle(FFColors.textPrimary)
-                Text("\(exercise.sets)x\(exercise.repsMin)-\(exercise.repsMax) • отдых \(exercise.restSeconds) сек")
+        VStack(alignment: .leading, spacing: FFSpacing.xs) {
+            HStack(spacing: FFSpacing.xs) {
+                VStack(alignment: .leading, spacing: FFSpacing.xxs) {
+                    Text("\(index + 1). \(exercise.name)")
+                        .font(FFTypography.body.weight(.semibold))
+                        .foregroundStyle(FFColors.textPrimary)
+                    Text(exerciseDescription(
+                        sets: exercise.sets,
+                        repsMin: exercise.repsMin,
+                        repsMax: exercise.repsMax,
+                        restSeconds: exercise.restSeconds,
+                    ))
                     .font(FFTypography.caption)
                     .foregroundStyle(FFColors.textSecondary)
+                }
+                Spacer()
+                HStack(spacing: FFSpacing.xxs) {
+                    smallIconButton(systemName: "arrow.up") {
+                        moveExercise(from: index, to: index - 1)
+                    }
+                    .disabled(index == 0)
+                    smallIconButton(systemName: "arrow.down") {
+                        moveExercise(from: index, to: index + 1)
+                    }
+                    .disabled(index == selected.count - 1)
+                    smallIconButton(systemName: "trash", tint: FFColors.danger) {
+                        selected.remove(at: index)
+                    }
+                }
             }
+
+            VStack(spacing: FFSpacing.xs) {
+                numericControlRow(
+                    title: "Подходы",
+                    value: exercise.sets,
+                    onDecrement: { updateExercise(at: index) { $0.sets = max(1, $0.sets - 1) } },
+                    onIncrement: { updateExercise(at: index) { $0.sets = min(12, $0.sets + 1) } },
+                )
+                numericControlRow(
+                    title: "Повторы (мин)",
+                    value: exercise.repsMin,
+                    onDecrement: {
+                        updateExercise(at: index) {
+                            $0.repsMin = max(1, $0.repsMin - 1)
+                            if $0.repsMax < $0.repsMin { $0.repsMax = $0.repsMin }
+                        }
+                    },
+                    onIncrement: {
+                        updateExercise(at: index) {
+                            $0.repsMin = min(30, $0.repsMin + 1)
+                            if $0.repsMax < $0.repsMin { $0.repsMax = $0.repsMin }
+                        }
+                    },
+                )
+                numericControlRow(
+                    title: "Повторы (макс)",
+                    value: exercise.repsMax,
+                    onDecrement: {
+                        updateExercise(at: index) {
+                            $0.repsMax = max($0.repsMin, $0.repsMax - 1)
+                        }
+                    },
+                    onIncrement: {
+                        updateExercise(at: index) {
+                            $0.repsMax = min(40, $0.repsMax + 1)
+                        }
+                    },
+                )
+                numericControlRow(
+                    title: "Отдых (сек)",
+                    value: exercise.restSeconds,
+                    onDecrement: { updateExercise(at: index) { $0.restSeconds = max(0, $0.restSeconds - 15) } },
+                    onIncrement: { updateExercise(at: index) { $0.restSeconds = min(600, $0.restSeconds + 15) } },
+                )
+            }
+        }
+        .padding(.vertical, FFSpacing.xs)
+        .overlay(alignment: .bottom) {
+            Rectangle()
+                .fill(FFColors.gray700.opacity(0.5))
+                .frame(height: 1)
+                .offset(y: FFSpacing.xs)
+        }
+    }
+
+    private func numericControlRow(
+        title: String,
+        value: Int,
+        onDecrement: @escaping () -> Void,
+        onIncrement: @escaping () -> Void,
+    ) -> some View {
+        HStack(spacing: FFSpacing.xs) {
+            Text(title)
+                .font(FFTypography.caption)
+                .foregroundStyle(FFColors.textSecondary)
             Spacer()
-            HStack(spacing: FFSpacing.xxs) {
-                smallIconButton(systemName: "arrow.up") {
-                    moveExercise(from: index, to: index - 1)
-                }
-                .disabled(index == 0)
-                smallIconButton(systemName: "arrow.down") {
-                    moveExercise(from: index, to: index + 1)
-                }
-                .disabled(index == selected.count - 1)
-                smallIconButton(systemName: "trash", tint: FFColors.danger) {
-                    selected.remove(at: index)
-                }
-            }
+            smallIconButton(systemName: "minus", action: onDecrement)
+            Text("\(value)")
+                .font(FFTypography.body.weight(.semibold))
+                .foregroundStyle(FFColors.textPrimary)
+                .frame(minWidth: 40)
+                .multilineTextAlignment(.center)
+            smallIconButton(systemName: "plus", action: onIncrement)
         }
     }
 
@@ -223,6 +306,17 @@ struct QuickWorkoutBuilderView: View {
         } else {
             selected.append(exercise)
         }
+    }
+
+    private func updateExercise(at index: Int, mutate: (inout DraftExercise) -> Void) {
+        guard selected.indices.contains(index) else { return }
+        var item = selected[index]
+        mutate(&item)
+        selected[index] = item
+    }
+
+    private func exerciseDescription(sets: Int, repsMin: Int, repsMax: Int, restSeconds: Int) -> String {
+        "\(sets) подхода • \(repsMin)-\(repsMax) повторов • отдых \(restSeconds) сек"
     }
 
     private func start() {
