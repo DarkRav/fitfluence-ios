@@ -339,14 +339,14 @@ private struct TodayHubView: View {
                 source: .freestyle,
             )
         }
-        .sheet(isPresented: $isQuickBuilderPresented) {
+        .fullScreenCover(isPresented: $isQuickBuilderPresented) {
             NavigationStack {
                 QuickWorkoutBuilderView { workout in
                     quickWorkout = QuickWorkoutRoute(workout: workout)
                 }
             }
         }
-        .sheet(isPresented: $isTemplateLibraryPresented) {
+        .fullScreenCover(isPresented: $isTemplateLibraryPresented) {
             NavigationStack {
                 TemplateLibraryView(
                     viewModel: TemplateLibraryViewModel(userSub: me.subject ?? "anonymous"),
