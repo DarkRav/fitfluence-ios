@@ -57,6 +57,9 @@ struct QuickWorkoutBuilderView: View {
                             Text("Выбранные упражнения")
                                 .font(FFTypography.h2)
                                 .foregroundStyle(FFColors.textPrimary)
+                            Text("Порядок выполнения: сверху вниз")
+                                .font(FFTypography.caption)
+                                .foregroundStyle(FFColors.textSecondary)
 
                             if selected.isEmpty {
                                 Text("Добавьте хотя бы одно упражнение, чтобы начать тренировку.")

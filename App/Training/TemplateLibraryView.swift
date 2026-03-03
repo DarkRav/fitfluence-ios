@@ -205,7 +205,8 @@ struct TemplateLibraryView: View {
 
                     if sectionMode == .mine {
                         myTemplatesSection
-                        createTemplateSection
+                        createTemplateBuilderSection
+                        createTemplateCatalogSection
                     } else {
                         readyTemplatesSection
                     }
@@ -302,7 +303,7 @@ struct TemplateLibraryView: View {
         }
     }
 
-    private var createTemplateSection: some View {
+    private var createTemplateBuilderSection: some View {
         FFCard {
             VStack(alignment: .leading, spacing: FFSpacing.sm) {
                 Text("Создать шаблон")
@@ -316,7 +317,35 @@ struct TemplateLibraryView: View {
                     helperText: "Короткое и понятное имя",
                 )
 
-                Text("Добавьте упражнения")
+                Text("Порядок выполнения (сверху вниз)")
+                    .font(FFTypography.caption)
+                    .foregroundStyle(FFColors.textSecondary)
+
+                if viewModel.selectedExercises.isEmpty {
+                    Text("Добавьте упражнения из каталога ниже.")
+                        .font(FFTypography.body)
+                        .foregroundStyle(FFColors.textSecondary)
+                } else {
+                    ForEach(Array(viewModel.selectedExercises.enumerated()), id: \.element.id) { index, exercise in
+                        editableSelectedExerciseRow(exercise, index: index)
+                    }
+                }
+
+                FFButton(title: viewModel.isSaving ? "Сохраняем..." : "Сохранить шаблон", variant: .primary) {
+                    Task { await viewModel.saveTemplate() }
+                }
+                .disabled(viewModel.isSaving)
+            }
+        }
+    }
+
+    private var createTemplateCatalogSection: some View {
+        FFCard {
+            VStack(alignment: .leading, spacing: FFSpacing.sm) {
+                Text("Каталог упражнений")
+                    .font(FFTypography.h2)
+                    .foregroundStyle(FFColors.textPrimary)
+                Text("Нажмите +, чтобы добавить в шаблон")
                     .font(FFTypography.caption)
                     .foregroundStyle(FFColors.textSecondary)
 
@@ -344,24 +373,8 @@ struct TemplateLibraryView: View {
                         .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
+                    .accessibilityLabel("\(exercise.name), \(isSelected ? "добавлено" : "добавить")")
                 }
-
-                if !viewModel.selectedExercises.isEmpty {
-                    VStack(alignment: .leading, spacing: FFSpacing.sm) {
-                        Text("Настройка выбранных упражнений")
-                            .font(FFTypography.caption)
-                            .foregroundStyle(FFColors.textSecondary)
-
-                        ForEach(viewModel.selectedExercises) { exercise in
-                            editableSelectedExerciseRow(exercise)
-                        }
-                    }
-                }
-
-                FFButton(title: viewModel.isSaving ? "Сохраняем..." : "Сохранить шаблон", variant: .primary) {
-                    Task { await viewModel.saveTemplate() }
-                }
-                .disabled(viewModel.isSaving)
             }
         }
     }
@@ -415,19 +428,32 @@ struct TemplateLibraryView: View {
         }
     }
 
-    private func editableSelectedExerciseRow(_ exercise: TemplateExerciseDraft) -> some View {
+    private func editableSelectedExerciseRow(_ exercise: TemplateExerciseDraft, index: Int) -> some View {
         let normalized = normalize(exercise)
         return VStack(alignment: .leading, spacing: FFSpacing.xs) {
             HStack {
-                Text(normalized.name)
-                    .font(FFTypography.body.weight(.semibold))
-                    .foregroundStyle(FFColors.textPrimary)
+                VStack(alignment: .leading, spacing: FFSpacing.xxs) {
+                    Text("\(index + 1). \(normalized.name)")
+                        .font(FFTypography.body.weight(.semibold))
+                        .foregroundStyle(FFColors.textPrimary)
+                    Text(exerciseDescription(normalized.asDraft))
+                        .font(FFTypography.caption)
+                        .foregroundStyle(FFColors.textSecondary)
+                }
                 Spacer()
+                smallIconButton(systemName: "arrow.up") {
+                    moveSelectedExercise(from: index, to: index - 1)
+                }
+                .disabled(index == 0)
+                smallIconButton(systemName: "arrow.down") {
+                    moveSelectedExercise(from: index, to: index + 1)
+                }
+                .disabled(index == viewModel.selectedExercises.count - 1)
                 Button(role: .destructive) {
                     viewModel.removeSelectedExercise(id: normalized.id)
                 } label: {
                     Image(systemName: "trash")
-                        .frame(width: 44, height: 44)
+                        .frame(width: 32, height: 32)
                         .foregroundStyle(FFColors.danger)
                 }
                 .buttonStyle(.plain)
@@ -474,6 +500,16 @@ struct TemplateLibraryView: View {
         .overlay(alignment: .bottom) {
             Rectangle().fill(FFColors.gray700.opacity(0.5)).frame(height: 1)
         }
+    }
+
+    private func moveSelectedExercise(from source: Int, to destination: Int) {
+        guard viewModel.selectedExercises.indices.contains(source),
+              viewModel.selectedExercises.indices.contains(destination),
+              source != destination else { return }
+        var items = viewModel.selectedExercises
+        let item = items.remove(at: source)
+        items.insert(item, at: destination)
+        viewModel.selectedExercises = items
     }
 
     private func mutateSelectedExercise(_ id: String, transform: (inout TemplateExerciseDraft) -> Void) {
@@ -693,9 +729,20 @@ private struct TemplateDetailsView: View {
 
     private func exerciseRow(index: Int, exercise: EditableTemplateExercise) -> some View {
         VStack(alignment: .leading, spacing: FFSpacing.xs) {
-            Text("\(index + 1). \(exercise.name)")
-                .font(FFTypography.body.weight(.semibold))
-                .foregroundStyle(FFColors.textPrimary)
+            HStack {
+                Text("\(index + 1). \(exercise.name)")
+                    .font(FFTypography.body.weight(.semibold))
+                    .foregroundStyle(FFColors.textPrimary)
+                Spacer()
+                detailsIconButton(systemName: "arrow.up") {
+                    moveExercise(from: index, to: index - 1)
+                }
+                .disabled(index == 0)
+                detailsIconButton(systemName: "arrow.down") {
+                    moveExercise(from: index, to: index + 1)
+                }
+                .disabled(index == exercises.count - 1)
+            }
 
             detailsControlRow(title: "Подходы", value: exercise.sets) {
                 updateExercise(exercise.id) { $0.sets = max(1, $0.sets - 1) }
@@ -775,6 +822,14 @@ private struct TemplateDetailsView: View {
         var item = exercises[index]
         mutate(&item)
         exercises[index] = item
+    }
+
+    private func moveExercise(from source: Int, to destination: Int) {
+        guard exercises.indices.contains(source), exercises.indices.contains(destination), source != destination else {
+            return
+        }
+        let item = exercises.remove(at: source)
+        exercises.insert(item, at: destination)
     }
 }
 
