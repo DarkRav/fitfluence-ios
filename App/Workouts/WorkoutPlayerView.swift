@@ -10,6 +10,7 @@ final class RestTimerModel {
     var isVisible = false
     var isRunning = false
     var remainingSeconds = 0
+    var onCompleted: (() -> Void)?
 
     deinit {
         task?.cancel()
@@ -32,6 +33,7 @@ final class RestTimerModel {
             if self.remainingSeconds == 0 {
                 self.isVisible = false
                 self.isRunning = false
+                self.onCompleted?()
             }
         }
     }
@@ -72,6 +74,7 @@ final class RestTimerModel {
             if self.remainingSeconds == 0 {
                 self.isVisible = false
                 self.isRunning = false
+                self.onCompleted?()
             }
         }
     }
@@ -132,6 +135,9 @@ final class WorkoutPlayerViewModel {
         self.workout = workout
         self.source = source
         self.sessionManager = sessionManager
+        restTimer.onCompleted = { [weak self] in
+            self?.toastMessage = "Отдых завершён. Можно начинать следующий подход."
+        }
     }
 
     var title: String {
@@ -203,6 +209,7 @@ final class WorkoutPlayerViewModel {
         let isNowCompleted = currentExerciseState?.sets[safe: setIndex]?.isCompleted ?? false
         if !wasCompleted, isNowCompleted, let rest = currentExercise.restSeconds {
             restTimer.start(seconds: rest)
+            toastMessage = "Отдых запущен: \(formattedTimer(rest))"
         }
     }
 
@@ -340,6 +347,10 @@ final class WorkoutPlayerViewModel {
                 reps: nextString,
             )
         }
+    }
+
+    private func formattedTimer(_ seconds: Int) -> String {
+        String(format: "%02d:%02d", seconds / 60, seconds % 60)
     }
 }
 
@@ -507,6 +518,9 @@ struct WorkoutPlayerViewV2: View {
                 Text("Подходы")
                     .font(FFTypography.h2)
                     .foregroundStyle(FFColors.textPrimary)
+                Text("Отметьте выполненный подход. Таймер отдыха запустится автоматически.")
+                    .font(FFTypography.caption)
+                    .foregroundStyle(FFColors.textSecondary)
                 if let exerciseState = viewModel.currentExerciseState {
                     ForEach(Array(exerciseState.sets.enumerated()), id: \.offset) { index, set in
                         VStack(alignment: .leading, spacing: FFSpacing.sm) {
@@ -546,16 +560,14 @@ struct WorkoutPlayerViewV2: View {
                                 metricStepper(
                                     title: "Вес",
                                     value: set.weightText.isEmpty ? "0" : set.weightText,
-                                    minusLabel: "−2.5",
-                                    plusLabel: "+2.5",
+                                    stepText: "2.5 кг",
                                     onMinus: { Task { await viewModel.decrementWeight(setIndex: index) } },
                                     onPlus: { Task { await viewModel.incrementWeight(setIndex: index) } },
                                 )
                                 metricStepper(
                                     title: "Повторы",
                                     value: set.repsText.isEmpty ? "0" : set.repsText,
-                                    minusLabel: "−1",
-                                    plusLabel: "+1",
+                                    stepText: "1",
                                     onMinus: { Task { await viewModel.decrementReps(setIndex: index) } },
                                     onPlus: { Task { await viewModel.incrementReps(setIndex: index) } },
                                 )
@@ -583,24 +595,34 @@ struct WorkoutPlayerViewV2: View {
                             Label("Отдых", systemImage: "timer")
                                 .font(FFTypography.caption.weight(.semibold))
                                 .foregroundStyle(FFColors.textSecondary)
+                            Spacer()
                             Text(formattedTime(viewModel.restTimer.remainingSeconds))
                                 .font(.system(size: 28, weight: .bold, design: .rounded))
+                                .monospacedDigit()
                                 .foregroundStyle(FFColors.textPrimary)
-                            Spacer()
-                            compactActionButton(
+                        }
+
+                        Text("Когда отдых закончится, отметьте следующий подход или переходите дальше.")
+                            .font(FFTypography.caption)
+                            .foregroundStyle(FFColors.textSecondary)
+
+                        HStack(spacing: FFSpacing.xs) {
+                            timerControlButton(
                                 title: viewModel.restTimer.isRunning ? "Пауза" : "Продолжить",
-                                systemImage: viewModel.restTimer.isRunning ? "pause.fill" : "play.fill",
                                 action: { viewModel.restTimer.pauseOrResume() },
                             )
-                            compactActionButton(title: "Пропустить", systemImage: "forward.fill") {
-                                viewModel.restTimer.skip()
-                            }
+                            timerControlButton(
+                                title: "Пропуск",
+                                variant: .destructive,
+                                action: { viewModel.restTimer.skip() },
+                            )
                         }
 
                         ViewThatFits(in: .horizontal) {
                             HStack(spacing: FFSpacing.xs) {
                                 numericChip(title: "+15") { viewModel.addRest(seconds: 15) }
                                 numericChip(title: "+30") { viewModel.addRest(seconds: 30) }
+                                numericChip(title: "+60") { viewModel.addRest(seconds: 60) }
                                 numericChip(title: "Сброс") { viewModel.restTimer.reset() }
                                 Spacer(minLength: 0)
                             }
@@ -609,6 +631,7 @@ struct WorkoutPlayerViewV2: View {
                                     numericChip(title: "+15") { viewModel.addRest(seconds: 15) }
                                     numericChip(title: "+30") { viewModel.addRest(seconds: 30) }
                                 }
+                                numericChip(title: "+60") { viewModel.addRest(seconds: 60) }
                                 numericChip(title: "Сброс") { viewModel.restTimer.reset() }
                             }
                         }
@@ -683,8 +706,7 @@ struct WorkoutPlayerViewV2: View {
     private func metricStepper(
         title: String,
         value: String,
-        minusLabel: String,
-        plusLabel: String,
+        stepText: String,
         onMinus: @escaping () -> Void,
         onPlus: @escaping () -> Void,
     ) -> some View {
@@ -693,17 +715,58 @@ struct WorkoutPlayerViewV2: View {
                 .font(FFTypography.caption)
                 .foregroundStyle(FFColors.textSecondary)
             HStack(spacing: FFSpacing.xs) {
-                numericChip(title: minusLabel, action: onMinus)
+                stepControlButton(systemName: "minus", action: onMinus)
                 Text(value)
                     .font(FFTypography.body.weight(.semibold))
                     .foregroundStyle(FFColors.textPrimary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
                     .frame(maxWidth: .infinity, minHeight: 44)
                     .background(FFColors.background.opacity(0.4))
                     .clipShape(RoundedRectangle(cornerRadius: FFTheme.Radius.control))
-                numericChip(title: plusLabel, action: onPlus)
+                stepControlButton(systemName: "plus", action: onPlus)
             }
+            Text("Шаг: \(stepText)")
+                .font(FFTypography.caption)
+                .foregroundStyle(FFColors.textSecondary)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func stepControlButton(systemName: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: systemName)
+                .font(.system(size: 16, weight: .bold))
+                .foregroundStyle(FFColors.textPrimary)
+                .frame(width: 44, height: 44)
+                .background(FFColors.gray700)
+                .clipShape(RoundedRectangle(cornerRadius: FFTheme.Radius.control))
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func timerControlButton(
+        title: String,
+        variant: FFButton.Variant = .secondary,
+        action: @escaping () -> Void,
+    ) -> some View {
+        Button(action: action) {
+            Text(title)
+                .font(FFTypography.caption.weight(.semibold))
+                .foregroundStyle(variant == .destructive ? FFColors.textPrimary : FFColors.textPrimary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+                .frame(maxWidth: .infinity, minHeight: 44)
+                .background(variant == .destructive ? FFColors.danger : FFColors.surface)
+                .clipShape(RoundedRectangle(cornerRadius: FFTheme.Radius.control))
+                .overlay {
+                    if variant != .destructive {
+                        RoundedRectangle(cornerRadius: FFTheme.Radius.control)
+                            .stroke(FFColors.gray700, lineWidth: 1)
+                    }
+                }
+        }
+        .buttonStyle(.plain)
     }
 
     private func prescription(for exercise: WorkoutExercise) -> String {

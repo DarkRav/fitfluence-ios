@@ -21,6 +21,7 @@ struct HomeTodayWorkoutSnapshot: Equatable {
 
 struct HomePlannedWorkoutSnapshot: Equatable {
     let title: String
+    let status: TrainingDayStatus
     let statusText: String
     let subtitle: String
     let programId: String?
@@ -47,6 +48,12 @@ final class HomeViewModel {
     var todayWorkout: HomeTodayWorkoutSnapshot?
     var plannedWorkoutToday: HomePlannedWorkoutSnapshot?
     var lastWorkoutSummary: String?
+    var todayCompletedWorkouts = 0
+    var todayCompletedMinutes = 0
+    var todayVolume: Int?
+    var weekCompleted = 0
+    var weekPlannedTotal = 0
+    var streakDays = 0
 
     init(
         userSub: String,
@@ -70,14 +77,12 @@ final class HomeViewModel {
         if activeSession != nil {
             return "Продолжить тренировку"
         }
-        if plannedWorkoutToday?.workoutId != nil, plannedWorkoutToday?.programId != nil {
+        if let plannedWorkoutToday,
+           plannedWorkoutToday.status == .planned,
+           plannedWorkoutToday.workoutId != nil,
+           plannedWorkoutToday.programId != nil
+        {
             return "Начать сегодняшнюю"
-        }
-        if nextWorkout != nil {
-            return "Начать следующую"
-        }
-        if lastWorkout != nil {
-            return "Повторить последнюю"
         }
         return "Открыть тренировку"
     }
@@ -87,12 +92,15 @@ final class HomeViewModel {
             return "Продолжайте с места остановки"
         }
         if let plannedWorkoutToday {
+            if plannedWorkoutToday.status == .completed {
+                return "План дня выполнен. Можно перейти к дополнительной тренировке."
+            }
+            if plannedWorkoutToday.status == .missed {
+                return "Тренировка на сегодня пропущена. Можно вернуть ритм во вкладке «Тренировка»."
+            }
             return "\(plannedWorkoutToday.statusText): \(plannedWorkoutToday.title)"
         }
-        if let nextWorkout {
-            return "Следующая по программе: \(nextWorkout.title)"
-        }
-        return "Откройте вкладку «Тренировка» для быстрого старта"
+        return "Плана на сегодня нет. Во вкладке «Тренировка» доступны быстрый старт и шаблоны."
     }
 
     var primaryAction: HomePrimaryAction {
@@ -100,16 +108,11 @@ final class HomeViewModel {
             return .continueSession(programId: activeSession.programId, workoutId: activeSession.workoutId)
         }
         if let plannedWorkoutToday,
+           plannedWorkoutToday.status == .planned,
            let programId = plannedWorkoutToday.programId,
            let workoutId = plannedWorkoutToday.workoutId
         {
             return .startNext(programId: programId, workoutId: workoutId)
-        }
-        if let nextWorkout, let activeProgramId {
-            return .startNext(programId: activeProgramId, workoutId: nextWorkout.id)
-        }
-        if let lastWorkout, let activeProgramId {
-            return .repeatLast(programId: activeProgramId, workoutId: lastWorkout.id)
         }
         return .openTrainingHub
     }
@@ -121,6 +124,7 @@ final class HomeViewModel {
 
         activeSession = await sessionManager.latestActiveSession(userSub: userSub)
         await loadTodayPlan()
+        await loadTodayMetrics()
 
         if let activeSession {
             activeProgramId = activeSession.programId
@@ -174,11 +178,32 @@ final class HomeViewModel {
 
         plannedWorkoutToday = HomePlannedWorkoutSnapshot(
             title: plan.title,
+            status: plan.status,
             statusText: statusText,
             subtitle: sourceText,
             programId: plan.programId,
             workoutId: plan.workoutId,
         )
+    }
+
+    private func loadTodayMetrics() async {
+        let records = await trainingStore.history(userSub: userSub, source: nil, limit: 180)
+        let today = calendar.startOfDay(for: Date())
+        let todayRecords = records.filter { calendar.isDate($0.finishedAt, inSameDayAs: today) }
+
+        todayCompletedWorkouts = todayRecords.count
+        todayCompletedMinutes = todayRecords.reduce(0) { partial, record in
+            partial + max(1, record.durationSeconds / 60)
+        }
+        let todayVolumeValue = Int(todayRecords.reduce(0) { $0 + $1.volume })
+        todayVolume = todayVolumeValue > 0 ? todayVolumeValue : nil
+
+        if let weekStart = calendar.dateInterval(of: .weekOfYear, for: Date())?.start {
+            let week = await trainingStore.weeklySummary(userSub: userSub, weekStart: weekStart)
+            weekCompleted = week.completed
+            weekPlannedTotal = week.completed + week.planned + week.missed
+            streakDays = week.streakDays
+        }
     }
 
     private func loadProgramContext(programId: String) async {
@@ -320,7 +345,8 @@ struct HomeViewV2: View {
             VStack(spacing: FFSpacing.md) {
                 hero
                 todayWorkoutCard
-                lastActivityCard
+                summaryCard
+                focusCard
                 trainingEntryCard
             }
             .padding(.horizontal, FFSpacing.md)
@@ -381,29 +407,62 @@ struct HomeViewV2: View {
         }
     }
 
-    private var lastActivityCard: some View {
+    private var summaryCard: some View {
         FFCard {
-            VStack(alignment: .leading, spacing: FFSpacing.xs) {
-                Text("Последняя активность")
+            VStack(alignment: .leading, spacing: FFSpacing.sm) {
+                Text("Статус дня")
                     .font(FFTypography.h2)
                     .foregroundStyle(FFColors.textPrimary)
 
-                if let lastWorkout = viewModel.lastWorkout {
-                    Text(lastWorkout.title)
-                        .font(FFTypography.body.weight(.semibold))
-                        .foregroundStyle(FFColors.textPrimary)
-                    Text(viewModel.lastWorkoutSummary ?? "Детали будут после первой тренировки")
+                LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: FFSpacing.xs) {
+                    summaryMetric(
+                        title: "Сегодня",
+                        value: "\(viewModel.todayCompletedWorkouts)",
+                        subtitle: "тренировок",
+                    )
+                    summaryMetric(
+                        title: "Минуты",
+                        value: "\(viewModel.todayCompletedMinutes)",
+                        subtitle: "за день",
+                    )
+                    summaryMetric(
+                        title: "Неделя",
+                        value: viewModel
+                            .weekPlannedTotal > 0 ? "\(viewModel.weekCompleted)/\(viewModel.weekPlannedTotal)" : "—",
+                        subtitle: "выполнено",
+                    )
+                    summaryMetric(
+                        title: "Серия",
+                        value: "\(viewModel.streakDays)",
+                        subtitle: "дней",
+                    )
+                }
+
+                if let todayVolume = viewModel.todayVolume {
+                    Text("Объём за сегодня: \(todayVolume) кг")
                         .font(FFTypography.caption)
                         .foregroundStyle(FFColors.textSecondary)
+                }
+            }
+        }
+    }
 
-                    if let programId = viewModel.activeProgramId {
-                        FFButton(title: "Повторить последнюю", variant: .secondary) {
-                            onPrimaryAction(.repeatLast(programId: programId, workoutId: lastWorkout.id))
-                        }
-                    }
-                } else {
-                    Text("После первой завершённой тренировки здесь появится быстрый повтор.")
-                        .font(FFTypography.body)
+    @ViewBuilder
+    private var focusCard: some View {
+        if let todayWorkout = viewModel.todayWorkout {
+            FFCard {
+                VStack(alignment: .leading, spacing: FFSpacing.xs) {
+                    Text("Фокус следующей тренировки")
+                        .font(FFTypography.h2)
+                        .foregroundStyle(FFColors.textPrimary)
+                    Text(todayWorkout.title)
+                        .font(FFTypography.body.weight(.semibold))
+                        .foregroundStyle(FFColors.textPrimary)
+                    Text(todayWorkout.focus)
+                        .font(FFTypography.caption)
+                        .foregroundStyle(FFColors.textSecondary)
+                    Text(todayWorkout.equipment)
+                        .font(FFTypography.caption)
                         .foregroundStyle(FFColors.textSecondary)
                 }
             }
@@ -423,6 +482,30 @@ struct HomeViewV2: View {
 
                 FFButton(title: "Открыть тренировку", variant: .secondary, action: onOpenTraining)
             }
+        }
+    }
+
+    private func summaryMetric(title: String, value: String, subtitle: String) -> some View {
+        VStack(alignment: .leading, spacing: FFSpacing.xxs) {
+            Text(title)
+                .font(FFTypography.caption)
+                .foregroundStyle(FFColors.textSecondary)
+            Text(value)
+                .font(FFTypography.h2)
+                .foregroundStyle(FFColors.textPrimary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.85)
+            Text(subtitle)
+                .font(FFTypography.caption)
+                .foregroundStyle(FFColors.textSecondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(FFSpacing.sm)
+        .background(FFColors.surface)
+        .clipShape(RoundedRectangle(cornerRadius: FFTheme.Radius.control))
+        .overlay {
+            RoundedRectangle(cornerRadius: FFTheme.Radius.control)
+                .stroke(FFColors.gray700, lineWidth: 1)
         }
     }
 }
