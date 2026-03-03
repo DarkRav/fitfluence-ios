@@ -328,6 +328,10 @@ struct TemplateLibraryView: View {
                 } else {
                     ForEach(Array(viewModel.selectedExercises.enumerated()), id: \.element.id) { index, exercise in
                         editableSelectedExerciseRow(exercise, index: index)
+                            .dropDestination(for: String.self) { items, _ in
+                                guard let draggedId = items.first else { return false }
+                                return reorderSelectedExercises(draggedId: draggedId, targetId: exercise.id)
+                            }
                     }
                 }
 
@@ -441,14 +445,7 @@ struct TemplateLibraryView: View {
                         .foregroundStyle(FFColors.textSecondary)
                 }
                 Spacer()
-                smallIconButton(systemName: "arrow.up") {
-                    moveSelectedExercise(from: index, to: index - 1)
-                }
-                .disabled(index == 0)
-                smallIconButton(systemName: "arrow.down") {
-                    moveSelectedExercise(from: index, to: index + 1)
-                }
-                .disabled(index == viewModel.selectedExercises.count - 1)
+                reorderHandle(id: normalized.id)
                 Button(role: .destructive) {
                     viewModel.removeSelectedExercise(id: normalized.id)
                 } label: {
@@ -502,14 +499,18 @@ struct TemplateLibraryView: View {
         }
     }
 
-    private func moveSelectedExercise(from source: Int, to destination: Int) {
-        guard viewModel.selectedExercises.indices.contains(source),
-              viewModel.selectedExercises.indices.contains(destination),
-              source != destination else { return }
+    private func reorderSelectedExercises(draggedId: String, targetId: String) -> Bool {
+        guard draggedId != targetId,
+              let from = viewModel.selectedExercises.firstIndex(where: { $0.id == draggedId }),
+              let to = viewModel.selectedExercises.firstIndex(where: { $0.id == targetId })
+        else { return false }
+
         var items = viewModel.selectedExercises
-        let item = items.remove(at: source)
+        let item = items.remove(at: from)
+        let destination = from < to ? to - 1 : to
         items.insert(item, at: destination)
         viewModel.selectedExercises = items
+        return true
     }
 
     private func mutateSelectedExercise(_ id: String, transform: (inout TemplateExerciseDraft) -> Void) {
@@ -558,6 +559,21 @@ struct TemplateLibraryView: View {
                 }
         }
         .buttonStyle(.plain)
+    }
+
+    private func reorderHandle(id: String) -> some View {
+        Image(systemName: "line.3.horizontal")
+            .font(.system(size: 16, weight: .semibold))
+            .foregroundStyle(FFColors.textSecondary)
+            .frame(width: 32, height: 32)
+            .background(FFColors.surface)
+            .clipShape(RoundedRectangle(cornerRadius: FFTheme.Radius.control))
+            .overlay {
+                RoundedRectangle(cornerRadius: FFTheme.Radius.control)
+                    .stroke(FFColors.gray700, lineWidth: 1)
+            }
+            .draggable(id)
+            .accessibilityLabel("Перетащите, чтобы изменить порядок упражнения")
     }
 
     private func normalize(_ exercise: TemplateExerciseDraft) -> EditableTemplateExercise {
@@ -662,6 +678,10 @@ private struct TemplateDetailsView: View {
                             } else {
                                 ForEach(Array(exercises.enumerated()), id: \.element.id) { index, exercise in
                                     exerciseRow(index: index, exercise: exercise)
+                                        .dropDestination(for: String.self) { items, _ in
+                                            guard let draggedId = items.first else { return false }
+                                            return reorderExercises(draggedId: draggedId, targetId: exercise.id)
+                                        }
                                 }
                             }
                         }
@@ -734,14 +754,7 @@ private struct TemplateDetailsView: View {
                     .font(FFTypography.body.weight(.semibold))
                     .foregroundStyle(FFColors.textPrimary)
                 Spacer()
-                detailsIconButton(systemName: "arrow.up") {
-                    moveExercise(from: index, to: index - 1)
-                }
-                .disabled(index == 0)
-                detailsIconButton(systemName: "arrow.down") {
-                    moveExercise(from: index, to: index + 1)
-                }
-                .disabled(index == exercises.count - 1)
+                detailsReorderHandle(id: exercise.id)
             }
 
             detailsControlRow(title: "Подходы", value: exercise.sets) {
@@ -817,6 +830,21 @@ private struct TemplateDetailsView: View {
         .buttonStyle(.plain)
     }
 
+    private func detailsReorderHandle(id: String) -> some View {
+        Image(systemName: "line.3.horizontal")
+            .font(.system(size: 16, weight: .semibold))
+            .frame(width: 32, height: 32)
+            .foregroundStyle(FFColors.textSecondary)
+            .background(FFColors.surface)
+            .clipShape(RoundedRectangle(cornerRadius: FFTheme.Radius.control))
+            .overlay {
+                RoundedRectangle(cornerRadius: FFTheme.Radius.control)
+                    .stroke(FFColors.gray700, lineWidth: 1)
+            }
+            .draggable(id)
+            .accessibilityLabel("Перетащите, чтобы изменить порядок упражнения")
+    }
+
     private func updateExercise(_ id: String, mutate: (inout EditableTemplateExercise) -> Void) {
         guard let index = exercises.firstIndex(where: { $0.id == id }) else { return }
         var item = exercises[index]
@@ -824,12 +852,16 @@ private struct TemplateDetailsView: View {
         exercises[index] = item
     }
 
-    private func moveExercise(from source: Int, to destination: Int) {
-        guard exercises.indices.contains(source), exercises.indices.contains(destination), source != destination else {
-            return
-        }
-        let item = exercises.remove(at: source)
+    private func reorderExercises(draggedId: String, targetId: String) -> Bool {
+        guard draggedId != targetId,
+              let from = exercises.firstIndex(where: { $0.id == draggedId }),
+              let to = exercises.firstIndex(where: { $0.id == targetId })
+        else { return false }
+
+        let item = exercises.remove(at: from)
+        let destination = from < to ? to - 1 : to
         exercises.insert(item, at: destination)
+        return true
     }
 }
 

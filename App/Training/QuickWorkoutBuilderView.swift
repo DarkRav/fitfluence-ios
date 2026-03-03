@@ -68,6 +68,10 @@ struct QuickWorkoutBuilderView: View {
                             } else {
                                 ForEach(Array(selected.enumerated()), id: \.element.id) { index, exercise in
                                     selectedExerciseRow(index: index, exercise: exercise)
+                                        .dropDestination(for: String.self) { items, _ in
+                                            guard let draggedId = items.first else { return false }
+                                            return reorderSelected(draggedId: draggedId, targetId: exercise.id)
+                                        }
                                 }
                             }
                         }
@@ -189,14 +193,18 @@ struct QuickWorkoutBuilderView: View {
                 }
                 Spacer()
                 HStack(spacing: FFSpacing.xxs) {
-                    smallIconButton(systemName: "arrow.up") {
-                        moveExercise(from: index, to: index - 1)
-                    }
-                    .disabled(index == 0)
-                    smallIconButton(systemName: "arrow.down") {
-                        moveExercise(from: index, to: index + 1)
-                    }
-                    .disabled(index == selected.count - 1)
+                    Image(systemName: "line.3.horizontal")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(FFColors.textSecondary)
+                        .frame(width: 32, height: 32)
+                        .background(FFColors.surface)
+                        .clipShape(RoundedRectangle(cornerRadius: FFTheme.Radius.control))
+                        .overlay {
+                            RoundedRectangle(cornerRadius: FFTheme.Radius.control)
+                                .stroke(FFColors.gray700, lineWidth: 1)
+                        }
+                        .draggable(exercise.id)
+                        .accessibilityLabel("Перетащите, чтобы изменить порядок упражнения")
                     smallIconButton(systemName: "trash", tint: FFColors.danger) {
                         selected.remove(at: index)
                     }
@@ -296,11 +304,16 @@ struct QuickWorkoutBuilderView: View {
         .buttonStyle(.plain)
     }
 
-    private func moveExercise(from source: Int, to destination: Int) {
-        guard selected.indices.contains(source), selected.indices.contains(destination),
-              source != destination else { return }
-        let item = selected.remove(at: source)
+    private func reorderSelected(draggedId: String, targetId: String) -> Bool {
+        guard draggedId != targetId,
+              let from = selected.firstIndex(where: { $0.id == draggedId }),
+              let to = selected.firstIndex(where: { $0.id == targetId })
+        else { return false }
+
+        let item = selected.remove(at: from)
+        let destination = from < to ? to - 1 : to
         selected.insert(item, at: destination)
+        return true
     }
 
     private func toggleExercise(_ exercise: DraftExercise) {
