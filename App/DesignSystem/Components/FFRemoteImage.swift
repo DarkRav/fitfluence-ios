@@ -61,4 +61,14 @@ private final class FFImageCache {
     func insert(_ image: UIImage, for url: URL) {
         cache.setObject(image, forKey: url as NSURL)
     }
+
+    func clear() {
+        cache.removeAllObjects()
+    }
+}
+
+enum FFRemoteImageCache {
+    static func clearAll() {
+        FFImageCache.shared.clear()
+    }
 }

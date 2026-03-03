@@ -183,6 +183,7 @@ private struct AthleteShellView: View {
                     me: me,
                     userSub: me.subject ?? "anonymous",
                     isOnline: isOnline,
+                    apiClient: apiClient,
                     onLogout: onLogout,
                 )
             }
@@ -478,13 +479,23 @@ private struct ProfileTabView: View {
     let me: MeResponse
     let userSub: String
     let isOnline: Bool
+    let apiClient: APIClientProtocol?
     let onLogout: () -> Void
     @State private var viewModel: ProfileViewModel
+    @State private var selectedProgramID: String?
+    @State private var selectedSession: ActiveWorkoutSession?
 
-    init(me: MeResponse, userSub: String, isOnline: Bool, onLogout: @escaping () -> Void) {
+    init(
+        me: MeResponse,
+        userSub: String,
+        isOnline: Bool,
+        apiClient: APIClientProtocol?,
+        onLogout: @escaping () -> Void,
+    ) {
         self.me = me
         self.userSub = userSub
         self.isOnline = isOnline
+        self.apiClient = apiClient
         self.onLogout = onLogout
         _viewModel = State(
             initialValue: ProfileViewModel(
@@ -496,9 +507,54 @@ private struct ProfileTabView: View {
     }
 
     var body: some View {
-        ProfileScreen(viewModel: viewModel, onLogout: onLogout)
-            .onChange(of: isOnline) { _, online in
-                viewModel.updateNetworkStatus(online)
+        ProfileScreen(
+            viewModel: viewModel,
+            onLogout: onLogout,
+            onOpenProgram: { programID in
+                selectedProgramID = programID
+            },
+            onOpenActiveSession: { session in
+                selectedSession = session
+            },
+        )
+        .onChange(of: isOnline) { _, online in
+            viewModel.updateNetworkStatus(online)
+        }
+        .navigationDestination(
+            isPresented: Binding(
+                get: { selectedProgramID != nil },
+                set: { isPresented in
+                    if !isPresented {
+                        selectedProgramID = nil
+                    }
+                },
+            ),
+        ) {
+            if let programID = selectedProgramID {
+                ProgramDetailsScreen(
+                    viewModel: ProgramDetailsViewModel(
+                        programId: programID,
+                        userSub: userSub,
+                        programsClient: apiClient as? ProgramsClientProtocol,
+                    ),
+                    apiClient: apiClient,
+                )
+                .navigationTitle("Программа")
             }
+        }
+        .navigationDestination(item: $selectedSession) { session in
+            WorkoutLaunchView(
+                userSub: session.userSub,
+                programId: session.programId,
+                workoutId: session.workoutId,
+                apiClient: apiClient,
+            )
+        }
+    }
+}
+
+extension ActiveWorkoutSession: Identifiable {
+    var id: String {
+        "\(userSub)::\(programId)::\(workoutId)"
     }
 }
