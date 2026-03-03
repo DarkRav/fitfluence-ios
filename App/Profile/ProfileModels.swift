@@ -32,22 +32,6 @@ struct ProfileSettings: Codable, Equatable, Sendable {
     )
 }
 
-struct ProfileMetricItem: Equatable, Sendable, Identifiable {
-    let id: String
-    let title: String
-    let value: String
-    let subtitle: String?
-}
-
-struct ProfileActiveProgramSnapshot: Equatable, Sendable {
-    let programId: String?
-    let title: String
-    let completedWorkouts: Int?
-    let totalWorkouts: Int?
-    let nextWorkoutTitle: String?
-    let nextWorkoutSubtitle: String?
-}
-
 struct ProfileSessionSnapshot: Equatable, Sendable {
     let session: ActiveWorkoutSession
     let subtitle: String

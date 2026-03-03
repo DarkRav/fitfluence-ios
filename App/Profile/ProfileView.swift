@@ -1,13 +1,9 @@
 import SwiftUI
-import UIKit
 
 struct ProfileScreen: View {
     @State var viewModel: ProfileViewModel
     let onLogout: () -> Void
-    let onOpenProgram: (String) -> Void
     let onOpenActiveSession: (ActiveWorkoutSession) -> Void
-
-    @Environment(\.openURL) private var openURL
 
     var body: some View {
         ScrollView {
@@ -31,12 +27,7 @@ struct ProfileScreen: View {
 
                 case .loaded:
                     headerCard
-                    metricsGrid
-                    activeProgramCard
-                    settingsCard
-                    dataCard
-                    helpCard
-                    versionCard
+                    menuCard
                 }
             }
             .padding(.horizontal, FFSpacing.md)
@@ -51,9 +42,10 @@ struct ProfileScreen: View {
 
     private var offlineCard: some View {
         FFCard {
-            Text("Оффлайн: данные профиля загружены из локального хранилища.")
+            Text("Оффлайн: данные доступны на устройстве.")
                 .font(FFTypography.caption.weight(.semibold))
                 .foregroundStyle(FFColors.primary)
+                .accessibilityLabel("Оффлайн режим. Данные доступны на устройстве.")
         }
     }
 
@@ -76,12 +68,13 @@ struct ProfileScreen: View {
                             .font(FFTypography.h2)
                             .foregroundStyle(FFColors.textPrimary)
                         Text(viewModel.email)
-                            .font(FFTypography.body)
+                            .font(FFTypography.caption)
                             .foregroundStyle(FFColors.textSecondary)
                         Text("\(viewModel.syncStatusTitle) • \(viewModel.syncStatus)")
                             .font(FFTypography.caption)
                             .foregroundStyle(viewModel.isOnline ? FFColors.accent : FFColors.primary)
                     }
+
                     Spacer(minLength: FFSpacing.xs)
                 }
 
@@ -91,330 +84,124 @@ struct ProfileScreen: View {
         }
     }
 
-    private var metricsGrid: some View {
-        LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: FFSpacing.sm) {
-            ForEach(viewModel.metrics) { item in
-                FFCard {
-                    VStack(alignment: .leading, spacing: FFSpacing.xs) {
-                        Text(item.title)
-                            .font(FFTypography.caption)
-                            .foregroundStyle(FFColors.textSecondary)
-                        Text(item.value)
-                            .font(FFTypography.h1)
-                            .foregroundStyle(FFColors.textPrimary)
-                        if let subtitle = item.subtitle {
-                            Text(subtitle)
-                                .font(FFTypography.caption)
-                                .foregroundStyle(FFColors.gray300)
-                        }
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                }
-                .accessibilityElement(children: .combine)
-                .accessibilityLabel("\(item.title): \(item.value) \(item.subtitle ?? "")")
-            }
-        }
-    }
-
-    @ViewBuilder
-    private var activeProgramCard: some View {
-        if let activeProgram = viewModel.activeProgram {
-            FFCard {
-                VStack(alignment: .leading, spacing: FFSpacing.xs) {
-                    Text("Активная программа")
-                        .font(FFTypography.h2)
-                        .foregroundStyle(FFColors.textPrimary)
-
-                    Text(activeProgram.title)
-                        .font(FFTypography.body.weight(.semibold))
-                        .foregroundStyle(FFColors.textPrimary)
-
-                    if let completed = activeProgram.completedWorkouts, let total = activeProgram.totalWorkouts {
-                        Text("Прогресс: \(completed)/\(total) тренировок")
-                            .font(FFTypography.caption)
-                            .foregroundStyle(FFColors.textSecondary)
-                    } else {
-                        Text("Прогресс появится после загрузки тренировок.")
-                            .font(FFTypography.caption)
-                            .foregroundStyle(FFColors.textSecondary)
-                    }
-
-                    if let nextWorkoutTitle = activeProgram.nextWorkoutTitle {
-                        Text("Следующая: \(nextWorkoutTitle)")
-                            .font(FFTypography.caption)
-                            .foregroundStyle(FFColors.accent)
-                    }
-
-                    if let nextWorkoutSubtitle = activeProgram.nextWorkoutSubtitle {
-                        Text(nextWorkoutSubtitle)
-                            .font(FFTypography.caption)
-                            .foregroundStyle(FFColors.textSecondary)
-                    }
-
-                    if let programId = activeProgram.programId {
-                        FFButton(title: "Открыть программу", variant: .primary) {
-                            onOpenProgram(programId)
-                        }
-                        .accessibilityLabel("Открыть активную программу")
-                    }
-                }
-            }
-        } else {
-            FFCard {
-                FFEmptyState(
-                    title: "Активная программа не выбрана",
-                    message: "Откройте каталог и начните программу, чтобы видеть прогресс здесь.",
-                )
-            }
-        }
-    }
-
-    private var settingsCard: some View {
+    private var menuCard: some View {
         FFCard {
-            VStack(alignment: .leading, spacing: FFSpacing.sm) {
-                Text("Настройки тренировки")
-                    .font(FFTypography.h2)
-                    .foregroundStyle(FFColors.textPrimary)
-
-                Picker("Единицы веса", selection: Binding(
-                    get: { viewModel.settings.weightUnit },
-                    set: { newValue in
-                        viewModel.settings.weightUnit = newValue
-                        Task { await viewModel.persistSettings() }
-                    },
-                )) {
-                    ForEach(TrainingWeightUnit.allCases, id: \.self) { unit in
-                        Text(unit.title).tag(unit)
-                    }
+            VStack(spacing: 0) {
+                NavigationLink {
+                    WorkoutSettingsView(viewModel: viewModel)
+                } label: {
+                    ProfileMenuRow(title: "Настройки тренировки", icon: "slider.horizontal.3")
                 }
-                .pickerStyle(.segmented)
-                .accessibilityLabel("Единицы веса")
+                .buttonStyle(.plain)
+                .frame(minHeight: 44)
+                .accessibilityLabel("Настройки тренировки")
 
-                VStack(alignment: .leading, spacing: FFSpacing.xs) {
-                    Text("Шаг веса: \(String(format: "%.1f", viewModel.settings.weightStep))")
-                        .font(FFTypography.caption)
-                        .foregroundStyle(FFColors.textSecondary)
-                    Stepper(
-                        value: Binding(
-                            get: { viewModel.settings.weightStep },
-                            set: { newValue in
-                                viewModel.settings.weightStep = max(0.5, min(newValue, 10.0))
-                                Task { await viewModel.persistSettings() }
-                            },
-                        ),
-                        in: 0.5 ... 10.0,
-                        step: 0.5,
-                    ) {
-                        Text("Изменить шаг веса")
-                            .font(FFTypography.body)
-                            .foregroundStyle(FFColors.textPrimary)
-                    }
+                Divider().overlay(FFColors.gray700)
+
+                NavigationLink {
+                    DataAndOfflineView(viewModel: viewModel, onOpenActiveSession: onOpenActiveSession)
+                } label: {
+                    ProfileMenuRow(title: "Данные и офлайн", icon: "externaldrive")
                 }
+                .buttonStyle(.plain)
+                .frame(minHeight: 44)
+                .accessibilityLabel("Данные и офлайн")
 
-                VStack(alignment: .leading, spacing: FFSpacing.xs) {
-                    Text("Rest timer: \(viewModel.settings.defaultRestSeconds) сек")
-                        .font(FFTypography.caption)
-                        .foregroundStyle(FFColors.textSecondary)
-                    Stepper(
-                        value: Binding(
-                            get: { viewModel.settings.defaultRestSeconds },
-                            set: { newValue in
-                                viewModel.settings.defaultRestSeconds = max(15, min(newValue, 600))
-                                Task { await viewModel.persistSettings() }
-                            },
-                        ),
-                        in: 15 ... 600,
-                        step: 15,
-                    ) {
-                        Text("Изменить таймер отдыха")
-                            .font(FFTypography.body)
-                            .foregroundStyle(FFColors.textPrimary)
-                    }
+                Divider().overlay(FFColors.gray700)
+
+                NavigationLink {
+                    HelpAndDiagnosticsView(viewModel: viewModel)
+                } label: {
+                    ProfileMenuRow(title: "Помощь и диагностика", icon: "lifepreserver")
                 }
-
-                Toggle(
-                    isOn: Binding(
-                        get: { viewModel.settings.timerVibrationEnabled },
-                        set: { newValue in
-                            viewModel.settings.timerVibrationEnabled = newValue
-                            Task { await viewModel.persistSettings() }
-                        },
-                    ),
-                    label: {
-                        Text("Вибрация таймера")
-                            .font(FFTypography.body)
-                            .foregroundStyle(FFColors.textPrimary)
-                    },
-                )
-                .tint(FFColors.accent)
-
-                Toggle(
-                    isOn: Binding(
-                        get: { viewModel.settings.timerSoundEnabled },
-                        set: { newValue in
-                            viewModel.settings.timerSoundEnabled = newValue
-                            Task { await viewModel.persistSettings() }
-                        },
-                    ),
-                    label: {
-                        Text("Звук таймера")
-                            .font(FFTypography.body)
-                            .foregroundStyle(FFColors.textPrimary)
-                    },
-                )
-                .tint(FFColors.accent)
-
-                Toggle(
-                    isOn: Binding(
-                        get: { viewModel.settings.showRPE },
-                        set: { newValue in
-                            viewModel.settings.showRPE = newValue
-                            Task { await viewModel.persistSettings() }
-                        },
-                    ),
-                    label: {
-                        Text("Показывать RPE")
-                            .font(FFTypography.body)
-                            .foregroundStyle(FFColors.textPrimary)
-                    },
-                )
-                .tint(FFColors.accent)
-            }
-        }
-    }
-
-    private var dataCard: some View {
-        FFCard {
-            VStack(alignment: .leading, spacing: FFSpacing.sm) {
-                Text("Данные и офлайн")
-                    .font(FFTypography.h2)
-                    .foregroundStyle(FFColors.textPrimary)
-
-                Text("Кэш: \(viewModel.diagnostics.cacheSizeLabel)")
-                    .font(FFTypography.body)
-                    .foregroundStyle(FFColors.textPrimary)
-
-                Text("Локальные данные тренировок: \(viewModel.diagnostics.localStorageLabel)")
-                    .font(FFTypography.caption)
-                    .foregroundStyle(FFColors.textSecondary)
-
-                FFButton(
-                    title: viewModel.isClearingCache ? "Очищаем..." : "Очистить кэш",
-                    variant: viewModel.isClearingCache ? .disabled : .secondary,
-                ) {
-                    Task { await viewModel.clearCache() }
-                }
-                .accessibilityLabel("Очистить кэш")
-                .accessibilityHint("Удаляет кэш программ и изображений, не удаляет прогресс")
-
-                if let activeSession = viewModel.activeSession {
-                    Divider().overlay(FFColors.gray700)
-                    Text("Незавершённая тренировка")
-                        .font(FFTypography.body.weight(.semibold))
-                        .foregroundStyle(FFColors.textPrimary)
-                    Text(activeSession.subtitle)
-                        .font(FFTypography.caption)
-                        .foregroundStyle(FFColors.textSecondary)
-
-                    FFButton(title: "Открыть", variant: .primary) {
-                        onOpenActiveSession(activeSession.session)
-                    }
-                    .accessibilityLabel("Открыть незавершённую тренировку")
-
-                    FFButton(title: "Сбросить", variant: .destructive) {
-                        Task { await viewModel.resetActiveSession() }
-                    }
-                    .accessibilityLabel("Сбросить незавершённую тренировку")
-                }
-
-                if let infoMessage = viewModel.infoMessage {
-                    Text(infoMessage)
-                        .font(FFTypography.caption)
-                        .foregroundStyle(FFColors.accent)
-                        .accessibilityLabel(infoMessage)
-                }
-            }
-        }
-    }
-
-    private var helpCard: some View {
-        FFCard {
-            VStack(alignment: .leading, spacing: FFSpacing.sm) {
-                Text("Помощь")
-                    .font(FFTypography.h2)
-                    .foregroundStyle(FFColors.textPrimary)
-
-                FFButton(title: "Сообщить о проблеме", variant: .secondary) {
-                    if let url = URL(string: "mailto:support@fitfluence.app?subject=Fitfluence%20iOS%20Issue") {
-                        openURL(url)
-                    }
-                }
-                .accessibilityLabel("Сообщить о проблеме")
-
-                FFButton(title: "Скопировать диагностику", variant: .secondary) {
-                    UIPasteboard.general.string = viewModel.diagnosticsText
-                    viewModel.infoMessage = "Диагностика скопирована"
-                }
-                .accessibilityLabel("Скопировать диагностику")
-            }
-        }
-    }
-
-    private var versionCard: some View {
-        FFCard {
-            VStack(alignment: .leading, spacing: FFSpacing.xs) {
-                Text("Версия приложения: \(viewModel.diagnostics.versionLabel)")
-                    .font(FFTypography.caption)
-                    .foregroundStyle(FFColors.textSecondary)
-                Text("Build: \(viewModel.diagnostics.buildLabel)")
-                    .font(FFTypography.caption)
-                    .foregroundStyle(FFColors.gray300)
+                .buttonStyle(.plain)
+                .frame(minHeight: 44)
+                .accessibilityLabel("Помощь и диагностика")
             }
         }
     }
 }
 
+private struct ProfileMenuRow: View {
+    let title: String
+    let icon: String
+
+    var body: some View {
+        HStack(spacing: FFSpacing.sm) {
+            Image(systemName: icon)
+                .foregroundStyle(FFColors.accent)
+                .frame(width: 24, height: 24)
+
+            Text(title)
+                .font(FFTypography.body)
+                .foregroundStyle(FFColors.textPrimary)
+
+            Spacer()
+
+            Image(systemName: "chevron.right")
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(FFColors.gray300)
+        }
+        .padding(.vertical, FFSpacing.sm)
+        .contentShape(Rectangle())
+    }
+}
+
 #Preview("Профиль: online") {
+    let viewModel: ProfileViewModel = {
+        let vm = ProfileViewModel(
+            me: MeResponse(
+                subject: "athlete-preview",
+                email: "athlete@fitfluence.local",
+                roles: ["ATHLETE"],
+                requiresAthleteProfile: false,
+                requiresInfluencerProfile: false,
+                athleteProfile: .init(id: "athlete-1"),
+                influencerProfile: nil,
+            ),
+            userSub: "athlete-preview",
+            isOnline: true,
+        )
+        vm.loadState = .loaded
+        vm.displayName = "Athlete Preview"
+        vm.avatarInitials = "AP"
+        return vm
+    }()
+
     NavigationStack {
         ProfileScreen(
-            viewModel: ProfileViewModel(
-                me: MeResponse(
-                    subject: "athlete-preview",
-                    email: "athlete@fitfluence.local",
-                    roles: ["ATHLETE"],
-                    requiresAthleteProfile: false,
-                    requiresInfluencerProfile: false,
-                    athleteProfile: .init(id: "athlete-1"),
-                    influencerProfile: nil,
-                ),
-                userSub: "athlete-preview",
-                isOnline: true,
-            ),
+            viewModel: viewModel,
             onLogout: {},
-            onOpenProgram: { _ in },
             onOpenActiveSession: { _ in },
         )
     }
 }
 
 #Preview("Профиль: offline") {
+    let viewModel: ProfileViewModel = {
+        let vm = ProfileViewModel(
+            me: MeResponse(
+                subject: "athlete-offline",
+                email: "offline@fitfluence.local",
+                roles: ["ATHLETE"],
+                requiresAthleteProfile: false,
+                requiresInfluencerProfile: false,
+                athleteProfile: .init(id: "athlete-2"),
+                influencerProfile: nil,
+            ),
+            userSub: "athlete-offline",
+            isOnline: false,
+        )
+        vm.loadState = .loaded
+        vm.displayName = "Offline Athlete"
+        vm.avatarInitials = "OA"
+        return vm
+    }()
+
     NavigationStack {
         ProfileScreen(
-            viewModel: ProfileViewModel(
-                me: MeResponse(
-                    subject: "athlete-offline",
-                    email: "offline@fitfluence.local",
-                    roles: ["ATHLETE"],
-                    requiresAthleteProfile: false,
-                    requiresInfluencerProfile: false,
-                    athleteProfile: .init(id: "athlete-2"),
-                    influencerProfile: nil,
-                ),
-                userSub: "athlete-offline",
-                isOnline: false,
-            ),
+            viewModel: viewModel,
             onLogout: {},
-            onOpenProgram: { _ in },
             onOpenActiveSession: { _ in },
         )
     }

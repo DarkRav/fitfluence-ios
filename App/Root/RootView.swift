@@ -482,7 +482,6 @@ private struct ProfileTabView: View {
     let apiClient: APIClientProtocol?
     let onLogout: () -> Void
     @State private var viewModel: ProfileViewModel
-    @State private var selectedProgramID: String?
     @State private var selectedSession: ActiveWorkoutSession?
 
     init(
@@ -510,37 +509,12 @@ private struct ProfileTabView: View {
         ProfileScreen(
             viewModel: viewModel,
             onLogout: onLogout,
-            onOpenProgram: { programID in
-                selectedProgramID = programID
-            },
             onOpenActiveSession: { session in
                 selectedSession = session
             },
         )
         .onChange(of: isOnline) { _, online in
             viewModel.updateNetworkStatus(online)
-        }
-        .navigationDestination(
-            isPresented: Binding(
-                get: { selectedProgramID != nil },
-                set: { isPresented in
-                    if !isPresented {
-                        selectedProgramID = nil
-                    }
-                },
-            ),
-        ) {
-            if let programID = selectedProgramID {
-                ProgramDetailsScreen(
-                    viewModel: ProgramDetailsViewModel(
-                        programId: programID,
-                        userSub: userSub,
-                        programsClient: apiClient as? ProgramsClientProtocol,
-                    ),
-                    apiClient: apiClient,
-                )
-                .navigationTitle("Программа")
-            }
         }
         .navigationDestination(item: $selectedSession) { session in
             WorkoutLaunchView(
