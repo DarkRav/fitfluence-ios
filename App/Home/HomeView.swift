@@ -38,6 +38,7 @@ final class HomeViewModel {
     private let progressStore: WorkoutProgressStore
     private let programsClient: ProgramsClientProtocol?
     private let userSub: String
+    private let isOnline: Bool
     private let calendar: Calendar
 
     var isLoading = false
@@ -50,16 +51,11 @@ final class HomeViewModel {
     var todayWorkout: HomeTodayWorkoutSnapshot?
     var plannedWorkoutToday: HomePlannedWorkoutSnapshot?
     var lastWorkoutSummary: String?
-    var todayCompletedWorkouts = 0
-    var todayCompletedMinutes = 0
-    var todayVolume: Int?
-    var weekCompleted = 0
-    var weekPlannedTotal = 0
-    var streakDays = 0
 
     init(
         userSub: String,
         sessionManager: WorkoutSessionManager,
+        isOnline: Bool = true,
         trainingStore: TrainingStore = LocalTrainingStore(),
         cacheStore: CacheStore = CompositeCacheStore(),
         progressStore: WorkoutProgressStore = LocalWorkoutProgressStore(),
@@ -72,6 +68,7 @@ final class HomeViewModel {
         self.cacheStore = cacheStore
         self.progressStore = progressStore
         self.programsClient = programsClient
+        self.isOnline = isOnline
         self.calendar = calendar
     }
 
@@ -142,7 +139,6 @@ final class HomeViewModel {
         } else {
             canLaunchPlannedWorkout = false
         }
-        await loadTodayMetrics()
 
         if let activeSession {
             activeProgramId = activeSession.programId
@@ -205,26 +201,6 @@ final class HomeViewModel {
             programId: plan.programId,
             workoutId: plan.workoutId,
         )
-    }
-
-    private func loadTodayMetrics() async {
-        let records = await trainingStore.history(userSub: userSub, source: nil, limit: 180)
-        let today = calendar.startOfDay(for: Date())
-        let todayRecords = records.filter { calendar.isDate($0.finishedAt, inSameDayAs: today) }
-
-        todayCompletedWorkouts = todayRecords.count
-        todayCompletedMinutes = todayRecords.reduce(0) { partial, record in
-            partial + max(1, record.durationSeconds / 60)
-        }
-        let todayVolumeValue = Int(todayRecords.reduce(0) { $0 + $1.volume })
-        todayVolume = todayVolumeValue > 0 ? todayVolumeValue : nil
-
-        if let weekStart = calendar.dateInterval(of: .weekOfYear, for: Date())?.start {
-            let week = await trainingStore.weeklySummary(userSub: userSub, weekStart: weekStart)
-            weekCompleted = week.completed
-            weekPlannedTotal = week.completed + week.planned + week.missed
-            streakDays = week.streakDays
-        }
     }
 
     private func loadProgramContext(programId: String) async {
@@ -357,7 +333,7 @@ final class HomeViewModel {
     }
 
     private func canLaunch(session: ActiveWorkoutSession) async -> Bool {
-        if session.source == .program, session.programId.isUUID {
+        if session.source == .program, session.programId.isUUID, isOnline {
             return true
         }
         if await hasCachedWorkoutDetails(programId: session.programId, workoutId: session.workoutId) {
@@ -383,10 +359,18 @@ final class HomeViewModel {
         else {
             return false
         }
-        if programsClient != nil {
+        if programsClient != nil, isOnline {
             return true
         }
-        return await hasCachedWorkoutDetails(programId: programId, workoutId: workoutId)
+        if await hasCachedWorkoutDetails(programId: programId, workoutId: workoutId) {
+            return true
+        }
+        if let snapshot = await progressStore.load(userSub: userSub, programId: programId, workoutId: workoutId),
+           snapshot.workoutDetails != nil
+        {
+            return true
+        }
+        return false
     }
 
     private func hasCachedWorkoutDetails(programId: String, workoutId: String) async -> Bool {
@@ -409,7 +393,6 @@ struct HomeViewV2: View {
             VStack(spacing: FFSpacing.md) {
                 hero
                 todayWorkoutCard
-                summaryCard
                 focusCard
                 trainingEntryCard
             }
@@ -471,46 +454,6 @@ struct HomeViewV2: View {
         }
     }
 
-    private var summaryCard: some View {
-        FFCard {
-            VStack(alignment: .leading, spacing: FFSpacing.sm) {
-                Text("Статус дня")
-                    .font(FFTypography.h2)
-                    .foregroundStyle(FFColors.textPrimary)
-
-                LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: FFSpacing.xs) {
-                    summaryMetric(
-                        title: "Сегодня",
-                        value: "\(viewModel.todayCompletedWorkouts)",
-                        subtitle: "тренировок",
-                    )
-                    summaryMetric(
-                        title: "Минуты",
-                        value: "\(viewModel.todayCompletedMinutes)",
-                        subtitle: "за день",
-                    )
-                    summaryMetric(
-                        title: "Неделя",
-                        value: viewModel
-                            .weekPlannedTotal > 0 ? "\(viewModel.weekCompleted)/\(viewModel.weekPlannedTotal)" : "—",
-                        subtitle: "выполнено",
-                    )
-                    summaryMetric(
-                        title: "Серия",
-                        value: "\(viewModel.streakDays)",
-                        subtitle: "дней",
-                    )
-                }
-
-                if let todayVolume = viewModel.todayVolume {
-                    Text("Объём за сегодня: \(todayVolume) кг")
-                        .font(FFTypography.caption)
-                        .foregroundStyle(FFColors.textSecondary)
-                }
-            }
-        }
-    }
-
     @ViewBuilder
     private var focusCard: some View {
         if let todayWorkout = viewModel.todayWorkout {
@@ -548,30 +491,6 @@ struct HomeViewV2: View {
             }
         }
     }
-
-    private func summaryMetric(title: String, value: String, subtitle: String) -> some View {
-        VStack(alignment: .leading, spacing: FFSpacing.xxs) {
-            Text(title)
-                .font(FFTypography.caption)
-                .foregroundStyle(FFColors.textSecondary)
-            Text(value)
-                .font(FFTypography.h2)
-                .foregroundStyle(FFColors.textPrimary)
-                .lineLimit(1)
-                .minimumScaleFactor(0.85)
-            Text(subtitle)
-                .font(FFTypography.caption)
-                .foregroundStyle(FFColors.textSecondary)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(FFSpacing.sm)
-        .background(FFColors.surface)
-        .clipShape(RoundedRectangle(cornerRadius: FFTheme.Radius.control))
-        .overlay {
-            RoundedRectangle(cornerRadius: FFTheme.Radius.control)
-                .stroke(FFColors.gray700, lineWidth: 1)
-        }
-    }
 }
 
 private extension String {
@@ -591,6 +510,7 @@ private extension String {
             viewModel: HomeViewModel(
                 userSub: "athlete-1",
                 sessionManager: WorkoutSessionManager(),
+                isOnline: true,
             ),
             onPrimaryAction: { _ in },
             onOpenPlan: {},

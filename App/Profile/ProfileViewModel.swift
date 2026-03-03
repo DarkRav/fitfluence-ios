@@ -191,7 +191,7 @@ final class ProfileViewModel {
     }
 
     private func canLaunch(session: ActiveWorkoutSession) async -> Bool {
-        if session.source == .program, UUID(uuidString: session.programId) != nil {
+        if session.source == .program, UUID(uuidString: session.programId) != nil, isOnline {
             return true
         }
         if await cacheStore.get(

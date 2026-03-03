@@ -139,6 +139,7 @@ private struct AthleteShellView: View {
     enum ShellTab: Hashable {
         case today
         case plan
+        case progress
         case training
         case profile
     }
@@ -149,6 +150,7 @@ private struct AthleteShellView: View {
                 TodayHubView(
                     me: me,
                     apiClient: apiClient,
+                    isOnline: isOnline,
                     onOpenPlan: { selectedTab = .plan },
                     onOpenTraining: { selectedTab = .training },
                 )
@@ -170,6 +172,14 @@ private struct AthleteShellView: View {
                 Label("План", systemImage: "calendar")
             }
             .tag(ShellTab.plan)
+
+            NavigationStack {
+                TrainingInsightsView(viewModel: TrainingInsightsViewModel(userSub: me.subject ?? "anonymous"))
+            }
+            .tabItem {
+                Label("Прогресс", systemImage: "chart.line.uptrend.xyaxis")
+            }
+            .tag(ShellTab.progress)
 
             NavigationStack {
                 TrainingTabContent(
@@ -291,6 +301,7 @@ private struct PlanTabContent: View {
 private struct TodayHubView: View {
     let me: MeResponse
     let apiClient: APIClientProtocol?
+    let isOnline: Bool
     let onOpenPlan: () -> Void
     let onOpenTraining: () -> Void
 
@@ -309,6 +320,7 @@ private struct TodayHubView: View {
             viewModel: HomeViewModel(
                 userSub: me.subject ?? "anonymous",
                 sessionManager: WorkoutSessionManager(),
+                isOnline: isOnline,
                 programsClient: apiClient as? ProgramsClientProtocol,
             ),
             onPrimaryAction: { action in
@@ -467,7 +479,6 @@ private struct TrainingTabContent: View {
     @State private var presetWorkoutRoute: PresetWorkoutRoute?
     @State private var isQuickBuilderPresented = false
     @State private var isTemplateLibraryPresented = false
-    @State private var isProgressPresented = false
 
     private struct ProgramWorkoutRoute: Identifiable, Hashable {
         let programId: String
@@ -514,9 +525,6 @@ private struct TrainingTabContent: View {
             onStartTemplate: { template in
                 presetWorkoutRoute = PresetWorkoutRoute(workout: buildWorkout(from: template), source: .template)
             },
-            onOpenProgress: {
-                isProgressPresented = true
-            },
         )
         .navigationDestination(item: $sessionRoute) { session in
             WorkoutLaunchView(
@@ -544,10 +552,6 @@ private struct TrainingTabContent: View {
                 presetWorkout: route.workout,
                 source: route.source,
             )
-        }
-        .navigationDestination(isPresented: $isProgressPresented) {
-            TrainingInsightsView(viewModel: TrainingInsightsViewModel(userSub: userSub))
-                .navigationTitle("Прогресс")
         }
         .fullScreenCover(isPresented: $isQuickBuilderPresented) {
             NavigationStack {

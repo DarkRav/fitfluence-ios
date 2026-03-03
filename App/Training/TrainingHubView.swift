@@ -9,12 +9,11 @@ final class TrainingHubViewModel {
     private let trainingStore: TrainingStore
     private let progressStore: WorkoutProgressStore
     private let cacheStore: CacheStore
+    private let networkMonitor: NetworkMonitoring
 
     var isLoading = false
     var activeSession: ActiveWorkoutSession?
     var templates: [WorkoutTemplateDraft] = []
-    var recentHistory: [CompletedWorkoutRecord] = []
-    var allHistory: [CompletedWorkoutRecord] = []
     var lastCompleted: CompletedWorkoutRecord?
 
     init(
@@ -22,11 +21,13 @@ final class TrainingHubViewModel {
         trainingStore: TrainingStore = LocalTrainingStore(),
         progressStore: WorkoutProgressStore = LocalWorkoutProgressStore(),
         cacheStore: CacheStore = CompositeCacheStore(),
+        networkMonitor: NetworkMonitoring = StaticNetworkMonitor(currentStatus: true),
     ) {
         self.userSub = userSub
         self.trainingStore = trainingStore
         self.progressStore = progressStore
         self.cacheStore = cacheStore
+        self.networkMonitor = networkMonitor
     }
 
     func onAppear() async {
@@ -49,9 +50,8 @@ final class TrainingHubViewModel {
             activeSession = nil
         }
         templates = await Array(loadedTemplates.prefix(4))
-        allHistory = await history
-        recentHistory = Array(allHistory.prefix(8))
-        lastCompleted = recentHistory.first
+        let allHistory = await history
+        lastCompleted = allHistory.first
     }
 
     func workout(for template: WorkoutTemplateDraft) -> WorkoutDetailsModel {
@@ -76,7 +76,10 @@ final class TrainingHubViewModel {
     }
 
     private func canLaunch(session: ActiveWorkoutSession) async -> Bool {
-        if session.source == .program, UUID(uuidString: session.programId) != nil {
+        if session.source == .program,
+           UUID(uuidString: session.programId) != nil,
+           networkMonitor.currentStatus
+        {
             return true
         }
         if await cacheStore.get(
@@ -97,20 +100,6 @@ final class TrainingHubViewModel {
         }
         return false
     }
-
-    var workoutsLast7Days: Int {
-        let lowerBound = Calendar.current.date(byAdding: .day, value: -6, to: Calendar.current.startOfDay(for: Date()))
-            ?? Date()
-        return allHistory.count(where: { $0.finishedAt >= lowerBound })
-    }
-
-    var totalMinutesLast7Days: Int {
-        let lowerBound = Calendar.current.date(byAdding: .day, value: -6, to: Calendar.current.startOfDay(for: Date()))
-            ?? Date()
-        return allHistory
-            .filter { $0.finishedAt >= lowerBound }
-            .reduce(0) { $0 + max(1, $1.durationSeconds / 60) }
-    }
 }
 
 struct TrainingHubView: View {
@@ -121,7 +110,6 @@ struct TrainingHubView: View {
     let onOpenTemplates: () -> Void
     let onRepeatWorkout: (CompletedWorkoutRecord) -> Void
     let onStartTemplate: (WorkoutTemplateDraft) -> Void
-    let onOpenProgress: () -> Void
 
     var body: some View {
         ScrollView {
@@ -129,9 +117,7 @@ struct TrainingHubView: View {
                 headerCard
                 activeSessionCard
                 quickActionsCard
-                progressEntryCard
                 templatesCard
-                historyCard
             }
             .padding(.horizontal, FFSpacing.md)
             .padding(.vertical, FFSpacing.md)
@@ -266,83 +252,6 @@ struct TrainingHubView: View {
         }
     }
 
-    private var historyCard: some View {
-        FFCard {
-            VStack(alignment: .leading, spacing: FFSpacing.sm) {
-                HStack {
-                    Text("Недавние тренировки")
-                        .font(FFTypography.h2)
-                        .foregroundStyle(FFColors.textPrimary)
-                    Spacer()
-                    Button("Все") {
-                        onOpenProgress()
-                    }
-                    .font(FFTypography.caption.weight(.semibold))
-                    .foregroundStyle(FFColors.accent)
-                }
-
-                if viewModel.recentHistory.isEmpty {
-                    Text("Здесь появятся завершённые тренировки.")
-                        .font(FFTypography.body)
-                        .foregroundStyle(FFColors.textSecondary)
-                } else {
-                    ForEach(viewModel.recentHistory.prefix(3)) { record in
-                        VStack(alignment: .leading, spacing: FFSpacing.xxs) {
-                            Text(record.workoutTitle)
-                                .font(FFTypography.body.weight(.semibold))
-                                .foregroundStyle(FFColors.textPrimary)
-                            Text(record.finishedAt.formatted(date: .abbreviated, time: .shortened))
-                                .font(FFTypography.caption)
-                                .foregroundStyle(FFColors.textSecondary)
-                        }
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.vertical, FFSpacing.xxs)
-                    }
-                }
-            }
-        }
-    }
-
-    private var progressEntryCard: some View {
-        FFCard {
-            VStack(alignment: .leading, spacing: FFSpacing.sm) {
-                Text("Прогресс и история")
-                    .font(FFTypography.h2)
-                    .foregroundStyle(FFColors.textPrimary)
-
-                HStack(spacing: FFSpacing.sm) {
-                    progressMetric(title: "За 7 дней", value: "\(viewModel.workoutsLast7Days)")
-                    progressMetric(title: "Минут", value: "\(viewModel.totalMinutesLast7Days)")
-                }
-
-                FFButton(title: "Открыть прогресс", variant: .secondary, action: onOpenProgress)
-            }
-        }
-    }
-
-    private func progressMetric(title: String, value: String) -> some View {
-        VStack(alignment: .leading, spacing: FFSpacing.xxs) {
-            Text(title)
-                .font(FFTypography.caption)
-                .foregroundStyle(FFColors.textSecondary)
-                .lineLimit(1)
-                .minimumScaleFactor(0.75)
-            Text(value)
-                .font(FFTypography.h2)
-                .foregroundStyle(FFColors.textPrimary)
-                .lineLimit(1)
-                .minimumScaleFactor(0.8)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(FFSpacing.sm)
-        .background(FFColors.surface)
-        .clipShape(RoundedRectangle(cornerRadius: FFTheme.Radius.control))
-        .overlay {
-            RoundedRectangle(cornerRadius: FFTheme.Radius.control)
-                .stroke(FFColors.gray700, lineWidth: 1)
-        }
-    }
-
     private func actionTile(
         title: String,
         subtitle: String,
@@ -407,7 +316,6 @@ struct TrainingHubView: View {
             onOpenTemplates: {},
             onRepeatWorkout: { _ in },
             onStartTemplate: { _ in },
-            onOpenProgress: {},
         )
     }
 }

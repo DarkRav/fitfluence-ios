@@ -19,6 +19,18 @@ final class PlanScheduleViewModel {
         let title: String
     }
 
+    struct WeekCounts: Equatable {
+        let planned: Int
+        let completed: Int
+        let missed: Int
+
+        var total: Int {
+            planned + completed + missed
+        }
+
+        static let empty = WeekCounts(planned: 0, completed: 0, missed: 0)
+    }
+
     private let userSub: String
     private let trainingStore: TrainingStore
     private let calendar: Calendar
@@ -27,8 +39,9 @@ final class PlanScheduleViewModel {
     var selectedDay: Date = .init()
     var isLoading = false
     var monthPlans: [TrainingDayPlan] = []
+    var contextPlans: [TrainingDayPlan] = []
     var upcomingPlans: [TrainingDayPlan] = []
-    var weekSummary: WeeklyTrainingSummary?
+    var weekCounts: WeekCounts = .empty
 
     init(
         userSub: String,
@@ -51,27 +64,24 @@ final class PlanScheduleViewModel {
         isLoading = true
         defer { isLoading = false }
 
+        let previousMonth = calendar.date(byAdding: .month, value: -1, to: selectedMonth) ?? selectedMonth
         let nextMonth = calendar.date(byAdding: .month, value: 1, to: selectedMonth) ?? selectedMonth
 
+        async let previousPlans = trainingStore.plans(userSub: userSub, month: previousMonth)
         async let selectedPlans = trainingStore.plans(userSub: userSub, month: selectedMonth)
         async let nextPlans = trainingStore.plans(userSub: userSub, month: nextMonth)
-        async let week = trainingStore.weeklySummary(
-            userSub: userSub,
-            weekStart: weekStart(for: selectedDay),
-        )
 
+        let prevMonthPlans = await previousPlans
         monthPlans = await selectedPlans
         let nextMonthPlans = await nextPlans
-        upcomingPlans = monthPlans + nextMonthPlans
-        weekSummary = await week
+        contextPlans = prevMonthPlans + monthPlans + nextMonthPlans
+        upcomingPlans = contextPlans
+        recalculateWeekCounts()
     }
 
     func selectDay(_ day: Date) async {
         selectedDay = calendar.startOfDay(for: day)
-        weekSummary = await trainingStore.weeklySummary(
-            userSub: userSub,
-            weekStart: weekStart(for: selectedDay),
-        )
+        recalculateWeekCounts()
     }
 
     func selectDayFromAdjacentMonth(_ day: Date) async {
@@ -216,6 +226,21 @@ final class PlanScheduleViewModel {
             return .planned
         }
         return nil
+    }
+
+    private func recalculateWeekCounts() {
+        let start = weekStart(for: selectedDay)
+        let end = calendar.date(byAdding: .day, value: 7, to: start) ?? start
+        let items = contextPlans.filter { plan in
+            let day = calendar.startOfDay(for: plan.day)
+            return day >= start && day < end
+        }
+
+        weekCounts = WeekCounts(
+            planned: items.count(where: { $0.status == .planned }),
+            completed: items.count(where: { $0.status == .completed }),
+            missed: items.count(where: { $0.status == .missed }),
+        )
     }
 
     private func upcomingTitle(from plans: [TrainingDayPlan]) -> String {
@@ -408,16 +433,16 @@ struct PlanScheduleScreen: View {
 
                 HStack(spacing: FFSpacing.sm) {
                     summaryMetric(
-                        title: "План",
-                        value: "\(viewModel.weekSummary?.planned ?? 0)",
+                        title: "Всего",
+                        value: "\(viewModel.weekCounts.total)",
                     )
                     summaryMetric(
                         title: "Выполнено",
-                        value: "\(viewModel.weekSummary?.completed ?? 0)",
+                        value: "\(viewModel.weekCounts.completed)",
                     )
                     summaryMetric(
                         title: "Пропущено",
-                        value: "\(viewModel.weekSummary?.missed ?? 0)",
+                        value: "\(viewModel.weekCounts.missed)",
                     )
                 }
             }
@@ -425,20 +450,21 @@ struct PlanScheduleScreen: View {
     }
 
     private func summaryMetric(title: String, value: String) -> some View {
-        VStack(alignment: .leading, spacing: FFSpacing.xxs) {
+        VStack(alignment: .center, spacing: FFSpacing.xxs) {
             Text(title)
                 .font(FFTypography.caption)
                 .foregroundStyle(FFColors.textSecondary)
-                .lineLimit(1)
-                .minimumScaleFactor(0.75)
+                .lineLimit(2)
+                .multilineTextAlignment(.center)
+                .minimumScaleFactor(0.85)
             Text(value)
                 .font(FFTypography.h2)
                 .foregroundStyle(FFColors.textPrimary)
                 .lineLimit(1)
                 .minimumScaleFactor(0.8)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .frame(minHeight: 88, alignment: .leading)
+        .frame(maxWidth: .infinity)
+        .frame(minHeight: 88)
         .padding(FFSpacing.sm)
         .background(FFColors.surface)
         .clipShape(RoundedRectangle(cornerRadius: FFTheme.Radius.control))
@@ -451,7 +477,7 @@ struct PlanScheduleScreen: View {
     private var upcomingCard: some View {
         FFCard {
             VStack(alignment: .leading, spacing: FFSpacing.sm) {
-                Text("Ближайшие тренировки")
+                Text("Тренировки на 7 дней")
                     .font(FFTypography.h2)
                     .foregroundStyle(FFColors.textPrimary)
 
