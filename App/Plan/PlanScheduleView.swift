@@ -51,11 +51,9 @@ final class PlanScheduleViewModel {
         isLoading = true
         defer { isLoading = false }
 
-        let today = Date()
-        let nextMonth = calendar.date(byAdding: .month, value: 1, to: today) ?? today
+        let nextMonth = calendar.date(byAdding: .month, value: 1, to: selectedMonth) ?? selectedMonth
 
         async let selectedPlans = trainingStore.plans(userSub: userSub, month: selectedMonth)
-        async let currentPlans = trainingStore.plans(userSub: userSub, month: today)
         async let nextPlans = trainingStore.plans(userSub: userSub, month: nextMonth)
         async let week = trainingStore.weeklySummary(
             userSub: userSub,
@@ -63,7 +61,8 @@ final class PlanScheduleViewModel {
         )
 
         monthPlans = await selectedPlans
-        upcomingPlans = await (currentPlans) + nextPlans
+        let nextMonthPlans = await nextPlans
+        upcomingPlans = monthPlans + nextMonthPlans
         weekSummary = await week
     }
 
@@ -157,9 +156,9 @@ final class PlanScheduleViewModel {
     }
 
     var upcomingDays: [UpcomingDayItem] {
-        let today = calendar.startOfDay(for: Date())
+        let anchor = calendar.startOfDay(for: selectedDay)
         return (0 ..< 7).compactMap { offset in
-            guard let day = calendar.date(byAdding: .day, value: offset, to: today) else { return nil }
+            guard let day = calendar.date(byAdding: .day, value: offset, to: anchor) else { return nil }
             let plans = plansForDay(in: upcomingPlans, day: day)
             guard !plans.isEmpty else { return nil }
             let status = dayStatus(for: plans)
@@ -409,7 +408,7 @@ struct PlanScheduleScreen: View {
 
                 HStack(spacing: FFSpacing.sm) {
                     summaryMetric(
-                        title: "Запланировано",
+                        title: "План",
                         value: "\(viewModel.weekSummary?.planned ?? 0)",
                     )
                     summaryMetric(
@@ -430,6 +429,8 @@ struct PlanScheduleScreen: View {
             Text(title)
                 .font(FFTypography.caption)
                 .foregroundStyle(FFColors.textSecondary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.75)
             Text(value)
                 .font(FFTypography.h2)
                 .foregroundStyle(FFColors.textPrimary)
@@ -437,6 +438,7 @@ struct PlanScheduleScreen: View {
                 .minimumScaleFactor(0.8)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(minHeight: 88, alignment: .leading)
         .padding(FFSpacing.sm)
         .background(FFColors.surface)
         .clipShape(RoundedRectangle(cornerRadius: FFTheme.Radius.control))
@@ -449,7 +451,7 @@ struct PlanScheduleScreen: View {
     private var upcomingCard: some View {
         FFCard {
             VStack(alignment: .leading, spacing: FFSpacing.sm) {
-                Text("Ближайшие 7 дней")
+                Text("Ближайшие тренировки")
                     .font(FFTypography.h2)
                     .foregroundStyle(FFColors.textPrimary)
 
