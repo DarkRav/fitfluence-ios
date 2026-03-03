@@ -19,10 +19,19 @@ struct HomeTodayWorkoutSnapshot: Equatable {
     let lastCompletion: String
 }
 
+struct HomePlannedWorkoutSnapshot: Equatable {
+    let title: String
+    let statusText: String
+    let subtitle: String
+    let programId: String?
+    let workoutId: String?
+}
+
 @Observable
 @MainActor
 final class HomeViewModel {
     private let sessionManager: WorkoutSessionManager
+    private let trainingStore: TrainingStore
     private let cacheStore: CacheStore
     private let progressStore: WorkoutProgressStore
     private let programsClient: ProgramsClientProtocol?
@@ -36,13 +45,13 @@ final class HomeViewModel {
     var nextWorkout: WorkoutSummary?
     var lastWorkout: WorkoutSummary?
     var todayWorkout: HomeTodayWorkoutSnapshot?
-    var weeklySummary: WeeklyTrainingSummary?
-    var completedWorkoutsCount = 0
-    var totalWorkoutsCount = 0
+    var plannedWorkoutToday: HomePlannedWorkoutSnapshot?
+    var lastWorkoutSummary: String?
 
     init(
         userSub: String,
         sessionManager: WorkoutSessionManager,
+        trainingStore: TrainingStore = LocalTrainingStore(),
         cacheStore: CacheStore = CompositeCacheStore(),
         progressStore: WorkoutProgressStore = LocalWorkoutProgressStore(),
         programsClient: ProgramsClientProtocol? = nil,
@@ -50,6 +59,7 @@ final class HomeViewModel {
     ) {
         self.userSub = userSub
         self.sessionManager = sessionManager
+        self.trainingStore = trainingStore
         self.cacheStore = cacheStore
         self.progressStore = progressStore
         self.programsClient = programsClient
@@ -60,18 +70,40 @@ final class HomeViewModel {
         if activeSession != nil {
             return "Продолжить тренировку"
         }
+        if plannedWorkoutToday?.workoutId != nil, plannedWorkoutToday?.programId != nil {
+            return "Начать сегодняшнюю"
+        }
         if nextWorkout != nil {
             return "Начать следующую"
         }
         if lastWorkout != nil {
             return "Повторить последнюю"
         }
-        return "Открыть каталог"
+        return "Быстрая тренировка"
+    }
+
+    var primarySubtitle: String {
+        if activeSession != nil {
+            return "Продолжайте с места остановки"
+        }
+        if let plannedWorkoutToday {
+            return "\(plannedWorkoutToday.statusText): \(plannedWorkoutToday.title)"
+        }
+        if let nextWorkout {
+            return "Следующая по программе: \(nextWorkout.title)"
+        }
+        return "Нет обязательных задач на сегодня"
     }
 
     var primaryAction: HomePrimaryAction {
         if let activeSession {
             return .continueSession(programId: activeSession.programId, workoutId: activeSession.workoutId)
+        }
+        if let plannedWorkoutToday,
+           let programId = plannedWorkoutToday.programId,
+           let workoutId = plannedWorkoutToday.workoutId
+        {
+            return .startNext(programId: programId, workoutId: workoutId)
         }
         if let nextWorkout, let activeProgramId {
             return .startNext(programId: activeProgramId, workoutId: nextWorkout.id)
@@ -79,23 +111,7 @@ final class HomeViewModel {
         if let lastWorkout, let activeProgramId {
             return .repeatLast(programId: activeProgramId, workoutId: lastWorkout.id)
         }
-        return .openPicker
-    }
-
-    var weeklyProgressTitle: String {
-        guard let weeklySummary else {
-            return "План недели недоступен"
-        }
-        return "\(weeklySummary.completed)/\(max(weeklySummary.planned + weeklySummary.completed, 1)) тренировок"
-    }
-
-    var streakTitle: String {
-        "Серия: \(weeklySummary?.streakDays ?? 0) дн"
-    }
-
-    var programProgressTitle: String {
-        guard totalWorkoutsCount > 0 else { return "Прогресс появится после старта программы" }
-        return "Пройдено \(completedWorkoutsCount) из \(totalWorkoutsCount) тренировок"
+        return .quickWorkout
     }
 
     func onAppear() async {
@@ -104,8 +120,7 @@ final class HomeViewModel {
         defer { isLoading = false }
 
         activeSession = await sessionManager.latestActiveSession(userSub: userSub)
-        let weekStart = startOfWeek(Date())
-        weeklySummary = await sessionManager.weeklySummary(userSub: userSub, weekStart: weekStart)
+        await loadTodayPlan()
 
         if let activeSession {
             activeProgramId = activeSession.programId
@@ -130,6 +145,40 @@ final class HomeViewModel {
             activeProgramTitle = cachedFirstPage?.cards.first?.title
             await loadProgramContext(programId: programId)
         }
+    }
+
+    private func loadTodayPlan() async {
+        let monthPlans = await trainingStore.plans(userSub: userSub, month: Date())
+        let today = calendar.startOfDay(for: Date())
+        guard let plan = monthPlans.first(where: { calendar.isDate($0.day, inSameDayAs: today) }) else {
+            plannedWorkoutToday = nil
+            return
+        }
+
+        let statusText = switch plan.status {
+        case .planned:
+            "Запланирована"
+        case .completed:
+            "Выполнена"
+        case .missed:
+            "Пропущена"
+        }
+        let sourceText = switch plan.source {
+        case .program:
+            "По программе"
+        case .freestyle:
+            "Своя тренировка"
+        case .template:
+            "По шаблону"
+        }
+
+        plannedWorkoutToday = HomePlannedWorkoutSnapshot(
+            title: plan.title,
+            statusText: statusText,
+            subtitle: sourceText,
+            programId: plan.programId,
+            workoutId: plan.workoutId,
+        )
     }
 
     private func loadProgramContext(programId: String) async {
@@ -222,9 +271,6 @@ final class HomeViewModel {
             workoutIds: workouts.map(\.id),
         )
 
-        completedWorkoutsCount = statuses.values.count(where: { $0 == .completed })
-        totalWorkoutsCount = workouts.count
-
         if let inProgress = activeSession,
            let inProgressWorkout = workouts.first(where: { $0.id == inProgress.workoutId })
         {
@@ -241,6 +287,7 @@ final class HomeViewModel {
             lastWorkout = workout
             let duration = max(1, recent.durationSeconds / 60)
             let volumeText = recent.volume > 0 ? " • объём \(Int(recent.volume)) кг" : ""
+            lastWorkoutSummary = "\(duration) мин\(volumeText)"
             todayWorkout = HomeTodayWorkoutSnapshot(
                 title: nextWorkout?.title ?? workout.title,
                 exerciseCount: nextWorkout?.exerciseCount ?? workout.exerciseCount,
@@ -248,21 +295,17 @@ final class HomeViewModel {
                 focus: todayWorkout?.focus ?? "Силовая адаптация",
                 difficulty: todayWorkout?.difficulty ?? "Базовый",
                 equipment: todayWorkout?.equipment ?? "Оборудование: не указано",
-                lastCompletion: "\(duration) мин\(volumeText)",
+                lastCompletion: lastWorkoutSummary ?? "Ещё не выполняли",
             )
         } else {
             lastWorkout = workouts.last
+            lastWorkoutSummary = nil
         }
     }
 
     private func estimateDuration(exercises: [ExerciseTemplate]) -> Int {
         let sets = exercises.reduce(0) { $0 + max(1, $1.sets) }
         return max(10, (sets * 90) / 60)
-    }
-
-    private func startOfWeek(_ date: Date) -> Date {
-        let components = calendar.dateComponents([.yearForWeekOfYear, .weekOfYear], from: date)
-        return calendar.date(from: components) ?? date
     }
 }
 
@@ -277,9 +320,8 @@ struct HomeViewV2: View {
             VStack(spacing: FFSpacing.md) {
                 hero
                 todayWorkoutCard
-                weekPlanCard
-                activeProgramCard
-                summaryCard
+                lastActivityCard
+                quickActionsCard
             }
             .padding(.horizontal, FFSpacing.md)
             .padding(.vertical, FFSpacing.md)
@@ -294,18 +336,18 @@ struct HomeViewV2: View {
     private var hero: some View {
         FFCard {
             VStack(alignment: .leading, spacing: FFSpacing.md) {
-                Text("Готово к тренировке")
+                Text("Сегодня")
                     .font(FFTypography.h1)
                     .foregroundStyle(FFColors.textPrimary)
+                Text(viewModel.primarySubtitle)
+                    .font(FFTypography.body)
+                    .foregroundStyle(FFColors.textSecondary)
 
                 if viewModel.isLoading {
-                    FFLoadingState(title: "Готовим план")
+                    FFLoadingState(title: "Готовим экран")
                 } else {
                     FFButton(title: viewModel.primaryTitle, variant: .primary) {
                         onPrimaryAction(viewModel.primaryAction)
-                    }
-                    FFButton(title: "Быстрая тренировка", variant: .secondary) {
-                        onPrimaryAction(.quickWorkout)
                     }
                 }
             }
@@ -315,32 +357,52 @@ struct HomeViewV2: View {
     private var todayWorkoutCard: some View {
         FFCard {
             VStack(alignment: .leading, spacing: FFSpacing.xs) {
-                Text("Сегодняшняя тренировка")
+                Text("Сегодня по плану")
                     .font(FFTypography.h2)
                     .foregroundStyle(FFColors.textPrimary)
 
-                if let snapshot = viewModel.todayWorkout {
-                    Text(snapshot.title)
+                if let planned = viewModel.plannedWorkoutToday {
+                    Text(planned.title)
                         .font(FFTypography.body.weight(.semibold))
                         .foregroundStyle(FFColors.textPrimary)
-
-                    Text("Упражнений: \(snapshot.exerciseCount)\(durationText(snapshot.durationMinutes))")
+                    Text("\(planned.statusText) • \(planned.subtitle)")
                         .font(FFTypography.caption)
                         .foregroundStyle(FFColors.textSecondary)
-                    Text("Фокус: \(snapshot.focus)")
-                        .font(FFTypography.caption)
-                        .foregroundStyle(FFColors.textSecondary)
-                    Text("Сложность: \(snapshot.difficulty)")
-                        .font(FFTypography.caption)
-                        .foregroundStyle(FFColors.textSecondary)
-                    Text(snapshot.equipment)
-                        .font(FFTypography.caption)
-                        .foregroundStyle(FFColors.textSecondary)
-                    Text("Последнее выполнение: \(snapshot.lastCompletion)")
-                        .font(FFTypography.caption)
-                        .foregroundStyle(FFColors.accent)
                 } else {
-                    Text("Подготовьте тренировку в плане или запустите быструю тренировку.")
+                    Text("На сегодня нет запланированной тренировки.")
+                        .font(FFTypography.body)
+                        .foregroundStyle(FFColors.textSecondary)
+                }
+
+                FFButton(title: "Открыть план", variant: .secondary) {
+                    onOpenPlan()
+                }
+            }
+        }
+    }
+
+    private var lastActivityCard: some View {
+        FFCard {
+            VStack(alignment: .leading, spacing: FFSpacing.xs) {
+                Text("Последняя активность")
+                    .font(FFTypography.h2)
+                    .foregroundStyle(FFColors.textPrimary)
+
+                if let lastWorkout = viewModel.lastWorkout {
+                    Text(lastWorkout.title)
+                        .font(FFTypography.body.weight(.semibold))
+                        .foregroundStyle(FFColors.textPrimary)
+                    Text(viewModel.lastWorkoutSummary ?? "Детали будут после первой тренировки")
+                        .font(FFTypography.caption)
+                        .foregroundStyle(FFColors.textSecondary)
+
+                    if let programId = viewModel.activeProgramId {
+                        FFButton(title: "Повторить последнюю", variant: .secondary) {
+                            onPrimaryAction(.repeatLast(programId: programId, workoutId: lastWorkout.id))
+                        }
+                    }
+                } else {
+                    Text("После первой завершённой тренировки здесь появится быстрый повтор.")
                         .font(FFTypography.body)
                         .foregroundStyle(FFColors.textSecondary)
                 }
@@ -348,66 +410,21 @@ struct HomeViewV2: View {
         }
     }
 
-    private var weekPlanCard: some View {
+    private var quickActionsCard: some View {
         FFCard {
-            VStack(alignment: .leading, spacing: FFSpacing.xs) {
-                Text("План недели")
+            VStack(alignment: .leading, spacing: FFSpacing.sm) {
+                Text("Быстрый доступ")
                     .font(FFTypography.h2)
                     .foregroundStyle(FFColors.textPrimary)
-                Text(viewModel.weeklyProgressTitle)
-                    .font(FFTypography.body)
-                    .foregroundStyle(FFColors.textPrimary)
-                Text(viewModel.streakTitle)
-                    .font(FFTypography.caption)
-                    .foregroundStyle(FFColors.accent)
-                if let summary = viewModel.weeklySummary {
-                    Text("Пропущено: \(summary.missed)")
-                        .font(FFTypography.caption)
-                        .foregroundStyle(FFColors.textSecondary)
-                }
-            }
-        }
-    }
 
-    private var activeProgramCard: some View {
-        FFCard {
-            VStack(alignment: .leading, spacing: FFSpacing.xs) {
-                Text("Активная программа")
-                    .font(FFTypography.h2)
-                    .foregroundStyle(FFColors.textPrimary)
-                Text(viewModel.activeProgramTitle ?? "Пока не выбрана")
-                    .font(FFTypography.body.weight(.semibold))
-                    .foregroundStyle(FFColors.textPrimary)
-                Text(viewModel.programProgressTitle)
-                    .font(FFTypography.caption)
-                    .foregroundStyle(FFColors.textSecondary)
-
-                FFButton(title: "Открыть план", variant: .secondary) {
-                    onOpenPlan()
+                FFButton(title: "Быстрая тренировка", variant: .secondary) {
+                    onPrimaryAction(.quickWorkout)
                 }
                 FFButton(title: "Шаблоны тренировок", variant: .secondary) {
                     onOpenTemplates()
                 }
             }
         }
-    }
-
-    private var summaryCard: some View {
-        FFCard {
-            VStack(alignment: .leading, spacing: FFSpacing.xs) {
-                Text("Режим данных")
-                    .font(FFTypography.h2)
-                    .foregroundStyle(FFColors.textPrimary)
-                Text("Оффлайн: тренировка и прогресс сохраняются на устройстве.")
-                    .font(FFTypography.body)
-                    .foregroundStyle(FFColors.textSecondary)
-            }
-        }
-    }
-
-    private func durationText(_ minutes: Int?) -> String {
-        guard let minutes else { return "" }
-        return " • ~\(minutes) мин"
     }
 }
 
