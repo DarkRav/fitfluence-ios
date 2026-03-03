@@ -4,14 +4,6 @@ import SwiftUI
 @Observable
 @MainActor
 final class TrainingInsightsViewModel {
-    struct DayDetailsItem: Equatable, Identifiable {
-        let id: String
-        let title: String
-        let status: TrainingDayStatus
-        let source: WorkoutSource
-        let subtitle: String
-    }
-
     private let userSub: String
     private let trainingStore: TrainingStore
     private let calendar: Calendar
@@ -19,8 +11,6 @@ final class TrainingInsightsViewModel {
     var isLoading = false
     var history: [CompletedWorkoutRecord] = []
     var selectedSource: WorkoutSource?
-    var monthPlans: [TrainingDayPlan] = []
-    var selectedMonth: Date = .init()
 
     init(
         userSub: String,
@@ -40,9 +30,7 @@ final class TrainingInsightsViewModel {
         guard !userSub.isEmpty else { return }
         isLoading = true
         defer { isLoading = false }
-
-        history = await trainingStore.history(userSub: userSub, source: selectedSource, limit: 60)
-        monthPlans = await trainingStore.plans(userSub: userSub, month: selectedMonth)
+        history = await trainingStore.history(userSub: userSub, source: selectedSource, limit: 90)
     }
 
     func selectSource(_ source: WorkoutSource?) async {
@@ -58,67 +46,31 @@ final class TrainingInsightsViewModel {
         return (0 ..< 84).compactMap { offset in
             guard let day = calendar.date(byAdding: .day, value: -offset, to: today) else { return nil }
             return (day, lookup[day] ?? 0)
-        }.reversed()
+        }
+        .reversed()
     }
 
-    var monthGrid: [Date] {
-        guard let monthInterval = calendar.dateInterval(of: .month, for: selectedMonth),
-              let firstWeek = calendar.dateInterval(of: .weekOfMonth, for: monthInterval.start)
-        else {
-            return []
-        }
-
-        return (0 ..< 42).compactMap { idx in
-            calendar.date(byAdding: .day, value: idx, to: firstWeek.start)
-        }
+    var totalWorkouts: Int {
+        history.count
     }
 
-    func dayStatus(_ date: Date) -> TrainingDayStatus? {
-        let day = calendar.startOfDay(for: date)
-        return monthPlans.first(where: { calendar.isDate($0.day, inSameDayAs: day) })?.status
+    var totalMinutes: Int {
+        history.reduce(0) { $0 + max(1, $1.durationSeconds / 60) }
     }
 
-    func dayDetails(_ date: Date) -> [DayDetailsItem] {
-        let day = calendar.startOfDay(for: date)
-
-        let plans = monthPlans
-            .filter { calendar.isDate($0.day, inSameDayAs: day) }
-            .map { plan in
-                DayDetailsItem(
-                    id: "plan-\(plan.id)",
-                    title: plan.title,
-                    status: plan.status,
-                    source: plan.source,
-                    subtitle: "План на день",
-                )
-            }
-
-        let completed = history
-            .filter { calendar.isDate($0.finishedAt, inSameDayAs: day) }
-            .map { record in
-                DayDetailsItem(
-                    id: "history-\(record.id)",
-                    title: record.workoutTitle,
-                    status: .completed,
-                    source: record.source,
-                    subtitle: record.finishedAt.formatted(date: .omitted, time: .shortened),
-                )
-            }
-
-        return (plans + completed).sorted {
-            $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending
-        }
+    var workoutsLast7Days: Int {
+        let lowerBound = calendar.date(byAdding: .day, value: -6, to: calendar.startOfDay(for: Date())) ?? Date()
+        return history.count(where: { $0.finishedAt >= lowerBound })
     }
 }
 
 struct TrainingInsightsView: View {
     @State var viewModel: TrainingInsightsViewModel
-    @State private var selectedDay: Date?
 
     var body: some View {
         ScrollView {
             VStack(spacing: FFSpacing.md) {
-                calendarCard
+                summaryCard
                 heatmapCard
                 historyCard
             }
@@ -127,73 +79,46 @@ struct TrainingInsightsView: View {
         }
         .background(FFColors.background)
         .navigationTitle("Прогресс")
+        .refreshable {
+            await viewModel.reload()
+        }
         .task {
             await viewModel.onAppear()
         }
-        .sheet(
-            isPresented: Binding(
-                get: { selectedDay != nil },
-                set: { isPresented in
-                    if !isPresented {
-                        selectedDay = nil
-                    }
-                },
-            ),
-        ) {
-            dayDetailsSheet
-        }
     }
 
-    private var calendarCard: some View {
+    private var summaryCard: some View {
         FFCard {
             VStack(alignment: .leading, spacing: FFSpacing.sm) {
-                HStack {
-                    Text("Календарь")
-                        .font(FFTypography.h2)
-                        .foregroundStyle(FFColors.textPrimary)
-                    Spacer()
-                    Button("Обновить") {
-                        Task { await viewModel.reload() }
-                    }
-                    .font(FFTypography.caption.weight(.semibold))
-                    .foregroundStyle(FFColors.accent)
-                }
+                Text("Сводка")
+                    .font(FFTypography.h2)
+                    .foregroundStyle(FFColors.textPrimary)
 
-                LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 7), spacing: FFSpacing.xs) {
-                    ForEach(viewModel.monthGrid, id: \.self) { day in
-                        dayCell(day)
-                    }
+                HStack(spacing: FFSpacing.sm) {
+                    metricView(title: "Тренировок", value: "\(viewModel.totalWorkouts)")
+                    metricView(title: "За 7 дней", value: "\(viewModel.workoutsLast7Days)")
+                    metricView(title: "Минут", value: "\(viewModel.totalMinutes)")
                 }
             }
         }
     }
 
-    private func dayCell(_ day: Date) -> some View {
-        let status = viewModel.dayStatus(day)
-        return Button {
-            selectedDay = day
-        } label: {
-            Text(day.formatted(.dateTime.day()))
+    private func metricView(title: String, value: String) -> some View {
+        VStack(alignment: .leading, spacing: FFSpacing.xxs) {
+            Text(title)
                 .font(FFTypography.caption)
+                .foregroundStyle(FFColors.textSecondary)
+            Text(value)
+                .font(FFTypography.h2)
                 .foregroundStyle(FFColors.textPrimary)
-                .frame(maxWidth: .infinity, minHeight: 30)
-                .background(statusColor(status).opacity(0.22))
-                .clipShape(RoundedRectangle(cornerRadius: 8))
         }
-        .buttonStyle(.plain)
-        .accessibilityLabel("\(day.formatted(date: .abbreviated, time: .omitted))")
-    }
-
-    private func statusColor(_ status: TrainingDayStatus?) -> Color {
-        switch status {
-        case .planned:
-            FFColors.primary
-        case .completed:
-            FFColors.accent
-        case .missed:
-            FFColors.danger
-        case nil:
-            FFColors.gray700
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(FFSpacing.sm)
+        .background(FFColors.surface)
+        .clipShape(RoundedRectangle(cornerRadius: FFTheme.Radius.control))
+        .overlay {
+            RoundedRectangle(cornerRadius: FFTheme.Radius.control)
+                .stroke(FFColors.gray700, lineWidth: 1)
         }
     }
 
@@ -243,25 +168,29 @@ struct TrainingInsightsView: View {
                 }
 
                 if viewModel.history.isEmpty {
-                    Text("Пока нет завершённых тренировок.")
-                        .font(FFTypography.body)
-                        .foregroundStyle(FFColors.textSecondary)
+                    FFEmptyState(
+                        title: "Пока нет завершённых тренировок",
+                        message: "Завершите первую тренировку, чтобы увидеть историю.",
+                    )
                 } else {
-                    ForEach(viewModel.history.prefix(15)) { item in
-                        VStack(alignment: .leading, spacing: FFSpacing.xs) {
+                    ForEach(viewModel.history) { item in
+                        VStack(alignment: .leading, spacing: FFSpacing.xxs) {
                             Text(item.workoutTitle)
                                 .font(FFTypography.body.weight(.semibold))
                                 .foregroundStyle(FFColors.textPrimary)
-                            Text(item.finishedAt.formatted(date: .abbreviated, time: .shortened))
-                                .font(FFTypography.caption)
-                                .foregroundStyle(FFColors.textSecondary)
+                            Text(
+                                "\(sourceTitle(item.source)) • \(item.finishedAt.formatted(date: .abbreviated, time: .shortened))",
+                            )
+                            .font(FFTypography.caption)
+                            .foregroundStyle(FFColors.textSecondary)
                             Text(
                                 "\(item.completedSets)/\(item.totalSets) подходов • \(max(1, item.durationSeconds / 60)) мин",
                             )
                             .font(FFTypography.caption)
                             .foregroundStyle(FFColors.textSecondary)
                         }
-                        .padding(.vertical, 2)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.vertical, FFSpacing.xxs)
                     }
                 }
             }
@@ -272,8 +201,8 @@ struct TrainingInsightsView: View {
         Menu {
             Button("Все") { Task { await viewModel.selectSource(nil) } }
             Button("По программе") { Task { await viewModel.selectSource(.program) } }
-            Button("Freestyle") { Task { await viewModel.selectSource(.freestyle) } }
-            Button("Шаблоны") { Task { await viewModel.selectSource(.template) } }
+            Button("Своя тренировка") { Task { await viewModel.selectSource(.freestyle) } }
+            Button("По шаблону") { Task { await viewModel.selectSource(.template) } }
         } label: {
             Label("Фильтр", systemImage: "line.3.horizontal.decrease.circle")
                 .font(FFTypography.caption)
@@ -281,73 +210,14 @@ struct TrainingInsightsView: View {
         }
     }
 
-    private var dayDetailsSheet: some View {
-        VStack(spacing: FFSpacing.md) {
-            if let selectedDay {
-                Text(selectedDay.formatted(date: .complete, time: .omitted))
-                    .font(FFTypography.h2)
-                    .foregroundStyle(FFColors.textPrimary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-
-                let items = viewModel.dayDetails(selectedDay)
-                if items.isEmpty {
-                    FFEmptyState(
-                        title: "На этот день тренировок нет",
-                        message: "Запланируйте тренировку или откройте быструю тренировку.",
-                    )
-                } else {
-                    ScrollView {
-                        VStack(spacing: FFSpacing.sm) {
-                            ForEach(items) { item in
-                                FFCard {
-                                    HStack(alignment: .top, spacing: FFSpacing.sm) {
-                                        VStack(alignment: .leading, spacing: FFSpacing.xs) {
-                                            Text(item.title)
-                                                .font(FFTypography.body.weight(.semibold))
-                                                .foregroundStyle(FFColors.textPrimary)
-                                            Text(item.subtitle)
-                                                .font(FFTypography.caption)
-                                                .foregroundStyle(FFColors.textSecondary)
-                                            Text("Источник: \(sourceTitle(item.source))")
-                                                .font(FFTypography.caption)
-                                                .foregroundStyle(FFColors.gray300)
-                                        }
-                                        Spacer(minLength: FFSpacing.xs)
-                                        FFBadge(status: badgeStatus(for: item.status))
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        .padding(.horizontal, FFSpacing.md)
-        .padding(.top, FFSpacing.md)
-        .padding(.bottom, FFSpacing.lg)
-        .presentationDetents([.medium, .large])
-        .background(FFColors.background)
-    }
-
     private func sourceTitle(_ source: WorkoutSource) -> String {
         switch source {
         case .program:
             "Программа"
         case .freestyle:
-            "Freestyle"
+            "Своя тренировка"
         case .template:
             "Шаблон"
-        }
-    }
-
-    private func badgeStatus(for status: TrainingDayStatus) -> FFBadge.Status {
-        switch status {
-        case .planned:
-            .notStarted
-        case .completed:
-            .completed
-        case .missed:
-            .archived
         }
     }
 }

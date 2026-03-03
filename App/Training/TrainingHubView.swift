@@ -225,7 +225,7 @@ struct TrainingHubView: View {
                         .font(FFTypography.h2)
                         .foregroundStyle(FFColors.textPrimary)
                     Spacer()
-                    Button("История и календарь") {
+                    Button("История и прогресс") {
                         onOpenProgress()
                     }
                     .font(FFTypography.caption.weight(.semibold))

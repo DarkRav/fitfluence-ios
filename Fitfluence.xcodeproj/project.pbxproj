@@ -58,6 +58,7 @@
 		BAE62E7712F38E9F49845685 /* NetworkingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 59F8273C6875008A5C9A3300 /* NetworkingTests.swift */; };
 		BC078A680755A39631921FB9 /* OIDCDiscoveryDocument.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5C86524522FD187BCB6065C5 /* OIDCDiscoveryDocument.swift */; };
 		BE14E4CFB655557D8C529CDF /* RootFeature.swift in Sources */ = {isa = PBXBuildFile; fileRef = CAEB6BFF14C57697C73E6CD3 /* RootFeature.swift */; };
+		BF014B2F8342FD309DD69B06 /* PlanScheduleView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 98D854DFFDCBED597F3ABAE3 /* PlanScheduleView.swift */; };
 		C02072FD6DB6B3A191B83CB8 /* WorkoutSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0969AE8DCBC8CC20AB132913 /* WorkoutSettingsView.swift */; };
 		C091B3E8CBC8FB1F8ABFDC95 /* FitfluenceApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2406C59ACFAD49D5F8BF8FC2 /* FitfluenceApp.swift */; };
 		C2DCB05753276584C7BFA617 /* ProgressStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 415ABAB15959835E84390C9B /* ProgressStore.swift */; };
@@ -135,6 +136,7 @@
 		93591F37ED661EF6B961A5D3 /* APIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIClient.swift; sourceTree = "<group>"; };
 		94FD710E5EFA916159BCCE7D /* DesignSystemTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DesignSystemTests.swift; sourceTree = "<group>"; };
 		967F2EF94A530FC0D94A6D5C /* PreviewMocks.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PreviewMocks.swift; sourceTree = "<group>"; };
+		98D854DFFDCBED597F3ABAE3 /* PlanScheduleView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlanScheduleView.swift; sourceTree = "<group>"; };
 		9E4CF13A2531205E9575D66B /* APIRequest.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIRequest.swift; sourceTree = "<group>"; };
 		A2E5D8994FEA468EC4504CD0 /* Typography.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Typography.swift; sourceTree = "<group>"; };
 		A56CE81EAF5FA874DDFE6201 /* CatalogView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CatalogView.swift; sourceTree = "<group>"; };
@@ -216,6 +218,14 @@
 			path = Diagnostics;
 			sourceTree = "<group>";
 		};
+		359050D49D5EAF580A063193 /* Plan */ = {
+			isa = PBXGroup;
+			children = (
+				98D854DFFDCBED597F3ABAE3 /* PlanScheduleView.swift */,
+			);
+			path = Plan;
+			sourceTree = "<group>";
+		};
 		407836AD2D7FC169F347D0C9 /* ProgramDetails */ = {
 			isa = PBXGroup;
 			children = (
@@ -283,6 +293,7 @@
 				B734C507321EEAA3EBC80B1D /* Home */,
 				58F67AC41220B348AE247B79 /* Networking */,
 				4E24CED28C6227B31F799718 /* Onboarding */,
+				359050D49D5EAF580A063193 /* Plan */,
 				B80CE24B14A632EBC7B41B4E /* Profile */,
 				407836AD2D7FC169F347D0C9 /* ProgramDetails */,
 				D292F30B286489A7E8DBAFB9 /* Root */,
@@ -539,6 +550,7 @@
 				BC078A680755A39631921FB9 /* OIDCDiscoveryDocument.swift in Sources */,
 				1AB57DA5730C1782367D6BE4 /* OnboardingFeature.swift in Sources */,
 				43CA0760499D122198F6FA3B /* OnboardingView.swift in Sources */,
+				BF014B2F8342FD309DD69B06 /* PlanScheduleView.swift in Sources */,
 				302383A11BF7E3A6A2017B59 /* PreviewMocks.swift in Sources */,
 				5242DDCD1DA66FFEEDC0015E /* ProfileModels.swift in Sources */,
 				D21F342597E982EA8F1527B6 /* ProfileSettingsStore.swift in Sources */,

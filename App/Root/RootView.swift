@@ -167,7 +167,7 @@ private struct AthleteShellView: View {
                 )
             }
             .tabItem {
-                Label("План", systemImage: "list.bullet.rectangle")
+                Label("План", systemImage: "calendar")
             }
             .tag(ShellTab.plan)
 
@@ -206,6 +206,8 @@ private struct PlanTabContent: View {
     let apiClient: APIClientProtocol?
     let userSub: String
 
+    @State private var isCatalogPresented = false
+    @State private var planViewModel: PlanScheduleViewModel
     @State private var viewModel: CatalogViewModel
 
     private struct ViewState: Equatable {
@@ -223,6 +225,7 @@ private struct PlanTabContent: View {
         self.environment = environment
         self.apiClient = apiClient
         self.userSub = userSub
+        _planViewModel = State(initialValue: PlanScheduleViewModel(userSub: userSub))
         _viewModel = State(
             initialValue: CatalogViewModel(
                 userSub: userSub,
@@ -242,14 +245,23 @@ private struct PlanTabContent: View {
                 selectedProgram: $0.selectedProgram,
             ) },
         ) { viewStore in
-            CatalogScreen(
-                viewModel: viewModel,
-                environment: environment,
-                onProgramTap: { programID in
-                    store.send(.openProgram(programId: programID, userSub: userSub))
+            PlanScheduleScreen(
+                viewModel: planViewModel,
+                onOpenCatalog: {
+                    isCatalogPresented = true
                 },
             )
             .navigationTitle("План")
+            .navigationDestination(isPresented: $isCatalogPresented) {
+                CatalogScreen(
+                    viewModel: viewModel,
+                    environment: environment,
+                    onProgramTap: { programID in
+                        store.send(.openProgram(programId: programID, userSub: userSub))
+                    },
+                )
+                .navigationTitle("Каталог программ")
+            }
             .navigationDestination(
                 isPresented: Binding(
                     get: { viewStore.isProgramDetailsPresented },
