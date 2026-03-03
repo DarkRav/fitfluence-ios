@@ -6,7 +6,7 @@ enum HomePrimaryAction: Equatable {
     case startNext(programId: String, workoutId: String)
     case repeatLast(programId: String, workoutId: String)
     case openPicker
-    case quickWorkout
+    case openTrainingHub
 }
 
 struct HomeTodayWorkoutSnapshot: Equatable {
@@ -79,7 +79,7 @@ final class HomeViewModel {
         if lastWorkout != nil {
             return "Повторить последнюю"
         }
-        return "Быстрая тренировка"
+        return "Открыть тренировку"
     }
 
     var primarySubtitle: String {
@@ -92,7 +92,7 @@ final class HomeViewModel {
         if let nextWorkout {
             return "Следующая по программе: \(nextWorkout.title)"
         }
-        return "Нет обязательных задач на сегодня"
+        return "Откройте вкладку «Тренировка» для быстрого старта"
     }
 
     var primaryAction: HomePrimaryAction {
@@ -111,7 +111,7 @@ final class HomeViewModel {
         if let lastWorkout, let activeProgramId {
             return .repeatLast(programId: activeProgramId, workoutId: lastWorkout.id)
         }
-        return .quickWorkout
+        return .openTrainingHub
     }
 
     func onAppear() async {
@@ -313,7 +313,7 @@ struct HomeViewV2: View {
     @State var viewModel: HomeViewModel
     let onPrimaryAction: (HomePrimaryAction) -> Void
     let onOpenPlan: () -> Void
-    let onOpenTemplates: () -> Void
+    let onOpenTraining: () -> Void
 
     var body: some View {
         ScrollView {
@@ -321,7 +321,7 @@ struct HomeViewV2: View {
                 hero
                 todayWorkoutCard
                 lastActivityCard
-                quickActionsCard
+                trainingEntryCard
             }
             .padding(.horizontal, FFSpacing.md)
             .padding(.vertical, FFSpacing.md)
@@ -410,19 +410,18 @@ struct HomeViewV2: View {
         }
     }
 
-    private var quickActionsCard: some View {
+    private var trainingEntryCard: some View {
         FFCard {
             VStack(alignment: .leading, spacing: FFSpacing.sm) {
-                Text("Быстрый доступ")
+                Text("Тренировка")
                     .font(FFTypography.h2)
                     .foregroundStyle(FFColors.textPrimary)
 
-                FFButton(title: "Быстрая тренировка", variant: .secondary) {
-                    onPrimaryAction(.quickWorkout)
-                }
-                FFButton(title: "Шаблоны тренировок", variant: .secondary) {
-                    onOpenTemplates()
-                }
+                Text("Быстрый старт, шаблоны, повтор и продолжение сессии находятся во вкладке «Тренировка».")
+                    .font(FFTypography.body)
+                    .foregroundStyle(FFColors.textSecondary)
+
+                FFButton(title: "Открыть тренировку", variant: .secondary, action: onOpenTraining)
             }
         }
     }
@@ -444,7 +443,7 @@ private extension String {
             ),
             onPrimaryAction: { _ in },
             onOpenPlan: {},
-            onOpenTemplates: {},
+            onOpenTraining: {},
         )
     }
 }

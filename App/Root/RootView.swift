@@ -150,6 +150,7 @@ private struct AthleteShellView: View {
                     me: me,
                     apiClient: apiClient,
                     onOpenPlan: { selectedTab = .plan },
+                    onOpenTraining: { selectedTab = .training },
                 )
             }
             .tabItem {
@@ -279,24 +280,15 @@ private struct TodayHubView: View {
     let me: MeResponse
     let apiClient: APIClientProtocol?
     let onOpenPlan: () -> Void
+    let onOpenTraining: () -> Void
 
     @State private var route: WorkoutRoute?
-    @State private var isQuickBuilderPresented = false
-    @State private var isTemplateLibraryPresented = false
-    @State private var quickWorkout: QuickWorkoutRoute?
 
     private struct WorkoutRoute: Identifiable, Hashable {
         let programId: String
         let workoutId: String
         var id: String {
             "\(programId)::\(workoutId)"
-        }
-    }
-
-    private struct QuickWorkoutRoute: Identifiable {
-        let workout: WorkoutDetailsModel
-        var id: String {
-            workout.id
         }
     }
 
@@ -315,14 +307,12 @@ private struct TodayHubView: View {
                     route = WorkoutRoute(programId: programId, workoutId: workoutId)
                 case .openPicker:
                     onOpenPlan()
-                case .quickWorkout:
-                    isQuickBuilderPresented = true
+                case .openTrainingHub:
+                    onOpenTraining()
                 }
             },
             onOpenPlan: onOpenPlan,
-            onOpenTemplates: {
-                isTemplateLibraryPresented = true
-            },
+            onOpenTraining: onOpenTraining,
         )
         .navigationDestination(item: $route) { route in
             WorkoutLaunchView(
@@ -331,33 +321,6 @@ private struct TodayHubView: View {
                 workoutId: route.workoutId,
                 apiClient: apiClient,
             )
-        }
-        .navigationDestination(item: $quickWorkout) { route in
-            WorkoutLaunchView(
-                userSub: me.subject ?? "anonymous",
-                programId: "freestyle",
-                workoutId: route.workout.id,
-                apiClient: apiClient,
-                presetWorkout: route.workout,
-                source: .freestyle,
-            )
-        }
-        .fullScreenCover(isPresented: $isQuickBuilderPresented) {
-            NavigationStack {
-                QuickWorkoutBuilderView { workout in
-                    quickWorkout = QuickWorkoutRoute(workout: workout)
-                }
-            }
-        }
-        .fullScreenCover(isPresented: $isTemplateLibraryPresented) {
-            NavigationStack {
-                TemplateLibraryView(
-                    viewModel: TemplateLibraryViewModel(userSub: me.subject ?? "anonymous"),
-                    onStartTemplate: { workout in
-                        quickWorkout = QuickWorkoutRoute(workout: workout)
-                    },
-                )
-            }
         }
     }
 }

@@ -194,12 +194,14 @@ final class WorkoutPlayerViewModel {
 
     func toggleSetComplete(setIndex: Int) async {
         guard let currentExercise, let session else { return }
+        let wasCompleted = currentExerciseState?.sets[safe: setIndex]?.isCompleted ?? false
         self.session = await sessionManager.toggleSetComplete(
             session,
             exerciseId: currentExercise.id,
             setIndex: setIndex,
         )
-        if let rest = currentExercise.restSeconds {
+        let isNowCompleted = currentExerciseState?.sets[safe: setIndex]?.isCompleted ?? false
+        if !wasCompleted, isNowCompleted, let rest = currentExercise.restSeconds {
             restTimer.start(seconds: rest)
         }
     }
@@ -347,7 +349,9 @@ struct WorkoutPlayerViewV2: View {
     let onFinish: (WorkoutPlayerViewModel.CompletionSummary) -> Void
 
     var body: some View {
-        VStack(spacing: 0) {
+        ZStack {
+            FFColors.background.ignoresSafeArea()
+
             if viewModel.isLoading {
                 FFLoadingState(title: "Открываем тренировку")
             } else {
@@ -361,12 +365,9 @@ struct WorkoutPlayerViewV2: View {
                     .padding(.top, FFSpacing.md)
                     .padding(.bottom, FFSpacing.xl)
                 }
-                .safeAreaInset(edge: .bottom) {
-                    bottomBar
-                }
             }
         }
-        .background(FFColors.background)
+        .safeAreaInset(edge: .bottom) { bottomBar }
         .task { await viewModel.onAppear() }
         .alert("Завершить тренировку?", isPresented: $viewModel.isExitConfirmationPresented) {
             Button("Остаться", role: .cancel) {}
@@ -406,21 +407,35 @@ struct WorkoutPlayerViewV2: View {
 
     private var topPanel: some View {
         FFCard {
-            VStack(alignment: .leading, spacing: FFSpacing.xs) {
+            VStack(alignment: .leading, spacing: FFSpacing.sm) {
                 HStack {
-                    VStack(alignment: .leading, spacing: FFSpacing.xs) {
+                    VStack(alignment: .leading, spacing: FFSpacing.xxs) {
                         Text(viewModel.title)
                             .font(FFTypography.h2)
                             .foregroundStyle(FFColors.textPrimary)
+                            .lineLimit(2)
+                            .fixedSize(horizontal: false, vertical: true)
                         Text(viewModel.progressLabel)
                             .font(FFTypography.caption)
                             .foregroundStyle(FFColors.textSecondary)
                     }
                     Spacer()
-                    Button("Выйти") { viewModel.isExitConfirmationPresented = true }
-                        .font(FFTypography.caption.weight(.semibold))
-                        .foregroundStyle(FFColors.danger)
-                        .frame(minWidth: 44, minHeight: 44)
+                    Button {
+                        viewModel.isExitConfirmationPresented = true
+                    } label: {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 14, weight: .bold))
+                            .foregroundStyle(FFColors.danger)
+                            .frame(width: 44, height: 44)
+                            .background(FFColors.surface)
+                            .clipShape(RoundedRectangle(cornerRadius: FFTheme.Radius.control))
+                            .overlay {
+                                RoundedRectangle(cornerRadius: FFTheme.Radius.control)
+                                    .stroke(FFColors.gray700, lineWidth: 1)
+                            }
+                    }
+                    .frame(minWidth: 44, minHeight: 44)
+                    .accessibilityLabel("Выйти из тренировки")
                 }
                 Text("Оффлайн: изменения сохраняются на устройстве")
                     .font(FFTypography.caption)
@@ -434,19 +449,23 @@ struct WorkoutPlayerViewV2: View {
             if let exercise = viewModel.currentExercise {
                 VStack(alignment: .leading, spacing: FFSpacing.sm) {
                     Text(exercise.name)
-                        .font(FFTypography.h1)
+                        .font(.system(size: 28, weight: .bold, design: .rounded))
                         .foregroundStyle(FFColors.textPrimary)
+                        .lineLimit(3)
+                        .fixedSize(horizontal: false, vertical: true)
                     Text(prescription(for: exercise))
                         .font(FFTypography.body)
                         .foregroundStyle(FFColors.textSecondary)
-                    HStack(spacing: FFSpacing.sm) {
-                        FFButton(title: "Пропустить", variant: .secondary) {
+
+                    HStack(spacing: FFSpacing.xs) {
+                        compactActionButton(title: "Пропустить", systemImage: "forward.fill") {
                             Task { await viewModel.skipExercise() }
                         }
-                        FFButton(title: "Отменить", variant: .secondary) {
+                        compactActionButton(title: "Отменить", systemImage: "arrow.uturn.backward") {
                             Task { await viewModel.undoLastChange() }
                         }
                     }
+
                     VStack(alignment: .leading, spacing: FFSpacing.xs) {
                         Text("Прогресс")
                             .font(FFTypography.caption.weight(.semibold))
@@ -490,37 +509,31 @@ struct WorkoutPlayerViewV2: View {
                     .foregroundStyle(FFColors.textPrimary)
                 if let exerciseState = viewModel.currentExerciseState {
                     ForEach(Array(exerciseState.sets.enumerated()), id: \.offset) { index, set in
-                        HStack(spacing: FFSpacing.sm) {
-                            Button {
-                                Task { await viewModel.toggleSetComplete(setIndex: index) }
-                            } label: {
-                                Image(systemName: set.isCompleted ? "checkmark.circle.fill" : "circle")
-                                    .foregroundStyle(set.isCompleted ? FFColors.accent : FFColors.textSecondary)
-                                    .frame(width: 44, height: 44)
-                            }
-                            VStack(alignment: .leading, spacing: FFSpacing.xs) {
+                        VStack(alignment: .leading, spacing: FFSpacing.sm) {
+                            HStack(spacing: FFSpacing.xs) {
+                                Button {
+                                    Task { await viewModel.toggleSetComplete(setIndex: index) }
+                                } label: {
+                                    Image(systemName: set.isCompleted ? "checkmark.circle.fill" : "circle")
+                                        .font(.system(size: 22, weight: .semibold))
+                                        .foregroundStyle(set.isCompleted ? FFColors.accent : FFColors.textSecondary)
+                                        .frame(width: 44, height: 44)
+                                }
+                                .buttonStyle(.plain)
+                                .accessibilityLabel("Отметить подход \(index + 1) выполненным")
+
                                 Text("Подход \(index + 1)")
                                     .font(FFTypography.body.weight(.semibold))
-                                HStack(spacing: FFSpacing.xs) {
-                                    numericChip(title: "−2.5") {
-                                        Task { await viewModel.decrementWeight(setIndex: index) }
-                                    }
-                                    Text("Вес \(set.weightText.isEmpty ? "0" : set.weightText)")
-                                        .font(FFTypography.caption)
-                                        .foregroundStyle(FFColors.textSecondary)
-                                    numericChip(title: "+2.5") {
-                                        Task { await viewModel.incrementWeight(setIndex: index) }
-                                    }
+                                    .foregroundStyle(FFColors.textPrimary)
+
+                                Spacer()
+
+                                if set.isCompleted {
+                                    FFBadge(status: .completed)
                                 }
-                                HStack(spacing: FFSpacing.xs) {
-                                    numericChip(title: "−1") { Task { await viewModel.decrementReps(setIndex: index) } }
-                                    Text("Повторы \(set.repsText.isEmpty ? "0" : set.repsText)")
-                                        .font(FFTypography.caption)
-                                        .foregroundStyle(FFColors.textSecondary)
-                                    numericChip(title: "+1") { Task { await viewModel.incrementReps(setIndex: index) } }
-                                }
+
                                 if index > 0 {
-                                    Button("Копировать прошлый подход") {
+                                    Button("Копировать") {
                                         Task { await viewModel.copyPreviousSet(setIndex: index) }
                                     }
                                     .font(FFTypography.caption.weight(.semibold))
@@ -528,9 +541,33 @@ struct WorkoutPlayerViewV2: View {
                                     .frame(minHeight: 44)
                                 }
                             }
-                            Spacer()
+
+                            HStack(spacing: FFSpacing.sm) {
+                                metricStepper(
+                                    title: "Вес",
+                                    value: set.weightText.isEmpty ? "0" : set.weightText,
+                                    minusLabel: "−2.5",
+                                    plusLabel: "+2.5",
+                                    onMinus: { Task { await viewModel.decrementWeight(setIndex: index) } },
+                                    onPlus: { Task { await viewModel.incrementWeight(setIndex: index) } },
+                                )
+                                metricStepper(
+                                    title: "Повторы",
+                                    value: set.repsText.isEmpty ? "0" : set.repsText,
+                                    minusLabel: "−1",
+                                    plusLabel: "+1",
+                                    onMinus: { Task { await viewModel.decrementReps(setIndex: index) } },
+                                    onPlus: { Task { await viewModel.incrementReps(setIndex: index) } },
+                                )
+                            }
                         }
-                        .padding(.vertical, FFSpacing.xs)
+                        .padding(FFSpacing.sm)
+                        .background(FFColors.surface)
+                        .clipShape(RoundedRectangle(cornerRadius: FFTheme.Radius.control))
+                        .overlay {
+                            RoundedRectangle(cornerRadius: FFTheme.Radius.control)
+                                .stroke(FFColors.gray700, lineWidth: 1)
+                        }
                     }
                 }
             }
@@ -541,32 +578,55 @@ struct WorkoutPlayerViewV2: View {
         VStack(spacing: FFSpacing.xs) {
             if viewModel.restTimer.isVisible {
                 FFCard(padding: FFSpacing.sm) {
-                    HStack {
-                        Text("Отдых: \(formattedTime(viewModel.restTimer.remainingSeconds))")
-                            .font(FFTypography.h2)
-                        Spacer()
-                        FFButton(
-                            title: viewModel.restTimer.isRunning ? "Пауза" : "Продолжить",
-                            variant: .secondary,
-                            action: { viewModel.restTimer.pauseOrResume() },
-                        )
-                        FFButton(title: "+15", variant: .secondary) { viewModel.addRest(seconds: 15) }
-                        FFButton(title: "+30", variant: .secondary) { viewModel.addRest(seconds: 30) }
-                        FFButton(title: "Сброс", variant: .secondary) { viewModel.restTimer.reset() }
-                        FFButton(title: "Пропустить", variant: .destructive) { viewModel.restTimer.skip() }
+                    VStack(spacing: FFSpacing.xs) {
+                        HStack(spacing: FFSpacing.xs) {
+                            Label("Отдых", systemImage: "timer")
+                                .font(FFTypography.caption.weight(.semibold))
+                                .foregroundStyle(FFColors.textSecondary)
+                            Text(formattedTime(viewModel.restTimer.remainingSeconds))
+                                .font(.system(size: 28, weight: .bold, design: .rounded))
+                                .foregroundStyle(FFColors.textPrimary)
+                            Spacer()
+                            compactActionButton(
+                                title: viewModel.restTimer.isRunning ? "Пауза" : "Продолжить",
+                                systemImage: viewModel.restTimer.isRunning ? "pause.fill" : "play.fill",
+                                action: { viewModel.restTimer.pauseOrResume() },
+                            )
+                            compactActionButton(title: "Пропустить", systemImage: "forward.fill") {
+                                viewModel.restTimer.skip()
+                            }
+                        }
+
+                        ViewThatFits(in: .horizontal) {
+                            HStack(spacing: FFSpacing.xs) {
+                                numericChip(title: "+15") { viewModel.addRest(seconds: 15) }
+                                numericChip(title: "+30") { viewModel.addRest(seconds: 30) }
+                                numericChip(title: "Сброс") { viewModel.restTimer.reset() }
+                                Spacer(minLength: 0)
+                            }
+                            VStack(alignment: .leading, spacing: FFSpacing.xs) {
+                                HStack(spacing: FFSpacing.xs) {
+                                    numericChip(title: "+15") { viewModel.addRest(seconds: 15) }
+                                    numericChip(title: "+30") { viewModel.addRest(seconds: 30) }
+                                }
+                                numericChip(title: "Сброс") { viewModel.restTimer.reset() }
+                            }
+                        }
                     }
                 }
             }
             FFCard(padding: FFSpacing.sm) {
-                HStack(spacing: FFSpacing.sm) {
-                    FFButton(title: "Назад", variant: .secondary) {
-                        Task { await viewModel.prevExercise() }
+                VStack(spacing: FFSpacing.xs) {
+                    HStack(spacing: FFSpacing.sm) {
+                        bottomActionButton(title: "Назад", variant: .secondary) {
+                            Task { await viewModel.prevExercise() }
+                        }
+                        bottomActionButton(title: "Завершить раньше", variant: .secondary) {
+                            viewModel.isFinishEarlyConfirmationPresented = true
+                        }
                     }
-                    FFButton(title: viewModel.primaryBottomTitle, variant: .primary) {
+                    bottomActionButton(title: viewModel.primaryBottomTitle, variant: .primary) {
                         Task { await viewModel.primaryBottomAction() }
-                    }
-                    FFButton(title: "Завершить раньше", variant: .secondary) {
-                        viewModel.isFinishEarlyConfirmationPresented = true
                     }
                 }
             }
@@ -575,6 +635,75 @@ struct WorkoutPlayerViewV2: View {
         .padding(.top, FFSpacing.xs)
         .padding(.bottom, FFSpacing.sm)
         .background(FFColors.background.opacity(0.96))
+    }
+
+    private func compactActionButton(title: String, systemImage: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Label(title, systemImage: systemImage)
+                .font(FFTypography.caption.weight(.semibold))
+                .foregroundStyle(FFColors.textPrimary)
+                .frame(minHeight: 44)
+                .padding(.horizontal, FFSpacing.sm)
+                .background(FFColors.surface)
+                .clipShape(RoundedRectangle(cornerRadius: FFTheme.Radius.control))
+                .overlay {
+                    RoundedRectangle(cornerRadius: FFTheme.Radius.control)
+                        .stroke(FFColors.gray700, lineWidth: 1)
+                }
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func bottomActionButton(
+        title: String,
+        variant: FFButton.Variant,
+        action: @escaping () -> Void,
+    ) -> some View {
+        Button(action: action) {
+            Text(title)
+                .font(FFTypography.body.weight(.semibold))
+                .foregroundStyle(variant == .primary ? FFColors.background : FFColors.textPrimary)
+                .multilineTextAlignment(.center)
+                .lineLimit(2)
+                .minimumScaleFactor(0.85)
+                .frame(maxWidth: .infinity, minHeight: 52)
+                .padding(.horizontal, FFSpacing.sm)
+                .background(variant == .primary ? FFColors.primary : FFColors.surface)
+                .clipShape(RoundedRectangle(cornerRadius: FFTheme.Radius.control))
+                .overlay {
+                    if variant == .secondary {
+                        RoundedRectangle(cornerRadius: FFTheme.Radius.control)
+                            .stroke(FFColors.gray700, lineWidth: 1)
+                    }
+                }
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func metricStepper(
+        title: String,
+        value: String,
+        minusLabel: String,
+        plusLabel: String,
+        onMinus: @escaping () -> Void,
+        onPlus: @escaping () -> Void,
+    ) -> some View {
+        VStack(alignment: .leading, spacing: FFSpacing.xxs) {
+            Text(title)
+                .font(FFTypography.caption)
+                .foregroundStyle(FFColors.textSecondary)
+            HStack(spacing: FFSpacing.xs) {
+                numericChip(title: minusLabel, action: onMinus)
+                Text(value)
+                    .font(FFTypography.body.weight(.semibold))
+                    .foregroundStyle(FFColors.textPrimary)
+                    .frame(maxWidth: .infinity, minHeight: 44)
+                    .background(FFColors.background.opacity(0.4))
+                    .clipShape(RoundedRectangle(cornerRadius: FFTheme.Radius.control))
+                numericChip(title: plusLabel, action: onPlus)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private func prescription(for exercise: WorkoutExercise) -> String {
@@ -599,11 +728,17 @@ struct WorkoutPlayerViewV2: View {
                 .font(FFTypography.caption.weight(.semibold))
                 .foregroundStyle(FFColors.textPrimary)
                 .padding(.horizontal, FFSpacing.sm)
-                .padding(.vertical, FFSpacing.xs)
+                .frame(minHeight: 44)
                 .background(FFColors.gray700)
                 .clipShape(RoundedRectangle(cornerRadius: FFTheme.Radius.control))
-                .frame(minHeight: 44)
         }
+        .buttonStyle(.plain)
+    }
+}
+
+private extension Array {
+    subscript(safe index: Int) -> Element? {
+        indices.contains(index) ? self[index] : nil
     }
 }
 
