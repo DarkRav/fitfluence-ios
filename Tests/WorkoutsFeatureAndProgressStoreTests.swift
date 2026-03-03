@@ -339,6 +339,7 @@ private actor MockWorkoutProgressStore: WorkoutProgressStore {
             userSub: snapshot.userSub,
             programId: snapshot.programId,
             workoutId: snapshot.workoutId,
+            source: snapshot.source ?? .program,
             status: snapshot.status,
             currentExerciseIndex: snapshot.currentExerciseIndex,
             lastUpdated: snapshot.lastUpdated,

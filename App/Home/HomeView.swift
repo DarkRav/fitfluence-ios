@@ -24,6 +24,7 @@ struct HomePlannedWorkoutSnapshot: Equatable {
     let status: TrainingDayStatus
     let statusText: String
     let subtitle: String
+    let source: WorkoutSource
     let programId: String?
     let workoutId: String?
 }
@@ -78,6 +79,7 @@ final class HomeViewModel {
             return "Продолжить тренировку"
         }
         if let plannedWorkoutToday,
+           plannedWorkoutToday.source == .program,
            plannedWorkoutToday.status == .planned,
            plannedWorkoutToday.workoutId != nil,
            plannedWorkoutToday.programId != nil
@@ -108,9 +110,11 @@ final class HomeViewModel {
             return .continueSession(programId: activeSession.programId, workoutId: activeSession.workoutId)
         }
         if let plannedWorkoutToday,
+           plannedWorkoutToday.source == .program,
            plannedWorkoutToday.status == .planned,
            let programId = plannedWorkoutToday.programId,
-           let workoutId = plannedWorkoutToday.workoutId
+           let workoutId = plannedWorkoutToday.workoutId,
+           programId.isUUID
         {
             return .startNext(programId: programId, workoutId: workoutId)
         }
@@ -128,12 +132,14 @@ final class HomeViewModel {
 
         if let activeSession {
             activeProgramId = activeSession.programId
-            await loadProgramContext(programId: activeSession.programId)
+            if activeSession.programId.isUUID {
+                await loadProgramContext(programId: activeSession.programId)
+            }
             return
         }
 
         let lastCompleted = await sessionManager.lastCompletedWorkout(userSub: userSub)
-        if let lastCompleted {
+        if let lastCompleted, lastCompleted.source == .program, lastCompleted.programId.isUUID {
             activeProgramId = lastCompleted.programId
             await loadProgramContext(programId: lastCompleted.programId)
             return
@@ -181,6 +187,7 @@ final class HomeViewModel {
             status: plan.status,
             statusText: statusText,
             subtitle: sourceText,
+            source: plan.source,
             programId: plan.programId,
             workoutId: plan.workoutId,
         )
@@ -207,6 +214,8 @@ final class HomeViewModel {
     }
 
     private func loadProgramContext(programId: String) async {
+        guard programId.isUUID else { return }
+
         let cachedWorkouts = await cacheStore.get(
             "workouts.list:\(programId)",
             as: [WorkoutSummary].self,
@@ -514,6 +523,10 @@ private extension String {
     var trimmedNilIfEmpty: String? {
         let trimmed = trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? nil : trimmed
+    }
+
+    var isUUID: Bool {
+        UUID(uuidString: self) != nil
     }
 }
 

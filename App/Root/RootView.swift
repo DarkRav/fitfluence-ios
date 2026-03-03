@@ -391,37 +391,39 @@ struct WorkoutLaunchView: View {
         isLoading = true
         defer { isLoading = false }
 
+        let cacheStore = CompositeCacheStore()
+        let cacheKey = "workout.details:\(programId):\(workoutId)"
+
         if let presetWorkout {
             details = presetWorkout
             error = nil
+            await cacheStore.set(cacheKey, value: presetWorkout, namespace: userSub, ttl: 60 * 60 * 24)
             return
         }
 
-        if let apiClient, let programsClient = apiClient as? ProgramsClientProtocol {
+        let canLoadFromProgramAPI = source == .program && UUID(uuidString: programId) != nil
+
+        if canLoadFromProgramAPI, let apiClient, let programsClient = apiClient as? ProgramsClientProtocol {
             let workoutsClient = WorkoutsClient(programsClient: programsClient)
             let result = await workoutsClient.getWorkoutDetails(programId: programId, workoutId: workoutId)
             switch result {
             case let .success(details):
                 self.details = details
                 self.error = nil
+                await cacheStore.set(cacheKey, value: details, namespace: userSub, ttl: 60 * 60 * 24)
                 return
             case let .failure(apiError):
                 self.error = apiError.userFacing(context: .workoutPlayer)
             }
         }
 
-        let cacheStore = CompositeCacheStore()
-        if let cached = await cacheStore.get(
-            "workout.details:\(programId):\(workoutId)",
-            as: WorkoutDetailsModel.self,
-            namespace: userSub,
-        ) {
+        if let cached = await cacheStore.get(cacheKey, as: WorkoutDetailsModel.self, namespace: userSub) {
             details = cached
             error = nil
         } else if error == nil {
             error = UserFacingError(
-                title: "Нет данных тренировки",
-                message: "Откройте тренировку из плана при подключении к сети.",
+                title: "Нет сохранённых данных",
+                message: "Откройте тренировку заново во вкладке «Тренировка».",
             )
         }
     }
@@ -454,8 +456,9 @@ private struct TrainingTabContent: View {
 
     private struct PresetWorkoutRoute: Identifiable {
         let workout: WorkoutDetailsModel
+        let source: WorkoutSource
         var id: String {
-            workout.id
+            "\(source.rawValue)::\(workout.id)"
         }
     }
 
@@ -472,10 +475,21 @@ private struct TrainingTabContent: View {
                 isTemplateLibraryPresented = true
             },
             onRepeatWorkout: { record in
-                programWorkoutRoute = ProgramWorkoutRoute(programId: record.programId, workoutId: record.workoutId)
+                switch record.source {
+                case .program:
+                    guard UUID(uuidString: record.programId) != nil else {
+                        isQuickBuilderPresented = true
+                        return
+                    }
+                    programWorkoutRoute = ProgramWorkoutRoute(programId: record.programId, workoutId: record.workoutId)
+                case .template:
+                    isTemplateLibraryPresented = true
+                case .freestyle:
+                    isQuickBuilderPresented = true
+                }
             },
             onStartTemplate: { template in
-                presetWorkoutRoute = PresetWorkoutRoute(workout: buildWorkout(from: template))
+                presetWorkoutRoute = PresetWorkoutRoute(workout: buildWorkout(from: template), source: .template)
             },
             onOpenProgress: {
                 isProgressPresented = true
@@ -487,6 +501,7 @@ private struct TrainingTabContent: View {
                 programId: session.programId,
                 workoutId: session.workoutId,
                 apiClient: apiClient,
+                source: session.source,
             )
         }
         .navigationDestination(item: $programWorkoutRoute) { route in
@@ -500,11 +515,11 @@ private struct TrainingTabContent: View {
         .navigationDestination(item: $presetWorkoutRoute) { route in
             WorkoutLaunchView(
                 userSub: userSub,
-                programId: "freestyle",
+                programId: route.source.rawValue,
                 workoutId: route.workout.id,
                 apiClient: apiClient,
                 presetWorkout: route.workout,
-                source: .template,
+                source: route.source,
             )
         }
         .navigationDestination(isPresented: $isProgressPresented) {
@@ -514,7 +529,7 @@ private struct TrainingTabContent: View {
         .fullScreenCover(isPresented: $isQuickBuilderPresented) {
             NavigationStack {
                 QuickWorkoutBuilderView { workout in
-                    presetWorkoutRoute = PresetWorkoutRoute(workout: workout)
+                    presetWorkoutRoute = PresetWorkoutRoute(workout: workout, source: .freestyle)
                 }
             }
         }
@@ -523,7 +538,7 @@ private struct TrainingTabContent: View {
                 TemplateLibraryView(
                     viewModel: TemplateLibraryViewModel(userSub: userSub),
                     onStartTemplate: { workout in
-                        presetWorkoutRoute = PresetWorkoutRoute(workout: workout)
+                        presetWorkoutRoute = PresetWorkoutRoute(workout: workout, source: .template)
                     },
                 )
             }

@@ -64,6 +64,7 @@ struct ActiveWorkoutSession: Equatable, Sendable {
     let userSub: String
     let programId: String
     let workoutId: String
+    let source: WorkoutSource
     let status: WorkoutProgressStatus
     let currentExerciseIndex: Int?
     let lastUpdated: Date
@@ -122,7 +123,7 @@ actor LocalWorkoutProgressStore: WorkoutProgressStore {
             }
             .filter { $0.status == .inProgress }
             .sorted {
-                return $0.lastUpdated > $1.lastUpdated
+                $0.lastUpdated > $1.lastUpdated
             }
 
         guard let snapshot = snapshots.first else { return nil }
@@ -130,6 +131,7 @@ actor LocalWorkoutProgressStore: WorkoutProgressStore {
             userSub: snapshot.userSub,
             programId: snapshot.programId,
             workoutId: snapshot.workoutId,
+            source: snapshot.source ?? .program,
             status: snapshot.status,
             currentExerciseIndex: snapshot.currentExerciseIndex,
             lastUpdated: snapshot.lastUpdated,
