@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		037DA4B0A17D3A336DF64827 /* TrainingHubView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2168C23890FEB64360E40A5 /* TrainingHubView.swift */; };
 		04999B39195137AB9BA71B9A /* AppAuth in Frameworks */ = {isa = PBXBuildFile; productRef = 6BE6FBF509B0BB844E656549 /* AppAuth */; };
 		06931F2CD054F4E2CB1A73B4 /* Logging.swift in Sources */ = {isa = PBXBuildFile; fileRef = B0CE9CC0E1302819C8010358 /* Logging.swift */; };
 		07E691D96D97DC67191332E6 /* ProfileViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = D566BB28F7146B5858070BD2 /* ProfileViewModel.swift */; };
@@ -161,6 +162,7 @@
 		E4EE124DB6FA8A5986B4A1F8 /* FFRemoteImage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFRemoteImage.swift; sourceTree = "<group>"; };
 		E6F716B639AD2AA123C18F3B /* ProfileView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfileView.swift; sourceTree = "<group>"; };
 		ED3B939F25D70B624ECD73AC /* APILogger.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APILogger.swift; sourceTree = "<group>"; };
+		F2168C23890FEB64360E40A5 /* TrainingHubView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrainingHubView.swift; sourceTree = "<group>"; };
 		F4BA13F15E04E7DE0985E8C3 /* SessionManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionManager.swift; sourceTree = "<group>"; };
 		F4E83E16D03A9159D9FAC56A /* WorkoutsFeatureAndProgressStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkoutsFeatureAndProgressStoreTests.swift; sourceTree = "<group>"; };
 		F56DB3FDD2708300A0824118 /* CacheStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CacheStoreTests.swift; sourceTree = "<group>"; };
@@ -188,6 +190,7 @@
 			children = (
 				D7ADF6ADDAF5414D4B59CDCA /* QuickWorkoutBuilderView.swift */,
 				1A5EE0FB696AC968E52E7C79 /* TemplateLibraryView.swift */,
+				F2168C23890FEB64360E40A5 /* TrainingHubView.swift */,
 				2E16BBE6F885A8F976874EE8 /* TrainingInsightsView.swift */,
 				FD06968D96E5E12F603103BA /* TrainingStore.swift */,
 			);
@@ -555,6 +558,7 @@
 				B68CFEB25BF04441A03234E5 /* Theme.swift in Sources */,
 				D69C1CB30BD7205B98ECCCC3 /* TokenSet.swift in Sources */,
 				C32507921BC5A60036A562D7 /* TokenStore.swift in Sources */,
+				037DA4B0A17D3A336DF64827 /* TrainingHubView.swift in Sources */,
 				B3A6C32678411ED371703D18 /* TrainingInsightsView.swift in Sources */,
 				F67E9F2C45A40F855D4E42AB /* TrainingStore.swift in Sources */,
 				1D7E67CC678EE15C79E3AB96 /* Typography.swift in Sources */,

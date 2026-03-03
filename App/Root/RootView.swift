@@ -139,7 +139,7 @@ private struct AthleteShellView: View {
     enum ShellTab: Hashable {
         case today
         case plan
-        case progress
+        case training
         case profile
     }
 
@@ -171,12 +171,15 @@ private struct AthleteShellView: View {
             .tag(ShellTab.plan)
 
             NavigationStack {
-                ProgressTabView(userSub: me.subject ?? "anonymous")
+                TrainingTabContent(
+                    userSub: me.subject ?? "anonymous",
+                    apiClient: apiClient,
+                )
             }
             .tabItem {
-                Label("Прогресс", systemImage: "chart.line.uptrend.xyaxis")
+                Label("Тренировка", systemImage: "dumbbell.fill")
             }
-            .tag(ShellTab.progress)
+            .tag(ShellTab.training)
 
             NavigationStack {
                 ProfileTabView(
@@ -467,11 +470,122 @@ extension WorkoutPlayerViewModel.CompletionSummary: Identifiable {
     }
 }
 
-private struct ProgressTabView: View {
+private struct TrainingTabContent: View {
     let userSub: String
+    let apiClient: APIClientProtocol?
+
+    @State private var sessionRoute: ActiveWorkoutSession?
+    @State private var programWorkoutRoute: ProgramWorkoutRoute?
+    @State private var presetWorkoutRoute: PresetWorkoutRoute?
+    @State private var isQuickBuilderPresented = false
+    @State private var isTemplateLibraryPresented = false
+    @State private var isProgressPresented = false
+
+    private struct ProgramWorkoutRoute: Identifiable, Hashable {
+        let programId: String
+        let workoutId: String
+        var id: String {
+            "\(programId)::\(workoutId)"
+        }
+    }
+
+    private struct PresetWorkoutRoute: Identifiable {
+        let workout: WorkoutDetailsModel
+        var id: String {
+            workout.id
+        }
+    }
 
     var body: some View {
-        TrainingInsightsView(viewModel: TrainingInsightsViewModel(userSub: userSub))
+        TrainingHubView(
+            viewModel: TrainingHubViewModel(userSub: userSub),
+            onContinueSession: { session in
+                sessionRoute = session
+            },
+            onStartQuickWorkout: {
+                isQuickBuilderPresented = true
+            },
+            onOpenTemplates: {
+                isTemplateLibraryPresented = true
+            },
+            onRepeatWorkout: { record in
+                programWorkoutRoute = ProgramWorkoutRoute(programId: record.programId, workoutId: record.workoutId)
+            },
+            onStartTemplate: { template in
+                presetWorkoutRoute = PresetWorkoutRoute(workout: buildWorkout(from: template))
+            },
+            onOpenProgress: {
+                isProgressPresented = true
+            },
+        )
+        .navigationDestination(item: $sessionRoute) { session in
+            WorkoutLaunchView(
+                userSub: session.userSub,
+                programId: session.programId,
+                workoutId: session.workoutId,
+                apiClient: apiClient,
+            )
+        }
+        .navigationDestination(item: $programWorkoutRoute) { route in
+            WorkoutLaunchView(
+                userSub: userSub,
+                programId: route.programId,
+                workoutId: route.workoutId,
+                apiClient: apiClient,
+            )
+        }
+        .navigationDestination(item: $presetWorkoutRoute) { route in
+            WorkoutLaunchView(
+                userSub: userSub,
+                programId: "freestyle",
+                workoutId: route.workout.id,
+                apiClient: apiClient,
+                presetWorkout: route.workout,
+                source: .template,
+            )
+        }
+        .navigationDestination(isPresented: $isProgressPresented) {
+            TrainingInsightsView(viewModel: TrainingInsightsViewModel(userSub: userSub))
+                .navigationTitle("Прогресс")
+        }
+        .fullScreenCover(isPresented: $isQuickBuilderPresented) {
+            NavigationStack {
+                QuickWorkoutBuilderView { workout in
+                    presetWorkoutRoute = PresetWorkoutRoute(workout: workout)
+                }
+            }
+        }
+        .fullScreenCover(isPresented: $isTemplateLibraryPresented) {
+            NavigationStack {
+                TemplateLibraryView(
+                    viewModel: TemplateLibraryViewModel(userSub: userSub),
+                    onStartTemplate: { workout in
+                        presetWorkoutRoute = PresetWorkoutRoute(workout: workout)
+                    },
+                )
+            }
+        }
+    }
+
+    private func buildWorkout(from template: WorkoutTemplateDraft) -> WorkoutDetailsModel {
+        let exercises = template.exercises.enumerated().map { index, item in
+            WorkoutExercise(
+                id: "template-\(template.id)-\(item.id)-\(index)",
+                name: item.name,
+                sets: max(1, item.sets),
+                repsMin: max(1, item.repsMin ?? 8),
+                repsMax: max(item.repsMin ?? 8, item.repsMax ?? max(10, item.repsMin ?? 8)),
+                targetRpe: nil,
+                restSeconds: max(0, item.restSeconds ?? 90),
+                notes: nil,
+                orderIndex: index,
+            )
+        }
+
+        return WorkoutDetailsModel.quickWorkout(
+            title: "Шаблон: \(template.name)",
+            exercises: exercises,
+        )
     }
 }
 
