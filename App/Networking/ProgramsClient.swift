@@ -81,6 +81,10 @@ struct ProgramListItem: Codable, Equatable, Sendable, Identifiable {
     let media: [ContentMedia]?
     let goals: [String]?
     let currentPublishedVersion: ProgramVersionSummary?
+    let level: String?
+    let daysPerWeek: Int?
+    let estimatedDurationMinutes: Int?
+    let equipment: [String]?
     let createdAt: String?
     let updatedAt: String?
 }
@@ -151,6 +155,7 @@ struct ProgramEnrollment: Codable, Equatable, Sendable {
 
 protocol ProgramsClientProtocol: Sendable {
     func listPublishedPrograms(query: String, page: Int, size: Int) async -> Result<PagedProgramResponse, APIError>
+    func listFeaturedPrograms(page: Int, size: Int) async -> Result<PagedProgramResponse, APIError>
     func getProgramDetails(programId: String) async -> Result<ProgramDetails, APIError>
     func startProgram(programVersionId: String) async -> Result<ProgramEnrollment, APIError>
 }

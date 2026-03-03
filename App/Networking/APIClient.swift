@@ -92,6 +92,18 @@ final class APIClient: APIClientProtocol, MeClientProtocol, AthleteProfileClient
         }
     }
 
+    func listFeaturedPrograms(page: Int, size: Int = 20) async -> Result<PagedProgramResponse, APIError> {
+        let request = APIRequest.get(
+            path: "/v1/programs/featured",
+            queryItems: [
+                URLQueryItem(name: "page", value: "\(page)"),
+                URLQueryItem(name: "size", value: "\(size)"),
+            ],
+            requiresAuthorization: false,
+        )
+        return await decode(request, as: PagedProgramResponse.self)
+    }
+
     func getProgramDetails(programId: String) async -> Result<ProgramDetails, APIError> {
         let request = APIRequest.get(path: "/v1/programs/\(programId)", requiresAuthorization: true)
         return await decode(request, as: ProgramDetails.self)

@@ -153,6 +153,10 @@ final class CatalogAndProgramDetailsFeatureTests: XCTestCase {
                         frequencyPerWeek: 3,
                         requirements: nil,
                     ),
+                    level: "BEGINNER",
+                    daysPerWeek: 3,
+                    estimatedDurationMinutes: 45,
+                    equipment: ["Гантели", "Скамья"],
                     createdAt: nil,
                     updatedAt: nil,
                 ),
@@ -191,6 +195,7 @@ final class CatalogAndProgramDetailsFeatureTests: XCTestCase {
 
 private actor MockProgramsClient: ProgramsClientProtocol {
     private var listResults: [Result<PagedProgramResponse, APIError>]
+    private var featuredResults: [Result<PagedProgramResponse, APIError>]
     private var detailsResults: [Result<ProgramDetails, APIError>]
     private var startResults: [Result<ProgramEnrollment, APIError>]
     private(set) var receivedQueries: [String] = []
@@ -201,6 +206,7 @@ private actor MockProgramsClient: ProgramsClientProtocol {
         startResults: [Result<ProgramEnrollment, APIError>],
     ) {
         self.listResults = listResults
+        featuredResults = listResults
         self.detailsResults = detailsResults
         self.startResults = startResults
     }
@@ -213,6 +219,11 @@ private actor MockProgramsClient: ProgramsClientProtocol {
         receivedQueries.append(query)
         guard !listResults.isEmpty else { return .failure(.unknown) }
         return listResults.removeFirst()
+    }
+
+    func listFeaturedPrograms(page _: Int, size _: Int) async -> Result<PagedProgramResponse, APIError> {
+        guard !featuredResults.isEmpty else { return .failure(.unknown) }
+        return featuredResults.removeFirst()
     }
 
     func getProgramDetails(programId _: String) async -> Result<ProgramDetails, APIError> {
