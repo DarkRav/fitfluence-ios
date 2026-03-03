@@ -59,7 +59,7 @@ final class TrainingHubViewModel {
         }
 
         return WorkoutDetailsModel.quickWorkout(
-            title: "Шаблон: \(template.name)",
+            title: template.name,
             exercises: exercises,
         )
     }
