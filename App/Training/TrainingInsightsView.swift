@@ -4,13 +4,42 @@ import SwiftUI
 @Observable
 @MainActor
 final class TrainingInsightsViewModel {
+    enum RangeFilter: String, CaseIterable, Equatable, Sendable {
+        case days30
+        case days90
+        case all
+
+        var title: String {
+            switch self {
+            case .days30:
+                "30 дн"
+            case .days90:
+                "90 дн"
+            case .all:
+                "Все"
+            }
+        }
+
+        var days: Int? {
+            switch self {
+            case .days30:
+                30
+            case .days90:
+                90
+            case .all:
+                nil
+            }
+        }
+    }
+
     private let userSub: String
     private let trainingStore: TrainingStore
     private let calendar: Calendar
 
     var isLoading = false
-    var history: [CompletedWorkoutRecord] = []
+    var allHistory: [CompletedWorkoutRecord] = []
     var selectedSource: WorkoutSource?
+    var selectedRange: RangeFilter = .days90
 
     init(
         userSub: String,
@@ -30,12 +59,25 @@ final class TrainingInsightsViewModel {
         guard !userSub.isEmpty else { return }
         isLoading = true
         defer { isLoading = false }
-        history = await trainingStore.history(userSub: userSub, source: selectedSource, limit: 90)
+        allHistory = await trainingStore.history(userSub: userSub, source: selectedSource, limit: 365)
     }
 
     func selectSource(_ source: WorkoutSource?) async {
         selectedSource = source
         await reload()
+    }
+
+    func selectRange(_ range: RangeFilter) {
+        selectedRange = range
+    }
+
+    var history: [CompletedWorkoutRecord] {
+        guard let days = selectedRange.days else {
+            return allHistory
+        }
+        let lowerBound = calendar
+            .date(byAdding: .day, value: -(days - 1), to: calendar.startOfDay(for: Date())) ?? Date()
+        return allHistory.filter { $0.finishedAt >= lowerBound }
     }
 
     var heatmapDays: [(Date, Int)] {
@@ -61,6 +103,10 @@ final class TrainingInsightsViewModel {
     var workoutsLast7Days: Int {
         let lowerBound = calendar.date(byAdding: .day, value: -6, to: calendar.startOfDay(for: Date())) ?? Date()
         return history.count(where: { $0.finishedAt >= lowerBound })
+    }
+
+    var totalVolume: Int {
+        Int(history.reduce(0.0) { $0 + $1.volume })
     }
 }
 
@@ -90,14 +136,24 @@ struct TrainingInsightsView: View {
     private var summaryCard: some View {
         FFCard {
             VStack(alignment: .leading, spacing: FFSpacing.sm) {
-                Text("Сводка")
-                    .font(FFTypography.h2)
-                    .foregroundStyle(FFColors.textPrimary)
+                HStack {
+                    Text("Сводка")
+                        .font(FFTypography.h2)
+                        .foregroundStyle(FFColors.textPrimary)
+                    Spacer()
+                    rangeMenu
+                }
 
                 HStack(spacing: FFSpacing.sm) {
                     metricView(title: "Тренировок", value: "\(viewModel.totalWorkouts)")
                     metricView(title: "За 7 дней", value: "\(viewModel.workoutsLast7Days)")
                     metricView(title: "Минут", value: "\(viewModel.totalMinutes)")
+                }
+
+                if viewModel.totalVolume > 0 {
+                    Text("Общий объём: \(viewModel.totalVolume) кг")
+                        .font(FFTypography.caption)
+                        .foregroundStyle(FFColors.textSecondary)
                 }
             }
         }
@@ -205,6 +261,20 @@ struct TrainingInsightsView: View {
             Button("По шаблону") { Task { await viewModel.selectSource(.template) } }
         } label: {
             Label("Фильтр", systemImage: "line.3.horizontal.decrease.circle")
+                .font(FFTypography.caption)
+                .foregroundStyle(FFColors.accent)
+        }
+    }
+
+    private var rangeMenu: some View {
+        Menu {
+            ForEach(TrainingInsightsViewModel.RangeFilter.allCases, id: \.self) { range in
+                Button(range.title) {
+                    viewModel.selectRange(range)
+                }
+            }
+        } label: {
+            Label(viewModel.selectedRange.title, systemImage: "calendar.badge.clock")
                 .font(FFTypography.caption)
                 .foregroundStyle(FFColors.accent)
         }

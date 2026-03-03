@@ -14,6 +14,7 @@ final class TrainingHubViewModel {
     var activeSession: ActiveWorkoutSession?
     var templates: [WorkoutTemplateDraft] = []
     var recentHistory: [CompletedWorkoutRecord] = []
+    var allHistory: [CompletedWorkoutRecord] = []
     var lastCompleted: CompletedWorkoutRecord?
 
     init(
@@ -39,7 +40,7 @@ final class TrainingHubViewModel {
 
         async let active = progressStore.latestActiveSession(userSub: userSub)
         async let loadedTemplates = trainingStore.templates(userSub: userSub)
-        async let history = trainingStore.history(userSub: userSub, source: nil, limit: 8)
+        async let history = trainingStore.history(userSub: userSub, source: nil, limit: 180)
 
         let activeCandidate = await active
         if let activeCandidate, await canLaunch(session: activeCandidate) {
@@ -48,7 +49,8 @@ final class TrainingHubViewModel {
             activeSession = nil
         }
         templates = await Array(loadedTemplates.prefix(4))
-        recentHistory = await history
+        allHistory = await history
+        recentHistory = Array(allHistory.prefix(8))
         lastCompleted = recentHistory.first
     }
 
@@ -95,6 +97,20 @@ final class TrainingHubViewModel {
         }
         return false
     }
+
+    var workoutsLast7Days: Int {
+        let lowerBound = Calendar.current.date(byAdding: .day, value: -6, to: Calendar.current.startOfDay(for: Date()))
+            ?? Date()
+        return allHistory.count(where: { $0.finishedAt >= lowerBound })
+    }
+
+    var totalMinutesLast7Days: Int {
+        let lowerBound = Calendar.current.date(byAdding: .day, value: -6, to: Calendar.current.startOfDay(for: Date()))
+            ?? Date()
+        return allHistory
+            .filter { $0.finishedAt >= lowerBound }
+            .reduce(0) { $0 + max(1, $1.durationSeconds / 60) }
+    }
 }
 
 struct TrainingHubView: View {
@@ -113,6 +129,7 @@ struct TrainingHubView: View {
                 headerCard
                 activeSessionCard
                 quickActionsCard
+                progressEntryCard
                 templatesCard
                 historyCard
             }
@@ -257,7 +274,7 @@ struct TrainingHubView: View {
                         .font(FFTypography.h2)
                         .foregroundStyle(FFColors.textPrimary)
                     Spacer()
-                    Button("История и прогресс") {
+                    Button("Все") {
                         onOpenProgress()
                     }
                     .font(FFTypography.caption.weight(.semibold))
@@ -283,6 +300,46 @@ struct TrainingHubView: View {
                     }
                 }
             }
+        }
+    }
+
+    private var progressEntryCard: some View {
+        FFCard {
+            VStack(alignment: .leading, spacing: FFSpacing.sm) {
+                Text("Прогресс и история")
+                    .font(FFTypography.h2)
+                    .foregroundStyle(FFColors.textPrimary)
+
+                HStack(spacing: FFSpacing.sm) {
+                    progressMetric(title: "За 7 дней", value: "\(viewModel.workoutsLast7Days)")
+                    progressMetric(title: "Минут", value: "\(viewModel.totalMinutesLast7Days)")
+                }
+
+                FFButton(title: "Открыть прогресс", variant: .secondary, action: onOpenProgress)
+            }
+        }
+    }
+
+    private func progressMetric(title: String, value: String) -> some View {
+        VStack(alignment: .leading, spacing: FFSpacing.xxs) {
+            Text(title)
+                .font(FFTypography.caption)
+                .foregroundStyle(FFColors.textSecondary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.75)
+            Text(value)
+                .font(FFTypography.h2)
+                .foregroundStyle(FFColors.textPrimary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(FFSpacing.sm)
+        .background(FFColors.surface)
+        .clipShape(RoundedRectangle(cornerRadius: FFTheme.Radius.control))
+        .overlay {
+            RoundedRectangle(cornerRadius: FFTheme.Radius.control)
+                .stroke(FFColors.gray700, lineWidth: 1)
         }
     }
 
