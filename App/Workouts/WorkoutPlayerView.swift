@@ -729,6 +729,8 @@ struct WorkoutPlayerViewV2: View {
             Text("Шаг: \(stepText)")
                 .font(FFTypography.caption)
                 .foregroundStyle(FFColors.textSecondary)
+                .frame(maxWidth: .infinity, alignment: .center)
+                .multilineTextAlignment(.center)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
