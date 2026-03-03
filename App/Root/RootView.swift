@@ -404,6 +404,7 @@ struct WorkoutLaunchView: View {
         defer { isLoading = false }
 
         let cacheStore = CompositeCacheStore()
+        let progressStore = LocalWorkoutProgressStore()
         let cacheKey = "workout.details:\(programId):\(workoutId)"
 
         if let presetWorkout {
@@ -432,6 +433,16 @@ struct WorkoutLaunchView: View {
         if let cached = await cacheStore.get(cacheKey, as: WorkoutDetailsModel.self, namespace: userSub) {
             details = cached
             error = nil
+        } else if let snapshot = await progressStore.load(
+            userSub: userSub,
+            programId: programId,
+            workoutId: workoutId,
+        ),
+            let restored = snapshot.workoutDetails
+        {
+            details = restored
+            error = nil
+            await cacheStore.set(cacheKey, value: restored, namespace: userSub, ttl: 60 * 60 * 24)
         } else if error == nil {
             error = UserFacingError(
                 title: "Нет сохранённых данных",

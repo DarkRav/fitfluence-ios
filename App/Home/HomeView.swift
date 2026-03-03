@@ -46,6 +46,7 @@ final class HomeViewModel {
     var activeProgramTitle: String?
     var nextWorkout: WorkoutSummary?
     var lastWorkout: WorkoutSummary?
+    var canLaunchPlannedWorkout = false
     var todayWorkout: HomeTodayWorkoutSnapshot?
     var plannedWorkoutToday: HomePlannedWorkoutSnapshot?
     var lastWorkoutSummary: String?
@@ -81,8 +82,7 @@ final class HomeViewModel {
         if let plannedWorkoutToday,
            plannedWorkoutToday.source == .program,
            plannedWorkoutToday.status == .planned,
-           plannedWorkoutToday.workoutId != nil,
-           plannedWorkoutToday.programId != nil
+           canLaunchPlannedWorkout
         {
             return "Начать сегодняшнюю"
         }
@@ -100,6 +100,9 @@ final class HomeViewModel {
             if plannedWorkoutToday.status == .missed {
                 return "Тренировка на сегодня пропущена. Можно вернуть ритм во вкладке «Тренировка»."
             }
+            if !canLaunchPlannedWorkout {
+                return "Данные тренировки пока не загружены. Откройте тренировку из вкладки «Тренировка»."
+            }
             return "\(plannedWorkoutToday.statusText): \(plannedWorkoutToday.title)"
         }
         return "Плана на сегодня нет. Во вкладке «Тренировка» доступны быстрый старт и шаблоны."
@@ -114,7 +117,7 @@ final class HomeViewModel {
            plannedWorkoutToday.status == .planned,
            let programId = plannedWorkoutToday.programId,
            let workoutId = plannedWorkoutToday.workoutId,
-           programId.isUUID
+           canLaunchPlannedWorkout
         {
             return .startNext(programId: programId, workoutId: workoutId)
         }
@@ -126,8 +129,19 @@ final class HomeViewModel {
         isLoading = true
         defer { isLoading = false }
 
-        activeSession = await sessionManager.latestActiveSession(userSub: userSub)
+        if let session = await sessionManager.latestActiveSession(userSub: userSub),
+           await canLaunch(session: session)
+        {
+            activeSession = session
+        } else {
+            activeSession = nil
+        }
         await loadTodayPlan()
+        if let plannedWorkoutToday {
+            canLaunchPlannedWorkout = await canLaunch(plannedWorkout: plannedWorkoutToday)
+        } else {
+            canLaunchPlannedWorkout = false
+        }
         await loadTodayMetrics()
 
         if let activeSession {
@@ -340,6 +354,47 @@ final class HomeViewModel {
     private func estimateDuration(exercises: [ExerciseTemplate]) -> Int {
         let sets = exercises.reduce(0) { $0 + max(1, $1.sets) }
         return max(10, (sets * 90) / 60)
+    }
+
+    private func canLaunch(session: ActiveWorkoutSession) async -> Bool {
+        if session.source == .program, session.programId.isUUID {
+            return true
+        }
+        if await hasCachedWorkoutDetails(programId: session.programId, workoutId: session.workoutId) {
+            return true
+        }
+        if let snapshot = await progressStore.load(
+            userSub: session.userSub,
+            programId: session.programId,
+            workoutId: session.workoutId,
+        ),
+            snapshot.workoutDetails != nil
+        {
+            return true
+        }
+        return false
+    }
+
+    private func canLaunch(plannedWorkout: HomePlannedWorkoutSnapshot) async -> Bool {
+        guard plannedWorkout.source == .program,
+              let programId = plannedWorkout.programId,
+              let workoutId = plannedWorkout.workoutId,
+              programId.isUUID
+        else {
+            return false
+        }
+        if programsClient != nil {
+            return true
+        }
+        return await hasCachedWorkoutDetails(programId: programId, workoutId: workoutId)
+    }
+
+    private func hasCachedWorkoutDetails(programId: String, workoutId: String) async -> Bool {
+        await cacheStore.get(
+            "workout.details:\(programId):\(workoutId)",
+            as: WorkoutDetailsModel.self,
+            namespace: userSub,
+        ) != nil
     }
 }
 

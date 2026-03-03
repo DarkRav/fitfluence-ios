@@ -35,6 +35,7 @@ struct WorkoutProgressSnapshot: Codable, Equatable, Sendable {
     var currentExerciseIndex: Int?
     var startedAt: Date? = nil
     var source: WorkoutSource? = nil
+    var workoutDetails: WorkoutDetailsModel? = nil
     var isFinished: Bool
     var lastUpdated: Date
     var exercises: [String: StoredExerciseProgress]
@@ -161,6 +162,7 @@ struct WorkoutSessionState: Equatable, Sendable {
     var programId: String
     var workoutId: String
     var workoutTitle: String
+    var workoutDetails: WorkoutDetailsModel
     var source: WorkoutSource
     var startedAt: Date
     var currentExerciseIndex: Int
@@ -215,6 +217,7 @@ actor WorkoutSessionManager {
             programId: programId,
             workoutId: workout.id,
             workoutTitle: workout.title,
+            workoutDetails: workout,
             source: source,
             startedAt: Date(),
             currentExerciseIndex: 0,
@@ -389,6 +392,10 @@ actor WorkoutSessionManager {
         await progressStore.latestActiveSession(userSub: userSub)
     }
 
+    func recoverWorkoutDetails(userSub: String, programId: String, workoutId: String) async -> WorkoutDetailsModel? {
+        await progressStore.load(userSub: userSub, programId: programId, workoutId: workoutId)?.workoutDetails
+    }
+
     func lastCompletedWorkout(userSub: String) async -> CompletedWorkoutRecord? {
         await trainingStore.lastCompleted(userSub: userSub)
     }
@@ -477,6 +484,7 @@ actor WorkoutSessionManager {
             programId: snapshot.programId,
             workoutId: snapshot.workoutId,
             workoutTitle: workout.title,
+            workoutDetails: workout,
             source: snapshot.source ?? .program,
             startedAt: snapshot.startedAt ?? snapshot.lastUpdated,
             currentExerciseIndex: max(0, min(snapshot.currentExerciseIndex ?? 0, max(0, exercises.count - 1))),
@@ -504,6 +512,7 @@ actor WorkoutSessionManager {
             currentExerciseIndex: session.currentExerciseIndex,
             startedAt: session.startedAt,
             source: session.source,
+            workoutDetails: session.workoutDetails,
             isFinished: isFinished,
             lastUpdated: session.lastUpdated,
             exercises: exercises,

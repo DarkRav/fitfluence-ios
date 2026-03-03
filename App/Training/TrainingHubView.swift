@@ -1,3 +1,4 @@
+import Foundation
 import Observation
 import SwiftUI
 
@@ -7,6 +8,7 @@ final class TrainingHubViewModel {
     private let userSub: String
     private let trainingStore: TrainingStore
     private let progressStore: WorkoutProgressStore
+    private let cacheStore: CacheStore
 
     var isLoading = false
     var activeSession: ActiveWorkoutSession?
@@ -18,10 +20,12 @@ final class TrainingHubViewModel {
         userSub: String,
         trainingStore: TrainingStore = LocalTrainingStore(),
         progressStore: WorkoutProgressStore = LocalWorkoutProgressStore(),
+        cacheStore: CacheStore = CompositeCacheStore(),
     ) {
         self.userSub = userSub
         self.trainingStore = trainingStore
         self.progressStore = progressStore
+        self.cacheStore = cacheStore
     }
 
     func onAppear() async {
@@ -37,7 +41,12 @@ final class TrainingHubViewModel {
         async let loadedTemplates = trainingStore.templates(userSub: userSub)
         async let history = trainingStore.history(userSub: userSub, source: nil, limit: 8)
 
-        activeSession = await active
+        let activeCandidate = await active
+        if let activeCandidate, await canLaunch(session: activeCandidate) {
+            activeSession = activeCandidate
+        } else {
+            activeSession = nil
+        }
         templates = await Array(loadedTemplates.prefix(4))
         recentHistory = await history
         lastCompleted = recentHistory.first
@@ -62,6 +71,29 @@ final class TrainingHubViewModel {
             title: template.name,
             exercises: exercises,
         )
+    }
+
+    private func canLaunch(session: ActiveWorkoutSession) async -> Bool {
+        if session.source == .program, UUID(uuidString: session.programId) != nil {
+            return true
+        }
+        if await cacheStore.get(
+            "workout.details:\(session.programId):\(session.workoutId)",
+            as: WorkoutDetailsModel.self,
+            namespace: userSub,
+        ) != nil {
+            return true
+        }
+        if let snapshot = await progressStore.load(
+            userSub: session.userSub,
+            programId: session.programId,
+            workoutId: session.workoutId,
+        ),
+            snapshot.workoutDetails != nil
+        {
+            return true
+        }
+        return false
     }
 }
 

@@ -14,6 +14,7 @@ final class ProfileViewModel {
     private let me: MeResponse
     private let trainingStore: TrainingStore
     private let progressStore: WorkoutProgressStore
+    private let cacheStore: CacheStore
     private let settingsStore: ProfileSettingsStore
     private let diagnosticsProvider: DiagnosticsProviding
 
@@ -43,6 +44,7 @@ final class ProfileViewModel {
         isOnline: Bool,
         trainingStore: TrainingStore = LocalTrainingStore(),
         progressStore: WorkoutProgressStore = LocalWorkoutProgressStore(),
+        cacheStore: CacheStore = CompositeCacheStore(),
         settingsStore: ProfileSettingsStore = LocalProfileSettingsStore(),
         diagnosticsProvider: DiagnosticsProviding = DiagnosticsProvider(),
     ) {
@@ -51,6 +53,7 @@ final class ProfileViewModel {
         self.isOnline = isOnline
         self.trainingStore = trainingStore
         self.progressStore = progressStore
+        self.cacheStore = cacheStore
         self.settingsStore = settingsStore
         self.diagnosticsProvider = diagnosticsProvider
     }
@@ -103,7 +106,11 @@ final class ProfileViewModel {
             email = me.email ?? "Email не указан"
             avatarInitials = initials(from: displayName)
             syncStatus = isOnline ? "Синхронизация включена" : "Локальные данные на устройстве"
-            activeSession = buildActiveSession(activeSessionValue)
+            if let activeSessionValue, await canLaunch(session: activeSessionValue) {
+                activeSession = buildActiveSession(activeSessionValue)
+            } else {
+                activeSession = nil
+            }
 
             diagnostics = ProfileDiagnosticsSnapshot(
                 isOnline: isOnline,
@@ -181,6 +188,29 @@ final class ProfileViewModel {
         guard let session else { return nil }
         let subtitle = "Обновлено \(session.lastUpdated.formatted(date: .abbreviated, time: .shortened))"
         return ProfileSessionSnapshot(session: session, subtitle: subtitle)
+    }
+
+    private func canLaunch(session: ActiveWorkoutSession) async -> Bool {
+        if session.source == .program, UUID(uuidString: session.programId) != nil {
+            return true
+        }
+        if await cacheStore.get(
+            "workout.details:\(session.programId):\(session.workoutId)",
+            as: WorkoutDetailsModel.self,
+            namespace: userSub,
+        ) != nil {
+            return true
+        }
+        if let snapshot = await progressStore.load(
+            userSub: session.userSub,
+            programId: session.programId,
+            workoutId: session.workoutId,
+        ),
+            snapshot.workoutDetails != nil
+        {
+            return true
+        }
+        return false
     }
 
     private func resolvedDisplayName() -> String {
