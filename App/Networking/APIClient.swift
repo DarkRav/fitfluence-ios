@@ -42,8 +42,29 @@ final class APIClient: APIClientProtocol, MeClientProtocol, AthleteProfileClient
     }
 
     func healthCheck() async -> Result<HealthResponse, APIError> {
-        let request = APIRequest.get(path: "/actuator/health", requiresAuthorization: false)
-        return await decode(request, as: HealthResponse.self)
+        do {
+            let body = ProgramsSearchRequest(
+                filter: ProgramFilter(search: nil, influencerId: nil, status: .published),
+                page: 0,
+                size: 1,
+            )
+            let payload = try JSONEncoder().encode(body)
+            let request = APIRequest(
+                path: "/v1/programs/published/search",
+                method: .post,
+                body: payload,
+                requiresAuthorization: false,
+            )
+            let result: Result<PagedProgramResponse, APIError> = await decode(request, as: PagedProgramResponse.self)
+            switch result {
+            case .success:
+                return .success(HealthResponse(status: "OK"))
+            case let .failure(error):
+                return .failure(error)
+            }
+        } catch {
+            return .failure(.unknown)
+        }
     }
 
     func me() async -> Result<MeResponse, APIError> {
@@ -161,7 +182,7 @@ final class APIClient: APIClientProtocol, MeClientProtocol, AthleteProfileClient
         do {
             let response = try await httpClient.send(request)
             do {
-                return .success(try decodeMeResponse(from: response.data))
+                return try .success(decodeMeResponse(from: response.data))
             } catch let decodingError as DecodingError {
                 let snippet = String(data: response.data.prefix(600), encoding: .utf8) ?? "<non-utf8>"
                 FFLog.error(
