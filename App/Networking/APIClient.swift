@@ -48,7 +48,7 @@ final class APIClient: APIClientProtocol, MeClientProtocol, AthleteProfileClient
 
     func me() async -> Result<MeResponse, APIError> {
         let request = APIRequest.get(path: "/v1/me", requiresAuthorization: true)
-        return await decode(request, as: MeResponse.self)
+        return await decodeMeWithRetry(request, allowRetryAfterRefresh: true)
     }
 
     func createProfile(_ request: CreateAthleteProfileRequest) async -> Result<CreateAthleteProfileResponse, APIError> {
@@ -141,10 +141,90 @@ final class APIClient: APIClientProtocol, MeClientProtocol, AthleteProfileClient
                 return .failure(.unauthorized)
             }
             return .failure(apiError)
-        } catch is DecodingError {
+        } catch let decodingError as DecodingError {
+            FFLog.error(
+                "API decode failed method=\(request.method.rawValue) path=\(request.path) error=\(String(describing: decodingError))",
+            )
             return .failure(.decodingError)
         } catch {
             return .failure(.unknown)
+        }
+    }
+
+    private func decodeMeWithRetry(
+        _ request: APIRequest,
+        allowRetryAfterRefresh: Bool,
+    ) async -> Result<MeResponse, APIError> {
+        do {
+            let response = try await httpClient.send(request)
+            do {
+                return .success(try decodeMeResponse(from: response.data))
+            } catch let decodingError as DecodingError {
+                let snippet = String(data: response.data.prefix(600), encoding: .utf8) ?? "<non-utf8>"
+                FFLog.error(
+                    "API decode /v1/me failed: \(String(describing: decodingError)); bodySnippet=\(snippet)",
+                )
+                return .failure(.decodingError)
+            } catch {
+                let snippet = String(data: response.data.prefix(600), encoding: .utf8) ?? "<non-utf8>"
+                FFLog.error("API decode /v1/me unknown error; bodySnippet=\(snippet)")
+                return .failure(.decodingError)
+            }
+        } catch let apiError as APIError {
+            if case .unauthorized = apiError, allowRetryAfterRefresh, let authService {
+                let refreshed = await authService.refresh()
+                if refreshed {
+                    return await decodeMeWithRetry(request, allowRetryAfterRefresh: false)
+                }
+                await authService.logout()
+                return .failure(.unauthorized)
+            }
+            return .failure(apiError)
+        } catch {
+            return .failure(.unknown)
+        }
+    }
+
+    private func decodeMeResponse(from data: Data) throws -> MeResponse {
+        let decoder = JSONDecoder()
+        if let direct = try? decoder.decode(MeResponse.self, from: data) {
+            return direct
+        }
+
+        let object = try JSONSerialization.jsonObject(with: data)
+        for candidate in extractMeCandidates(from: object) {
+            guard JSONSerialization.isValidJSONObject(candidate),
+                  let candidateData = try? JSONSerialization.data(withJSONObject: candidate),
+                  let decoded = try? decoder.decode(MeResponse.self, from: candidateData)
+            else {
+                continue
+            }
+            return decoded
+        }
+
+        // Throw a real DecodingError so callers keep existing mapping.
+        let context = DecodingError.Context(codingPath: [], debugDescription: "Unsupported /v1/me JSON shape")
+        throw DecodingError.dataCorrupted(context)
+    }
+
+    private func extractMeCandidates(from object: Any) -> [[String: Any]] {
+        switch object {
+        case let dictionary as [String: Any]:
+            var candidates: [[String: Any]] = [dictionary]
+            let keys = ["data", "result", "payload", "me", "user", "value", "response"]
+
+            for key in keys {
+                if let nested = dictionary[key] {
+                    candidates.append(contentsOf: extractMeCandidates(from: nested))
+                }
+            }
+            return candidates
+
+        case let array as [Any]:
+            return array.flatMap { extractMeCandidates(from: $0) }
+
+        default:
+            return []
         }
     }
 }
