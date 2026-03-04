@@ -8,9 +8,44 @@ final class ProgramDetailsViewModel {
         let userSub: String
         let programId: String
         let workoutId: String
+        let presetWorkout: WorkoutDetailsModel?
+        let source: WorkoutSource
+        let isFirstWorkoutAfterEnrollment: Bool
 
         var id: String {
             "\(programId)::\(workoutId)"
+        }
+    }
+
+    struct EnrollmentConfirmationRoute: Equatable, Identifiable {
+        let id: String
+        let programId: String
+        let programTitle: String
+        let frequencyPerWeek: Int?
+        let level: String?
+        let estimatedDurationMinutes: Int?
+        let firstWorkoutTitle: String?
+        let firstWorkoutEstimatedDurationMinutes: Int?
+        let firstWorkoutInstanceId: String?
+        let fallbackWorkoutTemplateId: String?
+        let fallbackWorkoutTitles: [String]
+        let isPendingEnrollment: Bool
+
+        var canStartFirstWorkout: Bool {
+            firstWorkoutInstanceId != nil || fallbackWorkoutTemplateId != nil
+        }
+    }
+
+    struct WorkoutIntroRoute: Equatable, Identifiable {
+        let userSub: String
+        let programId: String
+        let workoutId: String
+        let source: WorkoutSource
+        let workout: WorkoutDetailsModel
+        let isFirstWorkoutAfterEnrollment: Bool
+
+        var id: String {
+            "\(programId)::\(workoutId)::intro"
         }
     }
 
@@ -23,6 +58,7 @@ final class ProgramDetailsViewModel {
     private let networkMonitor: NetworkMonitoring
     private let progressStore: WorkoutProgressStore
     private let trainingStore: TrainingStore
+    private let onUnauthorized: (() -> Void)?
 
     var details: ProgramDetails?
     var isShowingCachedData = false
@@ -39,6 +75,20 @@ final class ProgramDetailsViewModel {
     var isProgramAlreadyActive = false
     var nextWorkoutInstanceId: String?
     var nextWorkoutInstanceTitle: String?
+    var enrollmentConfirmation: EnrollmentConfirmationRoute?
+    var workoutIntro: WorkoutIntroRoute?
+    var isPreparingFirstWorkout = false
+    var creatorCard: InfluencerPublicCard?
+    var isCreatorFollowLoading = false
+    var creatorInfoMessage: String?
+    var creatorProfileRoute: InfluencerPublicCard?
+
+    var canToggleCreatorFollow: Bool {
+        !isCreatorFollowLoading
+            && networkMonitor.currentStatus
+            && !userSub.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && userSub.lowercased() != "anonymous"
+    }
 
     init(
         programId: String,
@@ -49,6 +99,7 @@ final class ProgramDetailsViewModel {
         networkMonitor: NetworkMonitoring = StaticNetworkMonitor(currentStatus: true),
         progressStore: WorkoutProgressStore = LocalWorkoutProgressStore(),
         trainingStore: TrainingStore = LocalTrainingStore(),
+        onUnauthorized: (() -> Void)? = nil,
     ) {
         self.programId = programId
         self.userSub = userSub
@@ -58,6 +109,7 @@ final class ProgramDetailsViewModel {
         self.networkMonitor = networkMonitor
         self.progressStore = progressStore
         self.trainingStore = trainingStore
+        self.onUnauthorized = onUnauthorized
     }
 
     func onAppear() async {
@@ -75,6 +127,9 @@ final class ProgramDetailsViewModel {
                 userSub: userSub,
                 programId: programId,
                 workoutId: nextWorkoutInstanceId,
+                presetWorkout: nil,
+                source: .program,
+                isFirstWorkoutAfterEnrollment: false,
             )
             return
         }
@@ -117,19 +172,53 @@ final class ProgramDetailsViewModel {
         case .success:
             successMessage = "Программа подключена."
             error = nil
-            await refreshEnrollmentContext()
-            if let nextWorkoutInstanceId {
-                selectedWorkout = SelectedWorkout(
-                    userSub: userSub,
-                    programId: programId,
-                    workoutId: nextWorkoutInstanceId,
+            ClientAnalytics.track(
+                .programEnrolled,
+                properties: [
+                    "program_id": programId,
+                    "enrollment_mode": "remote",
+                ],
+            )
+            if let creatorID = creatorCard?.id.uuidString {
+                ClientAnalytics.track(
+                    .creatorProgramEnrolled,
+                    properties: [
+                        "program_id": programId,
+                        "creator_id": creatorID,
+                    ],
                 )
             }
+            await refreshEnrollmentContext()
+            openEnrollmentConfirmation(isPendingEnrollment: false)
         case let .failure(apiError):
             if case .httpError(409, _) = apiError {
                 successMessage = "Программа уже активна."
                 error = nil
                 await refreshEnrollmentContext()
+                openEnrollmentConfirmation(isPendingEnrollment: false)
+                return
+            }
+            if apiError == .offline || !networkMonitor.currentStatus {
+                await persistPendingEnrollment(programVersionId: versionID)
+                successMessage = "Программа будет подключена после синхронизации."
+                error = nil
+                ClientAnalytics.track(
+                    .programEnrolled,
+                    properties: [
+                        "program_id": programId,
+                        "enrollment_mode": "pending_offline",
+                    ],
+                )
+                if let creatorID = creatorCard?.id.uuidString {
+                    ClientAnalytics.track(
+                        .creatorProgramEnrolled,
+                        properties: [
+                            "program_id": programId,
+                            "creator_id": creatorID,
+                        ],
+                    )
+                }
+                openEnrollmentConfirmation(isPendingEnrollment: true)
                 return
             }
             error = apiError.userFacing(context: .programDetails)
@@ -141,11 +230,91 @@ final class ProgramDetailsViewModel {
     }
 
     func workoutPicked(_ workoutID: String) {
-        selectedWorkout = SelectedWorkout(userSub: userSub, programId: programId, workoutId: workoutID)
+        selectedWorkout = SelectedWorkout(
+            userSub: userSub,
+            programId: programId,
+            workoutId: workoutID,
+            presetWorkout: nil,
+            source: .program,
+            isFirstWorkoutAfterEnrollment: false,
+        )
     }
 
     func dismissSelectedWorkout() {
         selectedWorkout = nil
+    }
+
+    func launchWorkoutFromIntro(_ route: WorkoutIntroRoute) {
+        workoutIntro = nil
+        enrollmentConfirmation = nil
+        selectedWorkout = SelectedWorkout(
+            userSub: route.userSub,
+            programId: route.programId,
+            workoutId: route.workoutId,
+            presetWorkout: route.workout,
+            source: route.source,
+            isFirstWorkoutAfterEnrollment: route.isFirstWorkoutAfterEnrollment,
+        )
+    }
+
+    func dismissEnrollmentConfirmation() {
+        enrollmentConfirmation = nil
+    }
+
+    func dismissWorkoutIntro() {
+        workoutIntro = nil
+    }
+
+    func handleEnrollmentPrimaryAction() async {
+        guard let route = enrollmentConfirmation, route.canStartFirstWorkout, !isPreparingFirstWorkout else { return }
+        isPreparingFirstWorkout = true
+        defer { isPreparingFirstWorkout = false }
+
+        if let firstWorkoutInstanceId = route.firstWorkoutInstanceId,
+           let intro = await prepareRemoteWorkoutIntro(
+               workoutInstanceId: firstWorkoutInstanceId,
+               programId: route.programId,
+               isFirstWorkoutAfterEnrollment: true,
+           )
+        {
+            error = nil
+            workoutIntro = intro
+            ClientAnalytics.track(
+                .firstWorkoutStarted,
+                properties: [
+                    "program_id": route.programId,
+                    "workout_id": firstWorkoutInstanceId,
+                    "source": "instance",
+                ],
+            )
+            return
+        }
+
+        if let fallbackWorkoutTemplateId = route.fallbackWorkoutTemplateId,
+           let intro = prepareTemplateWorkoutIntro(
+               templateWorkoutId: fallbackWorkoutTemplateId,
+               programId: route.programId,
+               isFirstWorkoutAfterEnrollment: true,
+           )
+        {
+            error = nil
+            workoutIntro = intro
+            ClientAnalytics.track(
+                .firstWorkoutStarted,
+                properties: [
+                    "program_id": route.programId,
+                    "workout_id": fallbackWorkoutTemplateId,
+                    "source": "template_fallback",
+                ],
+            )
+            return
+        }
+
+        error = UserFacingError(
+            kind: .unknown,
+            title: "Не удалось подготовить тренировку",
+            message: "Откройте план программы и выберите тренировку вручную.",
+        )
     }
 
     private func load() async {
@@ -155,6 +324,7 @@ final class ProgramDetailsViewModel {
 
         if let cached = await cacheStore.get(cacheKey, as: ProgramDetails.self, namespace: userSub) {
             details = cached
+            syncCreatorCard(from: cached.influencer)
             isShowingCachedData = true
         }
 
@@ -167,6 +337,7 @@ final class ProgramDetailsViewModel {
         switch result {
         case let .success(details):
             self.details = details
+            syncCreatorCard(from: details.influencer)
             isShowingCachedData = false
             error = nil
             await cacheStore.set(cacheKey, value: details, namespace: userSub, ttl: 60 * 30)
@@ -217,6 +388,278 @@ final class ProgramDetailsViewModel {
         "program.details:\(programId)"
     }
 
+    private func persistPendingEnrollment(programVersionId: String) async {
+        let pending = PendingEnrollmentSnapshot(
+            id: UUID().uuidString,
+            programId: programId,
+            programVersionId: programVersionId,
+            createdAt: Date(),
+        )
+        await cacheStore.set(
+            "enrollment.pending:\(programId)",
+            value: pending,
+            namespace: userSub,
+            ttl: 60 * 60 * 24 * 7,
+        )
+    }
+
+    private func openEnrollmentConfirmation(isPendingEnrollment: Bool) {
+        guard let details else { return }
+        let sortedWorkouts = (details.workouts ?? []).sorted(by: { $0.dayOrder < $1.dayOrder })
+        let fallbackWorkout = sortedWorkouts.first
+        let fallbackTitle = fallbackWorkout?.title?.trimmedNilIfEmpty ?? fallbackWorkout.map { "День \($0.dayOrder)" }
+        let fallbackDuration = fallbackWorkout.flatMap { estimateDurationMinutes(exercises: $0.exercises ?? []) }
+
+        let firstWorkoutInstanceId = nextWorkoutInstanceId?.trimmedNilIfEmpty
+        let firstWorkoutTitle = nextWorkoutInstanceTitle?.trimmedNilIfEmpty ?? fallbackTitle
+
+        enrollmentConfirmation = EnrollmentConfirmationRoute(
+            id: "enrollment-confirmation-\(programId)-\(Date().timeIntervalSince1970)",
+            programId: programId,
+            programTitle: details.title,
+            frequencyPerWeek: details.currentPublishedVersion?.frequencyPerWeek,
+            level: localizedLevel(details.currentPublishedVersion?.level),
+            estimatedDurationMinutes: estimatedProgramDurationMinutes(details: details),
+            firstWorkoutTitle: firstWorkoutTitle,
+            firstWorkoutEstimatedDurationMinutes: firstWorkoutInstanceId == nil ? fallbackDuration : nil,
+            firstWorkoutInstanceId: firstWorkoutInstanceId,
+            fallbackWorkoutTemplateId: firstWorkoutInstanceId == nil ? fallbackWorkout?.id : nil,
+            fallbackWorkoutTitles: sortedWorkouts.map { workout in
+                workout.title?.trimmedNilIfEmpty ?? "День \(workout.dayOrder)"
+            },
+            isPendingEnrollment: isPendingEnrollment,
+        )
+    }
+
+    private func prepareRemoteWorkoutIntro(
+        workoutInstanceId: String,
+        programId: String,
+        isFirstWorkoutAfterEnrollment: Bool,
+    ) async -> WorkoutIntroRoute? {
+        let cacheKey = "workout.details:\(programId):\(workoutInstanceId)"
+
+        _ = await SyncCoordinator.shared.enqueueStartWorkout(
+            namespace: userSub,
+            workoutInstanceId: workoutInstanceId,
+            startedAt: Date(),
+        )
+
+        if networkMonitor.currentStatus, let athleteTrainingClient {
+
+            let detailsResult = await athleteTrainingClient.getWorkoutDetails(workoutInstanceId: workoutInstanceId)
+            switch detailsResult {
+            case let .success(details):
+                let mapped = details.asWorkoutDetailsModel()
+                await cacheStore.set(cacheKey, value: mapped, namespace: userSub, ttl: 60 * 60 * 24)
+                return WorkoutIntroRoute(
+                    userSub: userSub,
+                    programId: programId,
+                    workoutId: workoutInstanceId,
+                    source: .program,
+                    workout: mapped,
+                    isFirstWorkoutAfterEnrollment: isFirstWorkoutAfterEnrollment,
+                )
+            case let .failure(apiError):
+                if apiError != .offline {
+                    error = apiError.userFacing(context: .workoutPlayer)
+                }
+            }
+        }
+
+        if let cached = await cacheStore.get(cacheKey, as: WorkoutDetailsModel.self, namespace: userSub) {
+            return WorkoutIntroRoute(
+                userSub: userSub,
+                programId: programId,
+                workoutId: workoutInstanceId,
+                source: .program,
+                workout: cached,
+                isFirstWorkoutAfterEnrollment: isFirstWorkoutAfterEnrollment,
+            )
+        }
+
+        return nil
+    }
+
+    private func prepareTemplateWorkoutIntro(
+        templateWorkoutId: String,
+        programId: String,
+        isFirstWorkoutAfterEnrollment: Bool,
+    ) -> WorkoutIntroRoute? {
+        guard let template = details?.workouts?.first(where: { $0.id == templateWorkoutId }) else {
+            return nil
+        }
+
+        let mapped = mapTemplateWorkout(template)
+        return WorkoutIntroRoute(
+            userSub: userSub,
+            programId: programId,
+            workoutId: templateWorkoutId,
+            source: .program,
+            workout: mapped,
+            isFirstWorkoutAfterEnrollment: isFirstWorkoutAfterEnrollment,
+        )
+    }
+
+    private func mapTemplateWorkout(_ template: WorkoutTemplate) -> WorkoutDetailsModel {
+        let mappedExercises = (template.exercises ?? [])
+            .enumerated()
+            .map { index, exercise in
+                WorkoutExercise(
+                    id: exercise.id,
+                    name: exercise.exercise.name,
+                    sets: max(1, exercise.sets),
+                    repsMin: exercise.repsMin,
+                    repsMax: exercise.repsMax,
+                    targetRpe: exercise.targetRpe,
+                    restSeconds: exercise.restSeconds,
+                    notes: exercise.notes,
+                    orderIndex: exercise.orderIndex ?? index,
+                )
+            }
+            .sorted(by: { $0.orderIndex < $1.orderIndex })
+
+        return WorkoutDetailsModel(
+            id: template.id,
+            title: template.title?.trimmedNilIfEmpty ?? "Тренировка \(template.dayOrder)",
+            dayOrder: template.dayOrder,
+            coachNote: template.coachNote?.trimmedNilIfEmpty,
+            exercises: mappedExercises,
+        )
+    }
+
+    private func estimateDurationMinutes(exercises: [ExerciseTemplate]) -> Int? {
+        guard !exercises.isEmpty else { return nil }
+        let totalSets = exercises.reduce(0) { $0 + max(1, $1.sets) }
+        let restSeconds = exercises.reduce(0) { partial, exercise in
+            partial + (exercise.restSeconds ?? 45) * max(0, exercise.sets - 1)
+        }
+        let estimatedSeconds = totalSets * 90 + restSeconds
+        return max(10, estimatedSeconds / 60)
+    }
+
+    private func estimatedProgramDurationMinutes(details: ProgramDetails) -> Int? {
+        let estimates = (details.workouts ?? [])
+            .compactMap { estimateDurationMinutes(exercises: $0.exercises ?? []) }
+        guard !estimates.isEmpty else { return nil }
+        let total = estimates.reduce(0, +)
+        return max(10, total / estimates.count)
+    }
+
+    private func localizedLevel(_ value: String?) -> String? {
+        guard let value = value?.trimmedNilIfEmpty else { return nil }
+        switch value.uppercased() {
+        case "BEGINNER":
+            return "Начинающий"
+        case "INTERMEDIATE":
+            return "Средний"
+        case "ADVANCED":
+            return "Продвинутый"
+        default:
+            return value.capitalized
+        }
+    }
+
+    func openCreatorProfile() {
+        guard let creatorCard else { return }
+        creatorProfileRoute = creatorCard
+    }
+
+    func dismissCreatorProfile() {
+        creatorProfileRoute = nil
+    }
+
+    func handleUnauthorized() {
+        onUnauthorized?()
+    }
+
+    func applyCreatorUpdate(_ card: InfluencerPublicCard) {
+        guard creatorCard?.id == card.id else {
+            return
+        }
+        creatorCard = card
+        creatorProfileRoute = card
+    }
+
+    func toggleCreatorFollow() async {
+        guard let creatorCard else { return }
+        guard !isCreatorFollowLoading else { return }
+        guard !userSub.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, userSub.lowercased() != "anonymous" else {
+            creatorInfoMessage = "Войдите, чтобы подписываться на авторов."
+            return
+        }
+        guard networkMonitor.currentStatus else {
+            creatorInfoMessage = "Нет сети. Follow недоступен в оффлайн-режиме."
+            return
+        }
+        guard let programsClient else {
+            creatorInfoMessage = "Follow сейчас недоступен."
+            return
+        }
+
+        let action: FollowMutationAction = creatorCard.isFollowedByMe ? .unfollow : .follow
+        let before = creatorCard
+        self.creatorCard = FollowStateMachine.apply(action, to: creatorCard)
+        isCreatorFollowLoading = true
+        creatorInfoMessage = nil
+
+        let result: Result<Void, APIError> = switch action {
+        case .follow:
+            await programsClient.followCreator(influencerId: creatorCard.id)
+        case .unfollow:
+            await programsClient.unfollowCreator(influencerId: creatorCard.id)
+        }
+
+        isCreatorFollowLoading = false
+
+        switch result {
+        case .success:
+            if self.creatorCard?.isFollowedByMe == true {
+                ClientAnalytics.track(.creatorFollowed, properties: ["creator_id": creatorCard.id.uuidString])
+            } else {
+                ClientAnalytics.track(.creatorUnfollowed, properties: ["creator_id": creatorCard.id.uuidString])
+            }
+            if let updated = self.creatorCard {
+                creatorProfileRoute = updated
+            }
+        case let .failure(apiError):
+            self.creatorCard = before
+            if apiError == .unauthorized {
+                onUnauthorized?()
+                return
+            }
+            if isCreatorFollowForbidden(apiError) {
+                creatorInfoMessage = "Создайте профиль атлета, чтобы подписываться."
+                return
+            }
+            error = apiError.userFacing(context: .programDetails)
+        }
+    }
+
+    private func syncCreatorCard(from influencer: InfluencerBrief?) {
+        guard let influencer else {
+            creatorCard = nil
+            creatorInfoMessage = nil
+            return
+        }
+        if let resolved = influencer.asPublicCard {
+            creatorInfoMessage = nil
+            if let current = creatorCard, current.id == resolved.id {
+                creatorCard = InfluencerPublicCard(
+                    id: resolved.id,
+                    displayName: resolved.displayName,
+                    bio: resolved.bio,
+                    avatar: resolved.avatar,
+                    socialLinks: resolved.socialLinks ?? current.socialLinks,
+                    followersCount: resolved.followersCount == 0 ? current.followersCount : resolved.followersCount,
+                    programsCount: resolved.programsCount == 0 ? current.programsCount : resolved.programsCount,
+                    isFollowedByMe: resolved.isFollowedByMe,
+                )
+            } else {
+                creatorCard = resolved
+            }
+        }
+    }
+
     private func refreshEnrollmentContext() async {
         guard let athleteTrainingClient else { return }
 
@@ -251,11 +694,38 @@ final class ProgramDetailsViewModel {
             }
         }
     }
+
+    private struct PendingEnrollmentSnapshot: Codable, Equatable, Sendable {
+        let id: String
+        let programId: String
+        let programVersionId: String
+        let createdAt: Date
+    }
 }
 
 struct ProgramDetailsScreen: View {
     @State var viewModel: ProgramDetailsViewModel
     let apiClient: APIClientProtocol?
+    let environment: AppEnvironment?
+    let onOpenProgramPlan: (() -> Void)?
+    let onOpenWorkoutHub: (() -> Void)?
+    let onOpenProgram: ((String) -> Void)?
+
+    init(
+        viewModel: ProgramDetailsViewModel,
+        apiClient: APIClientProtocol?,
+        environment: AppEnvironment? = nil,
+        onOpenProgramPlan: (() -> Void)? = nil,
+        onOpenWorkoutHub: (() -> Void)? = nil,
+        onOpenProgram: ((String) -> Void)? = nil,
+    ) {
+        _viewModel = State(initialValue: viewModel)
+        self.apiClient = apiClient
+        self.environment = environment
+        self.onOpenProgramPlan = onOpenProgramPlan
+        self.onOpenWorkoutHub = onOpenWorkoutHub
+        self.onOpenProgram = onOpenProgram
+    }
 
     var body: some View {
         ScrollView {
@@ -279,10 +749,25 @@ struct ProgramDetailsScreen: View {
                     )
                 } else if let details = viewModel.details {
                     header(details: details)
+                    if let creator = viewModel.creatorCard {
+                        creatorSection(creator: creator)
+                    }
                     progress(details: details)
                     about(details: details)
                     workouts(details: details)
                     startProgramBlock(details: details)
+                    if let error = viewModel.error {
+                        FFCard {
+                            VStack(alignment: .leading, spacing: FFSpacing.xxs) {
+                                Text(error.title)
+                                    .font(FFTypography.body.weight(.semibold))
+                                    .foregroundStyle(FFColors.danger)
+                                Text(error.message)
+                                    .font(FFTypography.caption)
+                                    .foregroundStyle(FFColors.textSecondary)
+                            }
+                        }
+                    }
                     if let successMessage = viewModel.successMessage {
                         FFCard {
                             Text(successMessage)
@@ -325,12 +810,60 @@ struct ProgramDetailsScreen: View {
                 }
             }
         }
+        .navigationDestination(item: $viewModel.enrollmentConfirmation) { route in
+            EnrollmentConfirmationView(
+                route: route,
+                isPreparingFirstWorkout: viewModel.isPreparingFirstWorkout,
+                onStartFirstWorkout: {
+                    Task { await viewModel.handleEnrollmentPrimaryAction() }
+                },
+                onOpenProgramPlan: {
+                    viewModel.dismissEnrollmentConfirmation()
+                    onOpenProgramPlan?()
+                },
+            )
+            .navigationTitle("Program Started")
+        }
+        .navigationDestination(item: $viewModel.workoutIntro) { route in
+            WorkoutIntroView(
+                workout: route.workout,
+                onStartWorkout: {
+                    viewModel.launchWorkoutFromIntro(route)
+                },
+            )
+            .navigationTitle("Workout intro")
+        }
+        .navigationDestination(item: $viewModel.creatorProfileRoute) { creator in
+            CreatorProfileView(
+                viewModel: CreatorProfileViewModel(
+                    userSub: viewModel.userSub,
+                    creator: creator,
+                    programsClient: apiClient as? ProgramsClientProtocol,
+                    onUnauthorized: {
+                        viewModel.handleUnauthorized()
+                    },
+                ),
+                environment: environment,
+                onProgramTap: { programID in
+                    onOpenProgram?(programID)
+                },
+                onCreatorUpdated: { updated in
+                    viewModel.applyCreatorUpdate(updated)
+                },
+            )
+            .navigationTitle("Creator")
+        }
         .navigationDestination(item: $viewModel.selectedWorkout) { selectedWorkout in
             WorkoutLaunchView(
                 userSub: selectedWorkout.userSub,
                 programId: selectedWorkout.programId,
                 workoutId: selectedWorkout.workoutId,
                 apiClient: apiClient,
+                presetWorkout: selectedWorkout.presetWorkout,
+                source: selectedWorkout.source,
+                isFirstWorkoutInProgramFlow: selectedWorkout.isFirstWorkoutAfterEnrollment,
+                onBackToWorkoutHub: onOpenWorkoutHub,
+                onOpenPlan: onOpenProgramPlan,
             )
             .navigationTitle("Тренировка")
         }
@@ -373,11 +906,30 @@ struct ProgramDetailsScreen: View {
                         .foregroundStyle(FFColors.textSecondary)
                         .multilineTextAlignment(.leading)
                 }
+            }
+        }
+    }
 
-                if let author = details.influencer?.displayName {
-                    Text("Автор: \(author)")
+    private func creatorSection(creator: InfluencerPublicCard) -> some View {
+        VStack(spacing: FFSpacing.xs) {
+            CreatorCardView(
+                creator: creator,
+                environment: environment,
+                followButtonState: viewModel.isCreatorFollowLoading ? .loading : (creator.isFollowedByMe ? .following : .follow),
+                isFollowEnabled: viewModel.canToggleCreatorFollow,
+                onTap: {
+                    viewModel.openCreatorProfile()
+                },
+                onFollowTap: {
+                    Task { await viewModel.toggleCreatorFollow() }
+                },
+            )
+
+            if let infoMessage = viewModel.creatorInfoMessage {
+                FFCard {
+                    Text(infoMessage)
                         .font(FFTypography.caption)
-                        .foregroundStyle(FFColors.gray300)
+                        .foregroundStyle(FFColors.textSecondary)
                 }
             }
         }
@@ -532,9 +1084,199 @@ struct ProgramDetailsScreen: View {
     }
 }
 
+struct EnrollmentConfirmationView: View {
+    let route: ProgramDetailsViewModel.EnrollmentConfirmationRoute
+    let isPreparingFirstWorkout: Bool
+    let onStartFirstWorkout: () -> Void
+    let onOpenProgramPlan: () -> Void
+
+    var body: some View {
+        ScrollView {
+            VStack(spacing: FFSpacing.md) {
+                FFCard {
+                    VStack(alignment: .leading, spacing: FFSpacing.xs) {
+                        Text("Program Started")
+                            .font(FFTypography.h1)
+                            .foregroundStyle(FFColors.textPrimary)
+                        Text(route.programTitle)
+                            .font(FFTypography.body.weight(.semibold))
+                            .foregroundStyle(FFColors.textPrimary)
+                    }
+                }
+
+                FFCard {
+                    VStack(alignment: .leading, spacing: FFSpacing.xs) {
+                        Text("Program overview")
+                            .font(FFTypography.h2)
+                            .foregroundStyle(FFColors.textPrimary)
+                        detailRow(title: "frequencyPerWeek", value: route.frequencyPerWeek.map(String.init) ?? "—")
+                        detailRow(title: "level", value: route.level ?? "—")
+                        detailRow(
+                            title: "estimatedDurationMinutes",
+                            value: route.estimatedDurationMinutes.map { "\($0) мин" } ?? "—",
+                        )
+                    }
+                }
+
+                FFCard {
+                    VStack(alignment: .leading, spacing: FFSpacing.xs) {
+                        Text("First workout")
+                            .font(FFTypography.h2)
+                            .foregroundStyle(FFColors.textPrimary)
+                        Text(route.firstWorkoutTitle ?? "Подберём после синхронизации")
+                            .font(FFTypography.body.weight(.semibold))
+                            .foregroundStyle(FFColors.textPrimary)
+                        if let duration = route.firstWorkoutEstimatedDurationMinutes {
+                            Text("Estimated duration: ~\(duration) мин")
+                                .font(FFTypography.caption)
+                                .foregroundStyle(FFColors.textSecondary)
+                        }
+                        if route.isPendingEnrollment {
+                            Text("Оффлайн: enrollment сохранён локально и будет отправлен при появлении сети.")
+                                .font(FFTypography.caption)
+                                .foregroundStyle(FFColors.primary)
+                        }
+                        if route.firstWorkoutInstanceId == nil, !route.fallbackWorkoutTitles.isEmpty {
+                            Divider()
+                            Text("Workouts from ProgramDetails")
+                                .font(FFTypography.caption.weight(.semibold))
+                                .foregroundStyle(FFColors.textSecondary)
+                            ForEach(Array(route.fallbackWorkoutTitles.prefix(3).enumerated()), id: \.offset) { index, title in
+                                Text("\(index + 1). \(title)")
+                                    .font(FFTypography.caption)
+                                    .foregroundStyle(FFColors.textSecondary)
+                            }
+                        }
+                    }
+                }
+
+                if route.canStartFirstWorkout {
+                    FFButton(
+                        title: route.firstWorkoutInstanceId == nil ? "Start first workout" : "Start workout",
+                        variant: .primary,
+                        isLoading: isPreparingFirstWorkout,
+                        action: onStartFirstWorkout,
+                    )
+                } else {
+                    FFButton(
+                        title: "Open program plan",
+                        variant: .secondary,
+                        action: onOpenProgramPlan,
+                    )
+                }
+            }
+            .padding(.horizontal, FFSpacing.md)
+            .padding(.vertical, FFSpacing.md)
+        }
+        .background(FFColors.background)
+    }
+
+    private func detailRow(title: String, value: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: FFSpacing.xs) {
+            Text(title)
+                .font(FFTypography.caption)
+                .foregroundStyle(FFColors.textSecondary)
+            Spacer(minLength: FFSpacing.xs)
+            Text(value)
+                .font(FFTypography.body.weight(.semibold))
+                .foregroundStyle(FFColors.textPrimary)
+        }
+    }
+}
+
+struct WorkoutIntroView: View {
+    let workout: WorkoutDetailsModel
+    let onStartWorkout: () -> Void
+    @State private var isExercisesPresented = false
+
+    var body: some View {
+        ScrollView {
+            VStack(spacing: FFSpacing.md) {
+                FFCard {
+                    VStack(alignment: .leading, spacing: FFSpacing.xs) {
+                        Text("Workout intro")
+                            .font(FFTypography.h1)
+                            .foregroundStyle(FFColors.textPrimary)
+                        Text(workout.title)
+                            .font(FFTypography.body.weight(.semibold))
+                            .foregroundStyle(FFColors.textPrimary)
+                    }
+                }
+
+                FFCard {
+                    VStack(alignment: .leading, spacing: FFSpacing.xs) {
+                        detailRow(title: "Упражнений", value: "\(workout.exercises.count)")
+                        detailRow(
+                            title: "Оценка длительности",
+                            value: "~\(estimatedDurationMinutes(workout: workout)) мин",
+                        )
+                    }
+                }
+
+                FFButton(title: "Start workout", variant: .primary, action: onStartWorkout)
+                FFButton(title: "View exercises", variant: .secondary) {
+                    isExercisesPresented = true
+                }
+            }
+            .padding(.horizontal, FFSpacing.md)
+            .padding(.vertical, FFSpacing.md)
+        }
+        .background(FFColors.background)
+        .sheet(isPresented: $isExercisesPresented) {
+            NavigationStack {
+                List {
+                    ForEach(Array(workout.exercises.enumerated()), id: \.offset) { index, exercise in
+                        VStack(alignment: .leading, spacing: FFSpacing.xxs) {
+                            Text("\(index + 1). \(exercise.name)")
+                                .font(FFTypography.body.weight(.semibold))
+                                .foregroundStyle(FFColors.textPrimary)
+                            Text("\(exercise.sets) подходов")
+                                .font(FFTypography.caption)
+                                .foregroundStyle(FFColors.textSecondary)
+                        }
+                        .padding(.vertical, FFSpacing.xxs)
+                    }
+                }
+                .navigationTitle("Упражнения")
+            }
+        }
+    }
+
+    private func detailRow(title: String, value: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: FFSpacing.xs) {
+            Text(title)
+                .font(FFTypography.caption)
+                .foregroundStyle(FFColors.textSecondary)
+            Spacer(minLength: FFSpacing.xs)
+            Text(value)
+                .font(FFTypography.body.weight(.semibold))
+                .foregroundStyle(FFColors.textPrimary)
+        }
+    }
+
+    private func estimatedDurationMinutes(workout: WorkoutDetailsModel) -> Int {
+        let totalSets = workout.exercises.reduce(0) { $0 + max(1, $1.sets) }
+        let totalRest = workout.exercises.reduce(0) { partial, exercise in
+            partial + (exercise.restSeconds ?? 45) * max(0, exercise.sets - 1)
+        }
+        let totalSeconds = totalSets * 90 + totalRest
+        return max(10, totalSeconds / 60)
+    }
+}
+
 private extension String {
     var trimmedNilIfEmpty: String? {
         let trimmed = trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? nil : trimmed
     }
+}
+
+private func isCreatorFollowForbidden(_ apiError: APIError) -> Bool {
+    if apiError == .forbidden {
+        return true
+    }
+    if case let .httpError(statusCode, _) = apiError {
+        return statusCode == 403
+    }
+    return false
 }

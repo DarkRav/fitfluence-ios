@@ -1,0 +1,291 @@
+import Foundation
+import XCTest
+@testable import FitfluenceApp
+
+final class SyncEngineTests: XCTestCase {
+    func testOutboxDedupeKeepsSingleUpsertAndResetsRetryState() async throws {
+        let store = SyncOutboxStore(baseURL: temporaryDirectory())
+        let namespace = "athlete-1"
+
+        let first = await store.enqueue(
+            .upsertSet(
+                workoutInstanceId: "w1",
+                exerciseExecutionId: "exec-1",
+                setNumber: 1,
+                weight: 60,
+                reps: 8,
+                rpe: 8,
+                isCompleted: true,
+            ),
+            namespace: namespace,
+        )
+        let firstOperation = try XCTUnwrap(first.operation)
+
+        await store.markRetryableError(
+            operationId: firstOperation.id,
+            namespace: namespace,
+            error: "Offline",
+            nextRetryAt: Date().addingTimeInterval(120),
+            retryCount: 3,
+        )
+
+        _ = await store.enqueue(
+            .upsertSet(
+                workoutInstanceId: "w1",
+                exerciseExecutionId: "exec-1",
+                setNumber: 1,
+                weight: 62.5,
+                reps: 10,
+                rpe: 9,
+                isCompleted: true,
+            ),
+            namespace: namespace,
+        )
+
+        let operations = await store.allOperations(namespace: namespace)
+        let unsent = operations.filter { $0.status.isUnsent }
+        XCTAssertEqual(unsent.count, 1)
+
+        let operation = try XCTUnwrap(unsent.first)
+        XCTAssertEqual(operation.payload.weight, 62.5)
+        XCTAssertEqual(operation.payload.reps, 10)
+        XCTAssertEqual(operation.retryCount, 0)
+        XCTAssertEqual(operation.status, .pending)
+        XCTAssertNil(operation.nextRetryAt)
+    }
+
+    func testOutboxConflictRulesAbandonDiscardsCompleteForWorkout() async {
+        let store = SyncOutboxStore(baseURL: temporaryDirectory())
+        let namespace = "athlete-2"
+
+        _ = await store.enqueue(
+            .completeWorkout(workoutInstanceId: "w2", completedAt: Date()),
+            namespace: namespace,
+        )
+        _ = await store.enqueue(
+            .abandonWorkout(workoutInstanceId: "w2", abandonedAt: Date()),
+            namespace: namespace,
+        )
+
+        let operations = await store.allOperations(namespace: namespace)
+        let complete = operations.first(where: { $0.type == .completeWorkout })
+        let abandon = operations.first(where: { $0.type == .abandonWorkout })
+
+        XCTAssertEqual(complete?.status, .dead)
+        XCTAssertEqual(abandon?.status, .pending)
+    }
+
+    func testBackoffSchedule() {
+        let worker = SyncWorker(outboxStore: SyncOutboxStore(baseURL: temporaryDirectory()))
+
+        XCTAssertEqual(worker.backoffDelay(forRetryCount: 1), 2, accuracy: 0.001)
+        XCTAssertEqual(worker.backoffDelay(forRetryCount: 2), 5, accuracy: 0.001)
+        XCTAssertEqual(worker.backoffDelay(forRetryCount: 3), 15, accuracy: 0.001)
+        XCTAssertEqual(worker.backoffDelay(forRetryCount: 4), 30, accuracy: 0.001)
+        XCTAssertEqual(worker.backoffDelay(forRetryCount: 5), 60, accuracy: 0.001)
+        XCTAssertEqual(worker.backoffDelay(forRetryCount: 12), 300, accuracy: 0.001)
+    }
+
+    func testOrderingDependenciesStartBeforeSetsAndCompleteAfterSets() async throws {
+        let store = SyncOutboxStore(baseURL: temporaryDirectory())
+        let worker = SyncWorker(outboxStore: store)
+        let client = MockAthleteTrainingClient()
+        let namespace = "athlete-3"
+
+        _ = await store.enqueue(.startWorkout(workoutInstanceId: "w3", startedAt: Date()), namespace: namespace)
+        _ = await store.enqueue(
+            .upsertSet(
+                workoutInstanceId: "w3",
+                exerciseExecutionId: "exec-3",
+                setNumber: 1,
+                weight: 100,
+                reps: 5,
+                rpe: 8,
+                isCompleted: true,
+            ),
+            namespace: namespace,
+        )
+        _ = await store.enqueue(.completeWorkout(workoutInstanceId: "w3", completedAt: Date()), namespace: namespace)
+
+        await worker.process(namespace: namespace, athleteTrainingClient: client, isOnline: true)
+
+        let calls = await client.calls
+        XCTAssertEqual(calls, [
+            "START_WORKOUT:w3",
+            "UPSERT_SET:exec-3:1",
+            "COMPLETE_WORKOUT:w3",
+        ])
+    }
+
+    func testStateTransitionsPendingToSentErrorAndDead() async throws {
+        do {
+            let namespace = "athlete-sent"
+            let store = SyncOutboxStore(baseURL: temporaryDirectory())
+            let localWorker = SyncWorker(outboxStore: store)
+            let client = MockAthleteTrainingClient()
+
+            _ = await store.enqueue(.startWorkout(workoutInstanceId: "w-sent", startedAt: Date()), namespace: namespace)
+            await localWorker.process(namespace: namespace, athleteTrainingClient: client, isOnline: true)
+
+            let op = await store.allOperations(namespace: namespace).first
+            XCTAssertEqual(op?.status, .sent)
+        }
+
+        do {
+            let namespace = "athlete-error"
+            let store = SyncOutboxStore(baseURL: temporaryDirectory())
+            let localWorker = SyncWorker(outboxStore: store)
+            let client = MockAthleteTrainingClient()
+            await client.setSetResult(.failure(.offline))
+
+            _ = await store.enqueue(
+                .upsertSet(
+                    workoutInstanceId: "w-error",
+                    exerciseExecutionId: "exec-error",
+                    setNumber: 1,
+                    weight: 50,
+                    reps: 8,
+                    rpe: 7,
+                    isCompleted: false,
+                ),
+                namespace: namespace,
+            )
+
+            await localWorker.process(namespace: namespace, athleteTrainingClient: client, isOnline: true)
+
+            let op = await store.allOperations(namespace: namespace).first
+            XCTAssertEqual(op?.status, .error)
+            XCTAssertEqual(op?.retryCount, 1)
+            XCTAssertNotNil(op?.nextRetryAt)
+        }
+
+        do {
+            let namespace = "athlete-dead"
+            let store = SyncOutboxStore(baseURL: temporaryDirectory())
+            let localWorker = SyncWorker(outboxStore: store)
+            let client = MockAthleteTrainingClient()
+            await client.setCompleteResult(.failure(.httpError(statusCode: 422, bodySnippet: "validation")))
+
+            _ = await store.enqueue(.completeWorkout(workoutInstanceId: "w-dead", completedAt: Date()), namespace: namespace)
+            await localWorker.process(namespace: namespace, athleteTrainingClient: client, isOnline: true)
+
+            let op = await store.allOperations(namespace: namespace).first
+            XCTAssertEqual(op?.status, .dead)
+        }
+    }
+
+    private func temporaryDirectory() -> URL {
+        FileManager.default.temporaryDirectory
+            .appendingPathComponent("fitfluence-sync-tests-\(UUID().uuidString)", isDirectory: true)
+    }
+}
+
+private actor MockAthleteTrainingClient: AthleteTrainingClientProtocol {
+    var calls: [String] = []
+
+    var startResult: Result<AthleteWorkoutInstance, APIError> = .success(
+        AthleteWorkoutInstance(
+            id: "w",
+            enrollmentId: nil,
+            workoutTemplateId: nil,
+            title: "Workout",
+            status: .inProgress,
+            source: .program,
+            scheduledDate: nil,
+            startedAt: nil,
+            completedAt: nil,
+            durationSeconds: nil,
+            notes: nil,
+            programId: nil,
+        ),
+    )
+
+    var completeResult: Result<AthleteWorkoutInstance, APIError> = .success(
+        AthleteWorkoutInstance(
+            id: "w",
+            enrollmentId: nil,
+            workoutTemplateId: nil,
+            title: "Workout",
+            status: .completed,
+            source: .program,
+            scheduledDate: nil,
+            startedAt: nil,
+            completedAt: nil,
+            durationSeconds: nil,
+            notes: nil,
+            programId: nil,
+        ),
+    )
+
+    var abandonResult: Result<AthleteWorkoutInstance, APIError> = .success(
+        AthleteWorkoutInstance(
+            id: "w",
+            enrollmentId: nil,
+            workoutTemplateId: nil,
+            title: "Workout",
+            status: .abandoned,
+            source: .program,
+            scheduledDate: nil,
+            startedAt: nil,
+            completedAt: nil,
+            durationSeconds: nil,
+            notes: nil,
+            programId: nil,
+        ),
+    )
+
+    var setResult: Result<AthleteSetExecution, APIError> = .success(
+        AthleteSetExecution(
+            id: "set",
+            setNumber: 1,
+            weight: 50,
+            reps: 8,
+            rpe: 8,
+            isCompleted: true,
+            restSecondsActual: nil,
+        ),
+    )
+
+    func setCompleteResult(_ result: Result<AthleteWorkoutInstance, APIError>) {
+        completeResult = result
+    }
+
+    func setSetResult(_ result: Result<AthleteSetExecution, APIError>) {
+        setResult = result
+    }
+
+    func activeEnrollmentProgress() async -> Result<ActiveEnrollmentProgressResponse, APIError> {
+        .failure(.unknown)
+    }
+
+    func getWorkoutDetails(workoutInstanceId _: String) async -> Result<AthleteWorkoutDetailsResponse, APIError> {
+        .failure(.unknown)
+    }
+
+    func startWorkout(workoutInstanceId: String, startedAt _: Date?) async -> Result<AthleteWorkoutInstance, APIError> {
+        calls.append("START_WORKOUT:\(workoutInstanceId)")
+        return startResult
+    }
+
+    func completeWorkout(workoutInstanceId: String, completedAt _: Date?) async -> Result<AthleteWorkoutInstance, APIError> {
+        calls.append("COMPLETE_WORKOUT:\(workoutInstanceId)")
+        return completeResult
+    }
+
+    func abandonWorkout(workoutInstanceId: String, abandonedAt _: Date?) async -> Result<AthleteWorkoutInstance, APIError> {
+        calls.append("ABANDON_WORKOUT:\(workoutInstanceId)")
+        return abandonResult
+    }
+
+    func updateExerciseSet(
+        exerciseExecutionId: String,
+        setNumber: Int,
+        weight _: Double?,
+        reps _: Int?,
+        rpe _: Int?,
+        isCompleted _: Bool?,
+    ) async -> Result<AthleteSetExecution, APIError> {
+        calls.append("UPSERT_SET:\(exerciseExecutionId):\(setNumber)")
+        return setResult
+    }
+}

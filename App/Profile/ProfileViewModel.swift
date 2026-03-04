@@ -17,6 +17,7 @@ final class ProfileViewModel {
     private let cacheStore: CacheStore
     private let settingsStore: ProfileSettingsStore
     private let diagnosticsProvider: DiagnosticsProviding
+    private let syncCoordinator: SyncCoordinator
 
     let userSub: String
     var isOnline: Bool
@@ -36,6 +37,9 @@ final class ProfileViewModel {
         localStorageLabel: "0.00 МБ",
         versionLabel: "—",
         buildLabel: "—",
+        pendingSyncOperations: 0,
+        lastSyncAttemptLabel: "—",
+        lastSyncError: nil,
     )
 
     init(
@@ -47,6 +51,7 @@ final class ProfileViewModel {
         cacheStore: CacheStore = CompositeCacheStore(),
         settingsStore: ProfileSettingsStore = LocalProfileSettingsStore(),
         diagnosticsProvider: DiagnosticsProviding = DiagnosticsProvider(),
+        syncCoordinator: SyncCoordinator = .shared,
     ) {
         self.me = me
         self.userSub = userSub
@@ -56,6 +61,7 @@ final class ProfileViewModel {
         self.cacheStore = cacheStore
         self.settingsStore = settingsStore
         self.diagnosticsProvider = diagnosticsProvider
+        self.syncCoordinator = syncCoordinator
     }
 
     var syncStatusTitle: String {
@@ -72,6 +78,9 @@ final class ProfileViewModel {
         Версия: \(diagnostics.versionLabel) (\(diagnostics.buildLabel))
         Кэш: \(diagnostics.cacheSizeLabel)
         Локальные данные: \(diagnostics.localStorageLabel)
+        Pending sync operations: \(diagnostics.pendingSyncOperations)
+        Last sync attempt: \(diagnostics.lastSyncAttemptLabel)
+        Last sync error: \(diagnostics.lastSyncError ?? "—")
         """
     }
 
@@ -93,42 +102,37 @@ final class ProfileViewModel {
             return
         }
 
-        do {
-            settings = await settingsStore.load(userSub: userSub)
-            settings.weightUnit = .kilograms
-            await settingsStore.save(settings, userSub: userSub)
+        settings = await settingsStore.load(userSub: userSub)
+        settings.weightUnit = .kilograms
+        await settingsStore.save(settings, userSub: userSub)
 
-            let localBytes = await trainingStore.storageSizeBytes(userSub: userSub)
-            let cacheBytes = await diagnosticsProvider.cacheSizeBytes(userSub: userSub)
-            let activeSessionValue = await progressStore.latestActiveSession(userSub: userSub)
+        let localBytes = await trainingStore.storageSizeBytes(userSub: userSub)
+        let cacheBytes = await diagnosticsProvider.cacheSizeBytes(userSub: userSub)
+        let activeSessionValue = await progressStore.latestActiveSession(userSub: userSub)
 
-            displayName = resolvedDisplayName()
-            email = me.email ?? "Email не указан"
-            avatarInitials = initials(from: displayName)
-            syncStatus = isOnline ? "Синхронизация включена" : "Локальные данные на устройстве"
-            if let activeSessionValue, await canLaunch(session: activeSessionValue) {
-                activeSession = buildActiveSession(activeSessionValue)
-            } else {
-                activeSession = nil
-            }
-
-            diagnostics = ProfileDiagnosticsSnapshot(
-                isOnline: isOnline,
-                cacheSizeLabel: formatBytes(cacheBytes),
-                localStorageLabel: formatBytes(localBytes),
-                versionLabel: diagnosticsProvider.appVersion(),
-                buildLabel: diagnosticsProvider.appBuild(),
-            )
-
-            loadState = .loaded
-        } catch {
-            loadState = .error(
-                UserFacingError(
-                    title: "Не удалось загрузить профиль",
-                    message: "Повторите попытку. Локальные данные останутся на устройстве.",
-                ),
-            )
+        displayName = resolvedDisplayName()
+        email = me.email ?? "Email не указан"
+        avatarInitials = initials(from: displayName)
+        syncStatus = isOnline ? "Синхронизация включена" : "Локальные данные на устройстве"
+        if let activeSessionValue, await canLaunch(session: activeSessionValue) {
+            activeSession = buildActiveSession(activeSessionValue)
+        } else {
+            activeSession = nil
         }
+
+        diagnostics = ProfileDiagnosticsSnapshot(
+            isOnline: isOnline,
+            cacheSizeLabel: formatBytes(cacheBytes),
+            localStorageLabel: formatBytes(localBytes),
+            versionLabel: diagnosticsProvider.appVersion(),
+            buildLabel: diagnosticsProvider.appBuild(),
+            pendingSyncOperations: diagnostics.pendingSyncOperations,
+            lastSyncAttemptLabel: diagnostics.lastSyncAttemptLabel,
+            lastSyncError: diagnostics.lastSyncError,
+        )
+        await refreshSyncDiagnostics()
+
+        loadState = .loaded
     }
 
     func updateNetworkStatus(_ online: Bool) {
@@ -140,6 +144,9 @@ final class ProfileViewModel {
             localStorageLabel: diagnostics.localStorageLabel,
             versionLabel: diagnostics.versionLabel,
             buildLabel: diagnostics.buildLabel,
+            pendingSyncOperations: diagnostics.pendingSyncOperations,
+            lastSyncAttemptLabel: diagnostics.lastSyncAttemptLabel,
+            lastSyncError: diagnostics.lastSyncError,
         )
     }
 
@@ -161,8 +168,23 @@ final class ProfileViewModel {
             localStorageLabel: diagnostics.localStorageLabel,
             versionLabel: diagnostics.versionLabel,
             buildLabel: diagnostics.buildLabel,
+            pendingSyncOperations: diagnostics.pendingSyncOperations,
+            lastSyncAttemptLabel: diagnostics.lastSyncAttemptLabel,
+            lastSyncError: diagnostics.lastSyncError,
         )
         infoMessage = "Кэш очищен. Прогресс тренировок сохранён."
+    }
+
+    func retrySyncNow() async {
+        await syncCoordinator.retryNow(namespace: userSub)
+        await refreshSyncDiagnostics()
+        infoMessage = "Синхронизация запущена"
+    }
+
+    func exportSyncLog() async {
+        let logText = await syncCoordinator.exportSyncLog(namespace: userSub)
+        UIPasteboard.general.string = logText
+        infoMessage = "Sync log скопирован"
     }
 
     func resetActiveSession() async {
@@ -238,5 +260,27 @@ final class ProfileViewModel {
     private func formatBytes(_ bytes: Int) -> String {
         let value = Double(bytes) / (1024 * 1024)
         return String(format: "%.2f МБ", value)
+    }
+
+    private func refreshSyncDiagnostics() async {
+        await syncCoordinator.activate(namespace: userSub)
+        let snapshot = await syncCoordinator.diagnostics(namespace: userSub)
+        let lastSyncAttemptLabel = snapshot.lastSyncAttemptAt.map {
+            $0.formatted(
+                date: Date.FormatStyle.DateStyle.abbreviated,
+                time: Date.FormatStyle.TimeStyle.shortened,
+            )
+        } ?? "—"
+
+        diagnostics = ProfileDiagnosticsSnapshot(
+            isOnline: diagnostics.isOnline,
+            cacheSizeLabel: diagnostics.cacheSizeLabel,
+            localStorageLabel: diagnostics.localStorageLabel,
+            versionLabel: diagnostics.versionLabel,
+            buildLabel: diagnostics.buildLabel,
+            pendingSyncOperations: snapshot.pendingCount,
+            lastSyncAttemptLabel: lastSyncAttemptLabel,
+            lastSyncError: snapshot.lastSyncError,
+        )
     }
 }

@@ -42,6 +42,16 @@ struct FitfluenceApp: App {
         )
         networkMonitor = NetworkMonitor()
         cacheStore = CompositeCacheStore()
+
+        let syncClient: AthleteTrainingClientProtocol? = apiClient
+        let syncNetworkMonitor = networkMonitor
+        Task {
+            await SyncCoordinator.shared.configure(
+                athleteTrainingClient: syncClient,
+                networkMonitor: syncNetworkMonitor,
+            )
+        }
+
         if environment.name.uppercased() == "DEV" {
             let probe = LocalNetworkProbe()
             probe.start()

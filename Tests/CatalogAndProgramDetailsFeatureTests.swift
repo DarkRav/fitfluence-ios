@@ -76,6 +76,72 @@ final class CatalogAndProgramDetailsFeatureTests: XCTestCase {
         XCTAssertEqual(viewModel.programs.first?.title, "Первая")
     }
 
+    func testFollowStateMachineOptimisticUpdateAndRollback() {
+        let creator = InfluencerPublicCard(
+            id: UUID(uuidString: "A617BC31-4A7D-4AA7-99D4-3DFBD2D9B2EE")!,
+            displayName: "Creator",
+            bio: "Bio",
+            avatar: nil,
+            socialLinks: nil,
+            followersCount: 41,
+            programsCount: 6,
+            isFollowedByMe: false,
+        )
+
+        let followed = FollowStateMachine.apply(.follow, to: creator)
+        XCTAssertTrue(followed.isFollowedByMe)
+        XCTAssertEqual(followed.followersCount, 42)
+
+        let rolledBack = FollowStateMachine.apply(.unfollow, to: followed)
+        XCTAssertFalse(rolledBack.isFollowedByMe)
+        XCTAssertEqual(rolledBack.followersCount, 41)
+    }
+
+    func testCreatorsDiscoveryFollowRollbackOnFailure() async {
+        let creator = InfluencerPublicCard(
+            id: UUID(uuidString: "F3D2CCAA-D8A0-4AE6-A8A6-B9204E320B18")!,
+            displayName: "Coach",
+            bio: "Strength coach",
+            avatar: nil,
+            socialLinks: nil,
+            followersCount: 10,
+            programsCount: 3,
+            isFollowedByMe: false,
+        )
+
+        let mockClient = MockProgramsClient(
+            listResults: [],
+            detailsResults: [],
+            startResults: [],
+            influencersSearchResults: [
+                .success(
+                    PagedInfluencerPublicCardResponse(
+                        content: [creator],
+                        metadata: PageMetadata(page: 0, size: 20, totalElements: 1, totalPages: 1),
+                    ),
+                ),
+            ],
+            followResults: [.failure(.serverError(statusCode: 503, bodySnippet: nil))],
+        )
+
+        let viewModel = CreatorsDiscoveryViewModel(
+            userSub: "u1",
+            programsClient: mockClient,
+            cacheStore: MemoryCacheStore(),
+            networkMonitor: StaticNetworkMonitor(currentStatus: true),
+        )
+
+        await viewModel.onAppear()
+        XCTAssertEqual(viewModel.creators.first?.isFollowedByMe, false)
+        XCTAssertEqual(viewModel.creators.first?.followersCount, 10)
+
+        _ = await viewModel.toggleFollow(influencerId: creator.id)
+
+        XCTAssertEqual(viewModel.creators.first?.isFollowedByMe, false)
+        XCTAssertEqual(viewModel.creators.first?.followersCount, 10)
+        XCTAssertEqual(viewModel.error?.kind, .server)
+    }
+
     func testProgramDetailsViewModelSuccess() async {
         let mockClient = MockProgramsClient(
             listResults: [],
@@ -198,17 +264,32 @@ private actor MockProgramsClient: ProgramsClientProtocol {
     private var featuredResults: [Result<PagedProgramResponse, APIError>]
     private var detailsResults: [Result<ProgramDetails, APIError>]
     private var startResults: [Result<ProgramEnrollment, APIError>]
+    private var influencersSearchResults: [Result<PagedInfluencerPublicCardResponse, APIError>]
+    private var followingResults: [Result<PagedInfluencerPublicCardResponse, APIError>]
+    private var followResults: [Result<Void, APIError>]
+    private var unfollowResults: [Result<Void, APIError>]
+    private var creatorProgramsResults: [Result<PagedProgramResponse, APIError>]
     private(set) var receivedQueries: [String] = []
 
     init(
         listResults: [Result<PagedProgramResponse, APIError>],
         detailsResults: [Result<ProgramDetails, APIError>],
         startResults: [Result<ProgramEnrollment, APIError>],
+        influencersSearchResults: [Result<PagedInfluencerPublicCardResponse, APIError>] = [],
+        followingResults: [Result<PagedInfluencerPublicCardResponse, APIError>] = [],
+        followResults: [Result<Void, APIError>] = [],
+        unfollowResults: [Result<Void, APIError>] = [],
+        creatorProgramsResults: [Result<PagedProgramResponse, APIError>] = [],
     ) {
         self.listResults = listResults
         featuredResults = listResults
         self.detailsResults = detailsResults
         self.startResults = startResults
+        self.influencersSearchResults = influencersSearchResults
+        self.followingResults = followingResults
+        self.followResults = followResults
+        self.unfollowResults = unfollowResults
+        self.creatorProgramsResults = creatorProgramsResults
     }
 
     func listPublishedPrograms(
@@ -234,6 +315,31 @@ private actor MockProgramsClient: ProgramsClientProtocol {
     func startProgram(programVersionId _: String) async -> Result<ProgramEnrollment, APIError> {
         guard !startResults.isEmpty else { return .failure(.unknown) }
         return startResults.removeFirst()
+    }
+
+    func influencersSearch(request _: InfluencersSearchRequest) async -> Result<PagedInfluencerPublicCardResponse, APIError> {
+        guard !influencersSearchResults.isEmpty else { return .failure(.unknown) }
+        return influencersSearchResults.removeFirst()
+    }
+
+    func getFollowingCreators(page _: Int, size _: Int, search _: String?) async -> Result<PagedInfluencerPublicCardResponse, APIError> {
+        guard !followingResults.isEmpty else { return .failure(.unknown) }
+        return followingResults.removeFirst()
+    }
+
+    func followCreator(influencerId _: UUID) async -> Result<Void, APIError> {
+        guard !followResults.isEmpty else { return .failure(.unknown) }
+        return followResults.removeFirst()
+    }
+
+    func unfollowCreator(influencerId _: UUID) async -> Result<Void, APIError> {
+        guard !unfollowResults.isEmpty else { return .failure(.unknown) }
+        return unfollowResults.removeFirst()
+    }
+
+    func getCreatorPrograms(influencerId _: UUID, page _: Int, size _: Int) async -> Result<PagedProgramResponse, APIError> {
+        guard !creatorProgramsResults.isEmpty else { return .failure(.unknown) }
+        return creatorProgramsResults.removeFirst()
     }
 
     func listCallCount() async -> Int {

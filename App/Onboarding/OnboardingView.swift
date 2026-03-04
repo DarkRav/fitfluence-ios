@@ -5,7 +5,7 @@ struct OnboardingView: View {
     let store: StoreOf<OnboardingFeature>
 
     var body: some View {
-        WithViewStore(store, observe: { $0 }) { viewStore in
+        WithPerceptionTracking {
             ScrollView {
                 VStack(spacing: FFSpacing.md) {
                     FFCard {
@@ -22,27 +22,27 @@ struct OnboardingView: View {
                     FFTextField(
                         label: "Имя профиля",
                         placeholder: "Например: Алекс",
-                        text: viewStore.binding(
-                            get: \.athleteDisplayName,
-                            send: OnboardingFeature.Action.athleteDisplayNameChanged,
+                        text: Binding(
+                            get: { store.athleteDisplayName },
+                            set: { store.send(.athleteDisplayNameChanged($0)) },
                         ),
                         helperText: "Имя можно изменить позже",
                     )
 
                     FFButton(
-                        title: viewStore.isSubmitting ? "Создаём профиль..." : "Создать профиль",
-                        variant: viewStore.isSubmitting ? .disabled : .primary,
+                        title: store.isSubmitting ? "Создаём профиль..." : "Создать профиль",
+                        variant: store.isSubmitting ? .disabled : .primary,
                     ) {
-                        viewStore.send(.createAthleteTapped)
+                        store.send(.createAthleteTapped)
                     }
 
-                    if let error = viewStore.errorMessage {
+                    if let error = store.errorMessage {
                         FFErrorState(
                             title: "Не удалось создать профиль",
                             message: error,
                             retryTitle: "Скрыть",
                         ) {
-                            viewStore.send(.clearMessage)
+                            store.send(.clearMessage)
                         }
                     }
                 }

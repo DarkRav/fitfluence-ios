@@ -254,7 +254,7 @@ struct MeResponse: Decodable, Equatable, Sendable {
         from container: KeyedDecodingContainer<CodingKeys>,
     ) -> [String] {
         if let decoded = try? container.decodeIfPresent([String].self, forKey: .roles) {
-            return decoded ?? []
+            return decoded
         }
         let single = (try? container.decodeIfPresent(String.self, forKey: .roles)) ?? nil
         if let value = single {

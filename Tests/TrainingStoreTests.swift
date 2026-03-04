@@ -83,4 +83,56 @@ final class TrainingStoreTests: XCTestCase {
         XCTAssertTrue(afterDeleteU1.isEmpty)
         XCTAssertEqual(afterDeleteU2.count, 1)
     }
+
+    func testProgressInsightEnginePrioritizesMissedWorkouts() {
+        let context = ProgressInsightContext(
+            workouts7d: 4,
+            missedCount: 2,
+            recentPRExerciseId: "ex1",
+            recentPRExerciseName: "Squat",
+            recentPRDate: Date(),
+            lastWorkoutDate: Date(),
+        )
+
+        let insight = ProgressInsightEngine.resolve(context: context, now: Date(), calendar: .current)
+
+        XCTAssertEqual(insight.action, .openPlan)
+        XCTAssertEqual(insight.ctaTitle, "Open Plan")
+    }
+
+    func testProgressInsightEngineShowsRecentPRAction() {
+        let calendar = Calendar.current
+        let recentDate = calendar.date(byAdding: .day, value: -3, to: Date()) ?? Date()
+        let context = ProgressInsightContext(
+            workouts7d: 1,
+            missedCount: 0,
+            recentPRExerciseId: "ex-bench",
+            recentPRExerciseName: "Bench Press",
+            recentPRDate: recentDate,
+            lastWorkoutDate: Date(),
+        )
+
+        let insight = ProgressInsightEngine.resolve(context: context, now: Date(), calendar: calendar)
+
+        XCTAssertEqual(insight.action, .openExercise(exerciseId: "ex-bench"))
+        XCTAssertEqual(insight.ctaTitle, "Open Exercise")
+    }
+
+    func testProgressInsightEngineDetectsLongPause() {
+        let calendar = Calendar.current
+        let oldDate = calendar.date(byAdding: .day, value: -8, to: Date()) ?? Date()
+        let context = ProgressInsightContext(
+            workouts7d: 0,
+            missedCount: 0,
+            recentPRExerciseId: nil,
+            recentPRExerciseName: nil,
+            recentPRDate: nil,
+            lastWorkoutDate: oldDate,
+        )
+
+        let insight = ProgressInsightEngine.resolve(context: context, now: Date(), calendar: calendar)
+
+        XCTAssertEqual(insight.action, .startNextWorkout)
+        XCTAssertEqual(insight.ctaTitle, "Start next workout")
+    }
 }

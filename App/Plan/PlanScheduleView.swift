@@ -33,6 +33,9 @@ final class PlanScheduleViewModel {
 
     private let userSub: String
     private let trainingStore: TrainingStore
+    private let athleteTrainingClient: AthleteTrainingClientProtocol?
+    private let cacheStore: CacheStore
+    private let networkMonitor: NetworkMonitoring
     private let calendar: Calendar
 
     var selectedMonth: Date = .init()
@@ -46,10 +49,16 @@ final class PlanScheduleViewModel {
     init(
         userSub: String,
         trainingStore: TrainingStore = LocalTrainingStore(),
+        athleteTrainingClient: AthleteTrainingClientProtocol? = nil,
+        cacheStore: CacheStore = CompositeCacheStore(),
+        networkMonitor: NetworkMonitoring = StaticNetworkMonitor(currentStatus: true),
         calendar: Calendar = .current,
     ) {
         self.userSub = userSub
         self.trainingStore = trainingStore
+        self.athleteTrainingClient = athleteTrainingClient
+        self.cacheStore = cacheStore
+        self.networkMonitor = networkMonitor
         self.calendar = calendar
         selectedMonth = calendar.startOfDay(for: Date())
         selectedDay = calendar.startOfDay(for: Date())
@@ -66,10 +75,11 @@ final class PlanScheduleViewModel {
 
         let previousMonth = calendar.date(byAdding: .month, value: -1, to: selectedMonth) ?? selectedMonth
         let nextMonth = calendar.date(byAdding: .month, value: 1, to: selectedMonth) ?? selectedMonth
+        let enrollmentId = await resolveActiveEnrollmentId()
 
-        async let previousPlans = trainingStore.plans(userSub: userSub, month: previousMonth)
-        async let selectedPlans = trainingStore.plans(userSub: userSub, month: selectedMonth)
-        async let nextPlans = trainingStore.plans(userSub: userSub, month: nextMonth)
+        async let previousPlans = plansForMonth(previousMonth, enrollmentId: enrollmentId)
+        async let selectedPlans = plansForMonth(selectedMonth, enrollmentId: enrollmentId)
+        async let nextPlans = plansForMonth(nextMonth, enrollmentId: enrollmentId)
 
         let prevMonthPlans = await previousPlans
         monthPlans = await selectedPlans
@@ -252,11 +262,209 @@ final class PlanScheduleViewModel {
         }
         return first.title
     }
+
+    private func resolveActiveEnrollmentId() async -> String? {
+        if let cached = await cacheStore.get(
+            cacheKeys.activeEnrollment,
+            as: ActiveEnrollmentProgressResponse.self,
+            namespace: userSub,
+        ) {
+            return cached.enrollmentId
+        }
+
+        guard networkMonitor.currentStatus, let athleteTrainingClient else {
+            return nil
+        }
+
+        let result = await athleteTrainingClient.activeEnrollmentProgress()
+        guard case let .success(progress) = result else {
+            return nil
+        }
+
+        await cacheStore.set(cacheKeys.activeEnrollment, value: progress, namespace: userSub, ttl: 60 * 5)
+        return progress.enrollmentId
+    }
+
+    private func plansForMonth(_ month: Date, enrollmentId: String?) async -> [TrainingDayPlan] {
+        let localPlans = await trainingStore.plans(userSub: userSub, month: month)
+        let cacheKey = cacheKeys.month(monthKey(for: month))
+        var resolved = localPlans
+
+        if let cached = await cacheStore.get(cacheKey, as: [TrainingDayPlan].self, namespace: userSub),
+           !cached.isEmpty
+        {
+            resolved = merge(local: localPlans, remote: cached)
+        }
+
+        guard networkMonitor.currentStatus, let athleteTrainingClient else {
+            return resolved
+        }
+
+        async let calendarResult = athleteTrainingClient.calendar(month: monthKey(for: month))
+        async let scheduleResult: Result<AthleteEnrollmentScheduleResponse, APIError> = {
+            guard let enrollmentId else { return .failure(.invalidURL) }
+            return await athleteTrainingClient.enrollmentSchedule(enrollmentId: enrollmentId)
+        }()
+
+        var remotePlans: [TrainingDayPlan] = []
+
+        if case let .success(calendarResponse) = await calendarResult {
+            remotePlans.append(contentsOf: mapWorkouts(calendarResponse.workouts, month: month))
+        }
+
+        if case let .success(scheduleResponse) = await scheduleResult {
+            remotePlans.append(contentsOf: mapWorkouts(scheduleResponse.workouts, month: month))
+        }
+
+        remotePlans = deduplicate(remotePlans)
+        if !remotePlans.isEmpty {
+            resolved = merge(local: localPlans, remote: remotePlans)
+            await cacheStore.set(cacheKey, value: resolved, namespace: userSub, ttl: 60 * 10)
+        }
+
+        return resolved.sorted { $0.day < $1.day }
+    }
+
+    private func mapWorkouts(_ workouts: [AthleteWorkoutInstance], month: Date) -> [TrainingDayPlan] {
+        guard let monthInterval = calendar.dateInterval(of: .month, for: month) else {
+            return []
+        }
+
+        return workouts.compactMap { workout in
+            guard let date = parseDate(workout.scheduledDate ?? workout.startedAt ?? workout.completedAt),
+                  monthInterval.contains(date)
+            else {
+                return nil
+            }
+
+            return TrainingDayPlan(
+                id: "remote-\(workout.id)",
+                userSub: userSub,
+                day: calendar.startOfDay(for: date),
+                status: mapStatus(workout.status),
+                programId: workout.programId?.trimmedNilIfEmpty,
+                workoutId: workout.id,
+                title: workout.title?.trimmedNilIfEmpty ?? "Тренировка",
+                source: mapSource(workout.source),
+            )
+        }
+    }
+
+    private func merge(local: [TrainingDayPlan], remote: [TrainingDayPlan]) -> [TrainingDayPlan] {
+        guard !remote.isEmpty else {
+            return local
+        }
+
+        var merged = remote
+        var existing = Set(remote.map(planSignature))
+
+        for item in local {
+            let key = planSignature(item)
+            guard !existing.contains(key) else { continue }
+            existing.insert(key)
+            merged.append(item)
+        }
+
+        return merged.sorted { $0.day < $1.day }
+    }
+
+    private func deduplicate(_ plans: [TrainingDayPlan]) -> [TrainingDayPlan] {
+        var deduped: [TrainingDayPlan] = []
+        var seen = Set<String>()
+        for plan in plans.sorted(by: { $0.day < $1.day }) {
+            let key = planSignature(plan)
+            guard !seen.contains(key) else { continue }
+            seen.insert(key)
+            deduped.append(plan)
+        }
+        return deduped
+    }
+
+    private func planSignature(_ plan: TrainingDayPlan) -> String {
+        let date = calendar.startOfDay(for: plan.day)
+        let workoutID = plan.workoutId ?? plan.id
+        return "\(date.timeIntervalSince1970)::\(workoutID)"
+    }
+
+    private func mapStatus(_ status: AthleteWorkoutInstanceStatus?) -> TrainingDayStatus {
+        switch status {
+        case .completed:
+            return .completed
+        case .missed:
+            return .missed
+        case .abandoned:
+            return .missed
+        case .planned, .inProgress, .none:
+            return .planned
+        }
+    }
+
+    private func mapSource(_ source: AthleteWorkoutSource) -> WorkoutSource {
+        switch source {
+        case .program:
+            return .program
+        case .custom:
+            return .freestyle
+        }
+    }
+
+    private func monthKey(for date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.calendar = calendar
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = calendar.timeZone
+        formatter.dateFormat = "yyyy-MM"
+        return formatter.string(from: date)
+    }
+
+    private func parseDate(_ value: String?) -> Date? {
+        guard let value, !value.isEmpty else {
+            return nil
+        }
+        if let withFractions = Self.iso8601WithFractions.date(from: value) {
+            return withFractions
+        }
+        if let dateTime = Self.iso8601.date(from: value) {
+            return dateTime
+        }
+        return Self.dateOnly.date(from: value)
+    }
+
+    private var cacheKeys: CacheKeys {
+        CacheKeys()
+    }
+
+    private static let iso8601WithFractions: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter
+    }()
+
+    private static let iso8601: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime]
+        return formatter
+    }()
+
+    private static let dateOnly: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(secondsFromGMT: 0)
+        formatter.dateFormat = "yyyy-MM-dd"
+        return formatter
+    }()
+
+    private struct CacheKeys {
+        let activeEnrollment = "athlete.enrollment.active"
+
+        func month(_ month: String) -> String {
+            "athlete.plan.month.\(month)"
+        }
+    }
 }
 
 struct PlanScheduleScreen: View {
     @State var viewModel: PlanScheduleViewModel
-    let onOpenCatalog: () -> Void
 
     var body: some View {
         ScrollView {
@@ -388,10 +596,8 @@ struct PlanScheduleScreen: View {
                 if items.isEmpty {
                     FFEmptyState(
                         title: "На этот день тренировок нет",
-                        message: "Добавьте программу из каталога или запустите тренировку во вкладке «Тренировка».",
+                        message: "Запустите тренировку во вкладке «Тренировка» или проверьте календарь позже.",
                     )
-
-                    FFButton(title: "Открыть каталог программ", variant: .secondary, action: onOpenCatalog)
                 } else {
                     ForEach(items) { item in
                         infoRowContainer {
@@ -559,8 +765,14 @@ struct PlanScheduleScreen: View {
     NavigationStack {
         PlanScheduleScreen(
             viewModel: PlanScheduleViewModel(userSub: "preview-athlete"),
-            onOpenCatalog: {},
         )
         .navigationTitle("План")
+    }
+}
+
+private extension String {
+    var trimmedNilIfEmpty: String? {
+        let trimmed = trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
     }
 }

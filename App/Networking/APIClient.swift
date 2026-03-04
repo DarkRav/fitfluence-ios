@@ -125,6 +125,70 @@ final class APIClient: APIClientProtocol, MeClientProtocol, AthleteProfileClient
         return await decode(request, as: PagedProgramResponse.self)
     }
 
+    func influencersSearch(request: InfluencersSearchRequest) async -> Result<PagedInfluencerPublicCardResponse, APIError> {
+        do {
+            let payload = try JSONEncoder().encode(request)
+            let apiRequest = APIRequest(path: "/v1/influencers/search", method: .post, body: payload)
+            return await decode(apiRequest, as: PagedInfluencerPublicCardResponse.self)
+        } catch {
+            return .failure(.unknown)
+        }
+    }
+
+    func getFollowingCreators(
+        page: Int,
+        size: Int = 20,
+        search: String?,
+    ) async -> Result<PagedInfluencerPublicCardResponse, APIError> {
+        var queryItems = [
+            URLQueryItem(name: "page", value: "\(max(0, page))"),
+            URLQueryItem(name: "size", value: "\(max(1, size))"),
+        ]
+        if let search = search?.trimmingCharacters(in: .whitespacesAndNewlines), !search.isEmpty {
+            queryItems.append(URLQueryItem(name: "search", value: search))
+        }
+        let request = APIRequest.get(path: "/v1/athlete/follows", queryItems: queryItems, requiresAuthorization: true)
+        return await decode(request, as: PagedInfluencerPublicCardResponse.self)
+    }
+
+    func followCreator(influencerId: UUID) async -> Result<Void, APIError> {
+        do {
+            let payload = try JSONEncoder().encode(FollowCreatorRequest(influencerId: influencerId.uuidString))
+            let request = APIRequest(path: "/v1/athlete/follows", method: .post, body: payload, requiresAuthorization: true)
+            return await performWithRetry(request, allowRetryAfterRefresh: true)
+        } catch {
+            return .failure(.unknown)
+        }
+    }
+
+    func unfollowCreator(influencerId: UUID) async -> Result<Void, APIError> {
+        let request = APIRequest(
+            path: "/v1/athlete/follows/\(influencerId.uuidString)",
+            method: .delete,
+            requiresAuthorization: true,
+        )
+        return await performWithRetry(request, allowRetryAfterRefresh: true)
+    }
+
+    func getCreatorPrograms(
+        influencerId: UUID,
+        page: Int,
+        size: Int = 20,
+    ) async -> Result<PagedProgramResponse, APIError> {
+        do {
+            let body = ProgramsSearchRequest(
+                filter: ProgramFilter(search: nil, influencerId: influencerId.uuidString, status: .published),
+                page: max(0, page),
+                size: max(1, size),
+            )
+            let payload = try JSONEncoder().encode(body)
+            let request = APIRequest(path: "/v1/programs/published/search", method: .post, body: payload)
+            return await decode(request, as: PagedProgramResponse.self)
+        } catch {
+            return .failure(.unknown)
+        }
+    }
+
     func getProgramDetails(programId: String) async -> Result<ProgramDetails, APIError> {
         let request = APIRequest.get(path: "/v1/programs/\(programId)", requiresAuthorization: true)
         return await decode(request, as: ProgramDetails.self)
@@ -165,6 +229,28 @@ final class APIClient: APIClientProtocol, MeClientProtocol, AthleteProfileClient
                 let refreshed = await authService.refresh()
                 if refreshed {
                     return await decodeWithRetry(request, allowRetryAfterRefresh: false)
+                }
+                await authService.logout()
+                return .failure(.unauthorized)
+            }
+            return .failure(apiError)
+        } catch {
+            return .failure(.unknown)
+        }
+    }
+
+    private func performWithRetry(
+        _ request: APIRequest,
+        allowRetryAfterRefresh: Bool,
+    ) async -> Result<Void, APIError> {
+        do {
+            _ = try await httpClient.send(request)
+            return .success(())
+        } catch let apiError as APIError {
+            if case .unauthorized = apiError, allowRetryAfterRefresh, let authService {
+                let refreshed = await authService.refresh()
+                if refreshed {
+                    return await performWithRetry(request, allowRetryAfterRefresh: false)
                 }
                 await authService.logout()
                 return .failure(.unauthorized)

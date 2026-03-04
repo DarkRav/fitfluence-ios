@@ -67,6 +67,11 @@
 		C32507921BC5A60036A562D7 /* TokenStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3B0C590AD2E0CF52FB2BE38B /* TokenStore.swift */; };
 		C3535BA80F21F23FCA8AE684 /* Spacing.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A3A5018D89BEF09A1424EEF /* Spacing.swift */; };
 		C60592699CEFB013D65622F0 /* UserFacingError+API.swift in Sources */ = {isa = PBXBuildFile; fileRef = 81D801B7204C5B75B701024C /* UserFacingError+API.swift */; };
+		A1B2C3D4E5F60718293A4B5C /* SyncOperation.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1C2D3E4F5061728394A5B6C /* SyncOperation.swift */; };
+		A1B2C3D4E5F60718293A4B5D /* SyncOutboxStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1C2D3E4F5061728394A5B6D /* SyncOutboxStore.swift */; };
+		A1B2C3D4E5F60718293A4B5E /* SyncWorker.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1C2D3E4F5061728394A5B6E /* SyncWorker.swift */; };
+		A1B2C3D4E5F60718293A4B5F /* SyncCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1C2D3E4F5061728394A5B6F /* SyncCoordinator.swift */; };
+		A1B2C3D4E5F60718293A4B60 /* SyncEngineTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1C2D3E4F5061728394A5B70 /* SyncEngineTests.swift */; };
 		CB6448969D574D903A200B23 /* AuthService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 88082B057D7E001AA79962A9 /* AuthService.swift */; };
 		CC8868B57E06833805945E7C /* ProgramMetadata+Formatting.swift in Sources */ = {isa = PBXBuildFile; fileRef = D9AE3E296D70AF09E7CC6A36 /* ProgramMetadata+Formatting.swift */; };
 		D0381F8271688F1DD55ECF64 /* FFButton.swift in Sources */ = {isa = PBXBuildFile; fileRef = A97D9C4C6794471BA7C75525 /* FFButton.swift */; };
@@ -150,6 +155,11 @@
 		B0CF331419F45FF9802465D8 /* ProgramsClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProgramsClient.swift; sourceTree = "<group>"; };
 		B202B94DE2C375FB67F019B3 /* FFTextField.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFTextField.swift; sourceTree = "<group>"; };
 		B61E587FD4EC525652715208 /* MeClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeClient.swift; sourceTree = "<group>"; };
+		B1C2D3E4F5061728394A5B6C /* SyncOperation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SyncOperation.swift; sourceTree = "<group>"; };
+		B1C2D3E4F5061728394A5B6D /* SyncOutboxStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SyncOutboxStore.swift; sourceTree = "<group>"; };
+		B1C2D3E4F5061728394A5B6E /* SyncWorker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SyncWorker.swift; sourceTree = "<group>"; };
+		B1C2D3E4F5061728394A5B6F /* SyncCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SyncCoordinator.swift; sourceTree = "<group>"; };
+		B1C2D3E4F5061728394A5B70 /* SyncEngineTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SyncEngineTests.swift; sourceTree = "<group>"; };
 		C7DAB8925BEFB1102F1A545C /* NetworkMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NetworkMonitor.swift; sourceTree = "<group>"; };
 		CAEB6BFF14C57697C73E6CD3 /* RootFeature.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootFeature.swift; sourceTree = "<group>"; };
 		D049FFBF6B3F8E522C058CAA /* APIError.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIError.swift; sourceTree = "<group>"; };
@@ -299,12 +309,13 @@
 				58F67AC41220B348AE247B79 /* Networking */,
 				4E24CED28C6227B31F799718 /* Onboarding */,
 				359050D49D5EAF580A063193 /* Plan */,
-				B80CE24B14A632EBC7B41B4E /* Profile */,
-				407836AD2D7FC169F347D0C9 /* ProgramDetails */,
-				D292F30B286489A7E8DBAFB9 /* Root */,
-				9CC863E3AD35E5A677BF01A7 /* Storage */,
-				8AAD2A15E46772C722633EDA /* Support */,
-				056462207202F86E6DDEBFAE /* Training */,
+					B80CE24B14A632EBC7B41B4E /* Profile */,
+					407836AD2D7FC169F347D0C9 /* ProgramDetails */,
+					D292F30B286489A7E8DBAFB9 /* Root */,
+					C1D2E3F405162738495A6B7C /* Sync */,
+					9CC863E3AD35E5A677BF01A7 /* Storage */,
+					8AAD2A15E46772C722633EDA /* Support */,
+					056462207202F86E6DDEBFAE /* Training */,
 				F6A8F7945D50D0CA6D48B213 /* Workouts */,
 			);
 			path = App;
@@ -330,6 +341,17 @@
 				81D801B7204C5B75B701024C /* UserFacingError+API.swift */,
 			);
 			path = Support;
+			sourceTree = "<group>";
+		};
+		C1D2E3F405162738495A6B7C /* Sync */ = {
+			isa = PBXGroup;
+			children = (
+				B1C2D3E4F5061728394A5B6F /* SyncCoordinator.swift */,
+				B1C2D3E4F5061728394A5B6C /* SyncOperation.swift */,
+				B1C2D3E4F5061728394A5B6D /* SyncOutboxStore.swift */,
+				B1C2D3E4F5061728394A5B6E /* SyncWorker.swift */,
+			);
+			path = Sync;
 			sourceTree = "<group>";
 		};
 		9CC863E3AD35E5A677BF01A7 /* Storage */ = {
@@ -398,11 +420,12 @@
 				FE69D7DA6EBA76E277ABD6C7 /* CatalogAndProgramDetailsFeatureTests.swift */,
 				94FD710E5EFA916159BCCE7D /* DesignSystemTests.swift */,
 				FD446047AAC8E76A26560F57 /* MeResponseDecodingTests.swift */,
-				E1984067FE9FCB6709C5D963 /* MockURLProtocol.swift */,
-				59F8273C6875008A5C9A3300 /* NetworkingTests.swift */,
-				329834B4D1A96F4EA44A775F /* OIDCAndTokenStoreTests.swift */,
-				5413D44EC8006C41BACCA576 /* TrainingStoreTests.swift */,
-				F4E83E16D03A9159D9FAC56A /* WorkoutsFeatureAndProgressStoreTests.swift */,
+					E1984067FE9FCB6709C5D963 /* MockURLProtocol.swift */,
+					59F8273C6875008A5C9A3300 /* NetworkingTests.swift */,
+					329834B4D1A96F4EA44A775F /* OIDCAndTokenStoreTests.swift */,
+					B1C2D3E4F5061728394A5B70 /* SyncEngineTests.swift */,
+					5413D44EC8006C41BACCA576 /* TrainingStoreTests.swift */,
+					F4E83E16D03A9159D9FAC56A /* WorkoutsFeatureAndProgressStoreTests.swift */,
 			);
 			path = Tests;
 			sourceTree = "<group>";
@@ -570,9 +593,13 @@
 				0CFE26D86AB1FDFEB7ADDBB6 /* QuickWorkoutBuilderView.swift in Sources */,
 				BE14E4CFB655557D8C529CDF /* RootFeature.swift in Sources */,
 				24A48678A501B841969AB1EC /* RootView.swift in Sources */,
-				B2EFCC6EFBC62E64F826EFDB /* SessionManager.swift in Sources */,
-				C3535BA80F21F23FCA8AE684 /* Spacing.swift in Sources */,
-				FE01694F22BC7CAF07E8763B /* StoredAuthTokenProvider.swift in Sources */,
+					B2EFCC6EFBC62E64F826EFDB /* SessionManager.swift in Sources */,
+					C3535BA80F21F23FCA8AE684 /* Spacing.swift in Sources */,
+					A1B2C3D4E5F60718293A4B5F /* SyncCoordinator.swift in Sources */,
+					A1B2C3D4E5F60718293A4B5C /* SyncOperation.swift in Sources */,
+					A1B2C3D4E5F60718293A4B5D /* SyncOutboxStore.swift in Sources */,
+					A1B2C3D4E5F60718293A4B5E /* SyncWorker.swift in Sources */,
+					FE01694F22BC7CAF07E8763B /* StoredAuthTokenProvider.swift in Sources */,
 				D34BBA531B3DE3454AA05356 /* TemplateLibraryView.swift in Sources */,
 				B68CFEB25BF04441A03234E5 /* Theme.swift in Sources */,
 				D69C1CB30BD7205B98ECCCC3 /* TokenSet.swift in Sources */,
@@ -598,11 +625,12 @@
 				F128A068B4197FBB8CFCD9B0 /* CatalogAndProgramDetailsFeatureTests.swift in Sources */,
 				F8D8480922CC1CB246C5C711 /* DesignSystemTests.swift in Sources */,
 				2CE8882383E07A4A2B57A3D6 /* MeResponseDecodingTests.swift in Sources */,
-				52FBBDB2F37E77D2C7143EBA /* MockURLProtocol.swift in Sources */,
-				BAE62E7712F38E9F49845685 /* NetworkingTests.swift in Sources */,
-				8D8127A6EF2465DFDE792FAD /* OIDCAndTokenStoreTests.swift in Sources */,
-				13A18B1EF9CA176E069703E6 /* TrainingStoreTests.swift in Sources */,
-				2F222A6AB61570B975628D77 /* WorkoutsFeatureAndProgressStoreTests.swift in Sources */,
+					52FBBDB2F37E77D2C7143EBA /* MockURLProtocol.swift in Sources */,
+					BAE62E7712F38E9F49845685 /* NetworkingTests.swift in Sources */,
+					8D8127A6EF2465DFDE792FAD /* OIDCAndTokenStoreTests.swift in Sources */,
+					A1B2C3D4E5F60718293A4B60 /* SyncEngineTests.swift in Sources */,
+					13A18B1EF9CA176E069703E6 /* TrainingStoreTests.swift in Sources */,
+					2F222A6AB61570B975628D77 /* WorkoutsFeatureAndProgressStoreTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

@@ -151,6 +151,12 @@ struct SessionSetState: Equatable, Sendable {
     var rpeText: String
 }
 
+struct SessionSetDefaults: Equatable, Sendable {
+    var repsText: String?
+    var weightText: String?
+    var rpeText: String?
+}
+
 struct SessionExerciseState: Equatable, Sendable {
     var exerciseId: String
     var sets: [SessionSetState]
@@ -338,6 +344,46 @@ actor WorkoutSessionManager {
             let previous = target.currentExerciseIndex
             recordUndo(for: target, action: .changeExerciseIndex(previous: previous))
             target.currentExerciseIndex = clamped
+        }
+    }
+
+    func applySetDefaults(
+        _ session: WorkoutSessionState,
+        exerciseId: String,
+        defaults: [SessionSetDefaults],
+        overwriteExisting: Bool = false,
+    ) async -> WorkoutSessionState {
+        await mutate(session, action: .changeExerciseIndex(previous: session.currentExerciseIndex)) { target in
+            guard let exerciseIndex = target.exercises.firstIndex(where: { $0.exerciseId == exerciseId }) else {
+                return
+            }
+
+            for (setIndex, defaultSet) in defaults.enumerated() {
+                guard target.exercises[exerciseIndex].sets.indices.contains(setIndex) else {
+                    continue
+                }
+
+                if let reps = defaultSet.repsText {
+                    let existing = target.exercises[exerciseIndex].sets[setIndex].repsText
+                    if overwriteExisting || existing.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        target.exercises[exerciseIndex].sets[setIndex].repsText = reps
+                    }
+                }
+
+                if let weight = defaultSet.weightText {
+                    let existing = target.exercises[exerciseIndex].sets[setIndex].weightText
+                    if overwriteExisting || existing.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        target.exercises[exerciseIndex].sets[setIndex].weightText = weight
+                    }
+                }
+
+                if let rpe = defaultSet.rpeText {
+                    let existing = target.exercises[exerciseIndex].sets[setIndex].rpeText
+                    if overwriteExisting || existing.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        target.exercises[exerciseIndex].sets[setIndex].rpeText = rpe
+                    }
+                }
+            }
         }
     }
 

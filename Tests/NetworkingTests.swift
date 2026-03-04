@@ -133,6 +133,52 @@ final class NetworkingTests: XCTestCase {
         }
     }
 
+    func testStatsSummaryDecodingSupportsWrappedPayloadAndLossyNumbers() throws {
+        let json = """
+        {
+          "data": {
+            "streakDays": "5",
+            "workouts7d": "3",
+            "totalWorkouts": "42",
+            "totalMinutes7d": "155",
+            "lastWorkoutAt": "2026-03-02T10:15:00Z"
+          }
+        }
+        """.data(using: .utf8)!
+
+        let decoded = try JSONDecoder().decode(AthleteStatsSummaryResponse.self, from: json)
+
+        XCTAssertEqual(decoded.streakDays, 5)
+        XCTAssertEqual(decoded.workouts7d, 3)
+        XCTAssertEqual(decoded.totalWorkouts, 42)
+        XCTAssertEqual(decoded.totalMinutes7d, 155)
+        XCTAssertEqual(decoded.lastWorkoutAt, "2026-03-02T10:15:00Z")
+    }
+
+    func testExerciseHistoryDecodingMapsAlternativeDateField() throws {
+        let json = """
+        {
+          "records": [
+            {
+              "id": "entry-1",
+              "workoutInstanceId": "workout-1",
+              "completedAt": "2026-03-01T08:30:00Z",
+              "weight": 80,
+              "reps": 5,
+              "volume": 400
+            }
+          ]
+        }
+        """.data(using: .utf8)!
+
+        let decoded = try JSONDecoder().decode(AthleteExerciseHistoryResponse.self, from: json)
+
+        XCTAssertEqual(decoded.entries.count, 1)
+        XCTAssertEqual(decoded.entries.first?.id, "entry-1")
+        XCTAssertEqual(decoded.entries.first?.performedAt, "2026-03-01T08:30:00Z")
+        XCTAssertEqual(decoded.entries.first?.volume, 400)
+    }
+
     private func makeHTTPClient() -> HTTPClient {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [MockURLProtocol.self]

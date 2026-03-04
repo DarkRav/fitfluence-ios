@@ -128,6 +128,9 @@ struct DataAndOfflineView: View {
             localStorageLabel: "1.20 МБ",
             versionLabel: "1.0",
             buildLabel: "42",
+            pendingSyncOperations: 3,
+            lastSyncAttemptLabel: "Сегодня, 10:42",
+            lastSyncError: "Offline",
         )
         return vm
     }()
@@ -163,6 +166,9 @@ struct DataAndOfflineView: View {
             localStorageLabel: "0.40 МБ",
             versionLabel: "1.0",
             buildLabel: "42",
+            pendingSyncOperations: 0,
+            lastSyncAttemptLabel: "Сегодня, 09:05",
+            lastSyncError: nil,
         )
         return vm
     }()

@@ -543,10 +543,14 @@ final class CatalogViewModel {
 
     nonisolated static func parseISODate(_ value: String?) -> Date? {
         guard let value, !value.isEmpty else { return nil }
-        if let date = iso8601WithFractions.date(from: value) {
+        let withFractions = ISO8601DateFormatter()
+        withFractions.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let date = withFractions.date(from: value) {
             return date
         }
-        return iso8601.date(from: value)
+        let plain = ISO8601DateFormatter()
+        plain.formatOptions = [.withInternetDateTime]
+        return plain.date(from: value)
     }
 
     nonisolated static func localizedLevel(_ value: String?) -> String {
@@ -563,17 +567,1481 @@ final class CatalogViewModel {
         }
     }
 
-    private nonisolated static let iso8601WithFractions: ISO8601DateFormatter = {
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        return formatter
-    }()
+}
 
-    private nonisolated static let iso8601: ISO8601DateFormatter = {
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime]
-        return formatter
-    }()
+enum CatalogHubSegment: String, CaseIterable, Identifiable {
+    case programs
+    case creators
+    case following
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .programs:
+            "Programs"
+        case .creators:
+            "Creators"
+        case .following:
+            "Following"
+        }
+    }
+}
+
+enum FollowButtonState: Equatable {
+    case follow
+    case following
+    case loading
+}
+
+enum FollowMutationAction {
+    case follow
+    case unfollow
+}
+
+enum FollowStateMachine {
+    static func apply(_ action: FollowMutationAction, to creator: InfluencerPublicCard) -> InfluencerPublicCard {
+        switch action {
+        case .follow:
+            return InfluencerPublicCard(
+                id: creator.id,
+                displayName: creator.displayName,
+                bio: creator.bio,
+                avatar: creator.avatar,
+                socialLinks: creator.socialLinks,
+                followersCount: creator.followersCount + (creator.isFollowedByMe ? 0 : 1),
+                programsCount: creator.programsCount,
+                isFollowedByMe: true,
+            )
+        case .unfollow:
+            return InfluencerPublicCard(
+                id: creator.id,
+                displayName: creator.displayName,
+                bio: creator.bio,
+                avatar: creator.avatar,
+                socialLinks: creator.socialLinks,
+                followersCount: max(0, creator.followersCount - (creator.isFollowedByMe ? 1 : 0)),
+                programsCount: creator.programsCount,
+                isFollowedByMe: false,
+            )
+        }
+    }
+}
+
+private struct CachedCreatorsPage: Codable, Equatable {
+    let content: [InfluencerPublicCard]
+    let metadata: PageMetadata
+}
+
+private struct CachedCreatorProgramsPage: Codable, Equatable {
+    let content: [ProgramListItem]
+    let metadata: PageMetadata
+}
+
+@Observable
+@MainActor
+final class CreatorsDiscoveryViewModel {
+    private let userSub: String
+    private let programsClient: ProgramsClientProtocol?
+    private let cacheStore: CacheStore
+    private let networkMonitor: NetworkMonitoring
+    private let onUnauthorized: (() -> Void)?
+
+    private var searchTask: Task<Void, Never>?
+    private var followLoadingIDs: Set<UUID> = []
+
+    private let cacheTTL: TimeInterval = 60 * 60 * 24
+
+    var query = ""
+    var creators: [InfluencerPublicCard] = []
+    var isLoading = false
+    var isRefreshing = false
+    var isShowingCachedData = false
+    var error: UserFacingError?
+    var infoMessage: String?
+    var currentPage = 0
+    var totalPages = 0
+
+    init(
+        userSub: String,
+        programsClient: ProgramsClientProtocol?,
+        cacheStore: CacheStore = CompositeCacheStore(),
+        networkMonitor: NetworkMonitoring = StaticNetworkMonitor(currentStatus: true),
+        onUnauthorized: (() -> Void)? = nil,
+    ) {
+        self.userSub = userSub
+        self.programsClient = programsClient
+        self.cacheStore = cacheStore
+        self.networkMonitor = networkMonitor
+        self.onUnauthorized = onUnauthorized
+    }
+
+    var canFollowActions: Bool {
+        networkMonitor.currentStatus && isAuthenticated
+    }
+
+    func onAppear() async {
+        guard creators.isEmpty else { return }
+        isLoading = true
+        await loadPage(page: 0, append: false)
+    }
+
+    func refresh() async {
+        isRefreshing = true
+        error = nil
+        infoMessage = nil
+        await loadPage(page: 0, append: false)
+        isRefreshing = false
+    }
+
+    func retry() async {
+        isLoading = true
+        error = nil
+        infoMessage = nil
+        await loadPage(page: 0, append: false)
+    }
+
+    func searchQueryChanged(_ value: String) {
+        query = value
+        error = nil
+        infoMessage = nil
+
+        searchTask?.cancel()
+        searchTask = Task { [weak self] in
+            guard let self else { return }
+            try? await Task.sleep(for: .milliseconds(450))
+            guard !Task.isCancelled else { return }
+            await self.searchSubmit()
+        }
+    }
+
+    func searchSubmit() async {
+        isLoading = true
+        await loadPage(page: 0, append: false)
+    }
+
+    func loadNextPageIfNeeded(lastID: UUID?) async {
+        guard !isLoading else { return }
+        guard let lastID, lastID == creators.last?.id else { return }
+        let nextPage = currentPage + 1
+        guard nextPage < totalPages else { return }
+
+        isLoading = true
+        await loadPage(page: nextPage, append: true)
+    }
+
+    func isFollowLoading(_ creatorID: UUID) -> Bool {
+        followLoadingIDs.contains(creatorID)
+    }
+
+    func toggleFollow(influencerId: UUID) async -> InfluencerPublicCard? {
+        guard let index = creators.firstIndex(where: { $0.id == influencerId }) else {
+            return nil
+        }
+        guard !followLoadingIDs.contains(influencerId) else {
+            return creators[index]
+        }
+        guard canFollowActions else {
+            infoMessage = !isAuthenticated
+                ? "Войдите, чтобы подписываться на авторов."
+                : "Нет сети. Follow недоступен в оффлайн-режиме."
+            return creators[index]
+        }
+
+        let before = creators[index]
+        let action: FollowMutationAction = before.isFollowedByMe ? .unfollow : .follow
+        creators[index] = FollowStateMachine.apply(action, to: before)
+        followLoadingIDs.insert(influencerId)
+        error = nil
+        infoMessage = nil
+
+        let result: Result<Void, APIError> = if let programsClient {
+            switch action {
+            case .follow:
+                await programsClient.followCreator(influencerId: influencerId)
+            case .unfollow:
+                await programsClient.unfollowCreator(influencerId: influencerId)
+            }
+        } else {
+            .failure(.invalidURL)
+        }
+
+        followLoadingIDs.remove(influencerId)
+
+        switch result {
+        case .success:
+            let updated = creators.first(where: { $0.id == influencerId }) ?? before
+            if updated.isFollowedByMe {
+                ClientAnalytics.track(.creatorFollowed, properties: ["creator_id": influencerId.uuidString])
+            } else {
+                ClientAnalytics.track(.creatorUnfollowed, properties: ["creator_id": influencerId.uuidString])
+            }
+            return updated
+
+        case let .failure(apiError):
+            if let rollbackIndex = creators.firstIndex(where: { $0.id == influencerId }) {
+                creators[rollbackIndex] = before
+            }
+
+            if apiError == .unauthorized {
+                onUnauthorized?()
+            } else if isCreatorFollowForbidden(apiError) {
+                infoMessage = "Создайте профиль атлета, чтобы подписываться."
+            } else {
+                error = apiError.userFacing(context: .catalog)
+            }
+            return creators.first(where: { $0.id == influencerId }) ?? before
+        }
+    }
+
+    func applyExternalCreatorUpdate(_ creator: InfluencerPublicCard) {
+        guard let index = creators.firstIndex(where: { $0.id == creator.id }) else {
+            return
+        }
+        creators[index] = creator
+    }
+
+    private func loadPage(page: Int, append: Bool) async {
+        defer { isLoading = false }
+
+        let key = cacheKey(query: query, page: page)
+        if let cached = await cacheStore.get(key, as: CachedCreatorsPage.self, namespace: userSub) {
+            if append {
+                creators = merge(existing: creators, incoming: cached.content)
+            } else {
+                creators = cached.content
+            }
+            currentPage = cached.metadata.page
+            totalPages = cached.metadata.totalPages
+            isShowingCachedData = true
+        }
+
+        let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        let request = InfluencersSearchRequest(
+            filter: InfluencerSearchFilter(search: trimmedQuery.isEmpty ? nil : trimmedQuery),
+            page: page,
+            size: 20,
+        )
+
+        let result: Result<PagedInfluencerPublicCardResponse, APIError> = if let programsClient {
+            await programsClient.influencersSearch(request: request)
+        } else {
+            .failure(.invalidURL)
+        }
+
+        switch result {
+        case let .success(response):
+            if append {
+                creators = merge(existing: creators, incoming: response.content)
+            } else {
+                creators = response.content
+            }
+            currentPage = response.metadata.page
+            totalPages = response.metadata.totalPages
+            error = nil
+            infoMessage = nil
+            isShowingCachedData = false
+            await cacheStore.set(
+                key,
+                value: CachedCreatorsPage(content: response.content, metadata: response.metadata),
+                namespace: userSub,
+                ttl: cacheTTL,
+            )
+
+        case let .failure(apiError):
+            if apiError == .unauthorized {
+                onUnauthorized?()
+                return
+            }
+            if apiError == .offline || !networkMonitor.currentStatus {
+                if creators.isEmpty {
+                    error = UserFacingError(
+                        kind: .offline,
+                        title: "Creators недоступны оффлайн",
+                        message: "Нет кэша для этого запроса. Нажмите Try again после восстановления сети.",
+                    )
+                } else {
+                    error = nil
+                    isShowingCachedData = true
+                }
+                return
+            }
+            error = apiError.userFacing(context: .catalog)
+            if !append {
+                creators = []
+            }
+        }
+    }
+
+    private func merge(existing: [InfluencerPublicCard], incoming: [InfluencerPublicCard]) -> [InfluencerPublicCard] {
+        var result = existing
+        var existingIDs = Set(existing.map(\.id))
+
+        for card in incoming where !existingIDs.contains(card.id) {
+            result.append(card)
+            existingIDs.insert(card.id)
+        }
+
+        return result
+    }
+
+    private func cacheKey(query: String, page: Int) -> String {
+        let normalized = query.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+        return "creators.search.q=\(normalized)&page=\(page)"
+    }
+
+    private var isAuthenticated: Bool {
+        let normalized = userSub.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return !normalized.isEmpty && normalized != "anonymous"
+    }
+}
+
+@Observable
+@MainActor
+final class FollowingCreatorsViewModel {
+    private let userSub: String
+    private let programsClient: ProgramsClientProtocol?
+    private let cacheStore: CacheStore
+    private let networkMonitor: NetworkMonitoring
+    private let onUnauthorized: (() -> Void)?
+
+    private var searchTask: Task<Void, Never>?
+    private var followLoadingIDs: Set<UUID> = []
+
+    private let cacheTTL: TimeInterval = 60 * 60 * 24
+
+    var query = ""
+    var creators: [InfluencerPublicCard] = []
+    var isLoading = false
+    var isRefreshing = false
+    var isShowingCachedData = false
+    var error: UserFacingError?
+    var infoMessage: String?
+    var currentPage = 0
+    var totalPages = 0
+
+    init(
+        userSub: String,
+        programsClient: ProgramsClientProtocol?,
+        cacheStore: CacheStore = CompositeCacheStore(),
+        networkMonitor: NetworkMonitoring = StaticNetworkMonitor(currentStatus: true),
+        onUnauthorized: (() -> Void)? = nil,
+    ) {
+        self.userSub = userSub
+        self.programsClient = programsClient
+        self.cacheStore = cacheStore
+        self.networkMonitor = networkMonitor
+        self.onUnauthorized = onUnauthorized
+    }
+
+    var canFollowActions: Bool {
+        networkMonitor.currentStatus && isAuthenticated
+    }
+
+    func onAppear() async {
+        guard creators.isEmpty else { return }
+        isLoading = true
+        await loadPage(page: 0, append: false)
+    }
+
+    func refresh() async {
+        isRefreshing = true
+        error = nil
+        infoMessage = nil
+        await loadPage(page: 0, append: false)
+        isRefreshing = false
+    }
+
+    func retry() async {
+        isLoading = true
+        error = nil
+        infoMessage = nil
+        await loadPage(page: 0, append: false)
+    }
+
+    func searchQueryChanged(_ value: String) {
+        query = value
+        error = nil
+        infoMessage = nil
+
+        searchTask?.cancel()
+        searchTask = Task { [weak self] in
+            guard let self else { return }
+            try? await Task.sleep(for: .milliseconds(450))
+            guard !Task.isCancelled else { return }
+            await self.searchSubmit()
+        }
+    }
+
+    func searchSubmit() async {
+        isLoading = true
+        await loadPage(page: 0, append: false)
+    }
+
+    func loadNextPageIfNeeded(lastID: UUID?) async {
+        guard !isLoading else { return }
+        guard let lastID, lastID == creators.last?.id else { return }
+        let nextPage = currentPage + 1
+        guard nextPage < totalPages else { return }
+
+        isLoading = true
+        await loadPage(page: nextPage, append: true)
+    }
+
+    func isFollowLoading(_ creatorID: UUID) -> Bool {
+        followLoadingIDs.contains(creatorID)
+    }
+
+    func toggleFollow(influencerId: UUID) async -> InfluencerPublicCard? {
+        guard let index = creators.firstIndex(where: { $0.id == influencerId }) else {
+            return nil
+        }
+        guard !followLoadingIDs.contains(influencerId) else {
+            return creators[index]
+        }
+        guard canFollowActions else {
+            infoMessage = !isAuthenticated
+                ? "Войдите, чтобы подписываться на авторов."
+                : "Нет сети. Follow недоступен в оффлайн-режиме."
+            return creators[index]
+        }
+
+        let before = creators[index]
+        let action: FollowMutationAction = before.isFollowedByMe ? .unfollow : .follow
+        creators[index] = FollowStateMachine.apply(action, to: before)
+        followLoadingIDs.insert(influencerId)
+        error = nil
+        infoMessage = nil
+
+        let result: Result<Void, APIError> = if let programsClient {
+            switch action {
+            case .follow:
+                await programsClient.followCreator(influencerId: influencerId)
+            case .unfollow:
+                await programsClient.unfollowCreator(influencerId: influencerId)
+            }
+        } else {
+            .failure(.invalidURL)
+        }
+
+        followLoadingIDs.remove(influencerId)
+
+        switch result {
+        case .success:
+            if action == .unfollow {
+                creators.removeAll(where: { $0.id == influencerId })
+                ClientAnalytics.track(.creatorUnfollowed, properties: ["creator_id": influencerId.uuidString])
+                return nil
+            }
+            let updated = creators.first(where: { $0.id == influencerId }) ?? before
+            ClientAnalytics.track(.creatorFollowed, properties: ["creator_id": influencerId.uuidString])
+            return updated
+
+        case let .failure(apiError):
+            if let rollbackIndex = creators.firstIndex(where: { $0.id == influencerId }) {
+                creators[rollbackIndex] = before
+            }
+
+            if apiError == .unauthorized {
+                onUnauthorized?()
+            } else if isCreatorFollowForbidden(apiError) {
+                infoMessage = "Создайте профиль атлета, чтобы подписываться."
+            } else {
+                error = apiError.userFacing(context: .catalog)
+            }
+            return creators.first(where: { $0.id == influencerId }) ?? before
+        }
+    }
+
+    func applyExternalCreatorUpdate(_ creator: InfluencerPublicCard) {
+        if let index = creators.firstIndex(where: { $0.id == creator.id }) {
+            if creator.isFollowedByMe {
+                creators[index] = creator
+            } else {
+                creators.remove(at: index)
+            }
+            return
+        }
+
+        guard creator.isFollowedByMe else {
+            return
+        }
+        guard query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            || creator.displayName.lowercased().contains(query.lowercased())
+        else {
+            return
+        }
+        creators.insert(creator, at: 0)
+    }
+
+    private func loadPage(page: Int, append: Bool) async {
+        defer { isLoading = false }
+
+        let key = cacheKey(query: query, page: page)
+        if let cached = await cacheStore.get(key, as: CachedCreatorsPage.self, namespace: userSub) {
+            if append {
+                creators = merge(existing: creators, incoming: cached.content)
+            } else {
+                creators = cached.content
+            }
+            currentPage = cached.metadata.page
+            totalPages = cached.metadata.totalPages
+            isShowingCachedData = true
+        }
+
+        let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        let result: Result<PagedInfluencerPublicCardResponse, APIError> = if let programsClient {
+            await programsClient.getFollowingCreators(page: page, size: 20, search: trimmedQuery.isEmpty ? nil : trimmedQuery)
+        } else {
+            .failure(.invalidURL)
+        }
+
+        switch result {
+        case let .success(response):
+            let onlyFollowing = response.content.filter(\.isFollowedByMe)
+            if append {
+                creators = merge(existing: creators, incoming: onlyFollowing)
+            } else {
+                creators = onlyFollowing
+            }
+            currentPage = response.metadata.page
+            totalPages = response.metadata.totalPages
+            error = nil
+            infoMessage = nil
+            isShowingCachedData = false
+            await cacheStore.set(
+                key,
+                value: CachedCreatorsPage(content: onlyFollowing, metadata: response.metadata),
+                namespace: userSub,
+                ttl: cacheTTL,
+            )
+
+        case let .failure(apiError):
+            if apiError == .unauthorized {
+                onUnauthorized?()
+                return
+            }
+            if apiError == .offline || !networkMonitor.currentStatus {
+                if creators.isEmpty {
+                    error = UserFacingError(
+                        kind: .offline,
+                        title: "Following недоступен оффлайн",
+                        message: "Нет кэша для списка подписок. Нажмите Try again после восстановления сети.",
+                    )
+                } else {
+                    error = nil
+                    isShowingCachedData = true
+                }
+                return
+            }
+            error = apiError.userFacing(context: .catalog)
+            if !append {
+                creators = []
+            }
+        }
+    }
+
+    private func merge(existing: [InfluencerPublicCard], incoming: [InfluencerPublicCard]) -> [InfluencerPublicCard] {
+        var result = existing
+        var existingIDs = Set(existing.map(\.id))
+
+        for card in incoming where !existingIDs.contains(card.id) {
+            result.append(card)
+            existingIDs.insert(card.id)
+        }
+
+        return result
+    }
+
+    private func cacheKey(query: String, page: Int) -> String {
+        let normalized = query.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+        return "creators.following.q=\(normalized)&page=\(page)"
+    }
+
+    private var isAuthenticated: Bool {
+        let normalized = userSub.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return !normalized.isEmpty && normalized != "anonymous"
+    }
+}
+
+@Observable
+@MainActor
+final class CreatorProfileViewModel {
+    let userSub: String
+    let creatorID: UUID
+
+    private let programsClient: ProgramsClientProtocol?
+    private let cacheStore: CacheStore
+    private let networkMonitor: NetworkMonitoring
+    private let onUnauthorized: (() -> Void)?
+
+    private let cacheTTL: TimeInterval = 60 * 60 * 24
+    private var followLoading = false
+    private var didTrackViewedEvent = false
+
+    var creator: InfluencerPublicCard
+    var programs: [ProgramListItem] = []
+    var isLoadingPrograms = false
+    var isShowingCachedData = false
+    var error: UserFacingError?
+    var infoMessage: String?
+    var currentPage = 0
+    var totalPages = 0
+
+    init(
+        userSub: String,
+        creator: InfluencerPublicCard,
+        programsClient: ProgramsClientProtocol?,
+        cacheStore: CacheStore = CompositeCacheStore(),
+        networkMonitor: NetworkMonitoring = StaticNetworkMonitor(currentStatus: true),
+        onUnauthorized: (() -> Void)? = nil,
+    ) {
+        self.userSub = userSub
+        creatorID = creator.id
+        self.creator = creator
+        self.programsClient = programsClient
+        self.cacheStore = cacheStore
+        self.networkMonitor = networkMonitor
+        self.onUnauthorized = onUnauthorized
+    }
+
+    var isFollowLoading: Bool {
+        followLoading
+    }
+
+    var canFollowActions: Bool {
+        networkMonitor.currentStatus && isAuthenticated
+    }
+
+    func onAppear() async {
+        if !didTrackViewedEvent {
+            didTrackViewedEvent = true
+            ClientAnalytics.track(.creatorViewed, properties: ["creator_id": creatorID.uuidString])
+        }
+
+        guard programs.isEmpty else { return }
+        isLoadingPrograms = true
+        await loadProgramsPage(page: 0, append: false)
+    }
+
+    func refresh() async {
+        isLoadingPrograms = true
+        await loadProgramsPage(page: 0, append: false)
+    }
+
+    func loadNextPageIfNeeded(lastID: String?) async {
+        guard !isLoadingPrograms else { return }
+        guard let lastID, lastID == programs.last?.id else { return }
+        let nextPage = currentPage + 1
+        guard nextPage < totalPages else { return }
+
+        isLoadingPrograms = true
+        await loadProgramsPage(page: nextPage, append: true)
+    }
+
+    func toggleFollow() async -> InfluencerPublicCard {
+        guard !followLoading else {
+            return creator
+        }
+        guard canFollowActions else {
+            infoMessage = !isAuthenticated
+                ? "Войдите, чтобы подписываться на авторов."
+                : "Нет сети. Follow недоступен в оффлайн-режиме."
+            return creator
+        }
+
+        let before = creator
+        let action: FollowMutationAction = before.isFollowedByMe ? .unfollow : .follow
+        creator = FollowStateMachine.apply(action, to: before)
+        followLoading = true
+        error = nil
+        infoMessage = nil
+
+        let result: Result<Void, APIError> = if let programsClient {
+            switch action {
+            case .follow:
+                await programsClient.followCreator(influencerId: creatorID)
+            case .unfollow:
+                await programsClient.unfollowCreator(influencerId: creatorID)
+            }
+        } else {
+            .failure(.invalidURL)
+        }
+
+        followLoading = false
+
+        switch result {
+        case .success:
+            if creator.isFollowedByMe {
+                ClientAnalytics.track(.creatorFollowed, properties: ["creator_id": creatorID.uuidString])
+            } else {
+                ClientAnalytics.track(.creatorUnfollowed, properties: ["creator_id": creatorID.uuidString])
+            }
+            return creator
+
+        case let .failure(apiError):
+            creator = before
+            if apiError == .unauthorized {
+                onUnauthorized?()
+            } else if isCreatorFollowForbidden(apiError) {
+                infoMessage = "Создайте профиль атлета, чтобы подписываться."
+            } else {
+                error = apiError.userFacing(context: .catalog)
+            }
+            return creator
+        }
+    }
+
+    func trackProgramOpened(programID: String) {
+        ClientAnalytics.track(
+            .creatorProgramOpened,
+            properties: [
+                "creator_id": creatorID.uuidString,
+                "program_id": programID,
+            ],
+        )
+    }
+
+    private func loadProgramsPage(page: Int, append: Bool) async {
+        defer { isLoadingPrograms = false }
+
+        let key = cacheKey(page: page)
+        if let cached = await cacheStore.get(key, as: CachedCreatorProgramsPage.self, namespace: userSub) {
+            if append {
+                programs = merge(existing: programs, incoming: cached.content)
+            } else {
+                programs = cached.content
+            }
+            currentPage = cached.metadata.page
+            totalPages = cached.metadata.totalPages
+            isShowingCachedData = true
+        }
+
+        let result: Result<PagedProgramResponse, APIError> = if let programsClient {
+            await programsClient.getCreatorPrograms(influencerId: creatorID, page: page, size: 20)
+        } else {
+            .failure(.invalidURL)
+        }
+
+        switch result {
+        case let .success(response):
+            if append {
+                programs = merge(existing: programs, incoming: response.content)
+            } else {
+                programs = response.content
+            }
+            currentPage = response.metadata.page
+            totalPages = response.metadata.totalPages
+            error = nil
+            infoMessage = nil
+            isShowingCachedData = false
+            await cacheStore.set(
+                key,
+                value: CachedCreatorProgramsPage(content: response.content, metadata: response.metadata),
+                namespace: userSub,
+                ttl: cacheTTL,
+            )
+
+        case let .failure(apiError):
+            if apiError == .unauthorized {
+                onUnauthorized?()
+                return
+            }
+            if apiError == .offline || !networkMonitor.currentStatus {
+                if programs.isEmpty {
+                    error = UserFacingError(
+                        kind: .offline,
+                        title: "Programs недоступны оффлайн",
+                        message: "Нет кэша программ этого автора. Нажмите Try again после восстановления сети.",
+                    )
+                } else {
+                    error = nil
+                    isShowingCachedData = true
+                }
+                return
+            }
+            error = apiError.userFacing(context: .catalog)
+            if !append {
+                programs = []
+            }
+        }
+    }
+
+    private func merge(existing: [ProgramListItem], incoming: [ProgramListItem]) -> [ProgramListItem] {
+        var result = existing
+        var existingIDs = Set(existing.map(\.id))
+
+        for card in incoming where !existingIDs.contains(card.id) {
+            result.append(card)
+            existingIDs.insert(card.id)
+        }
+
+        return result
+    }
+
+    private func cacheKey(page: Int) -> String {
+        "creators.programs.id=\(creatorID.uuidString)&page=\(page)"
+    }
+
+    private var isAuthenticated: Bool {
+        let normalized = userSub.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return !normalized.isEmpty && normalized != "anonymous"
+    }
+}
+
+struct CatalogHubScreen: View {
+    @State var programsViewModel: CatalogViewModel
+    @State var creatorsViewModel: CreatorsDiscoveryViewModel
+    @State var followingViewModel: FollowingCreatorsViewModel
+
+    let userSub: String
+    let environment: AppEnvironment
+    let onProgramTap: (String) -> Void
+    let onUnauthorized: (() -> Void)?
+
+    @State private var selectedSegment: CatalogHubSegment
+    @State private var selectedCreator: InfluencerPublicCard?
+
+    init(
+        programsViewModel: CatalogViewModel,
+        creatorsViewModel: CreatorsDiscoveryViewModel,
+        followingViewModel: FollowingCreatorsViewModel,
+        userSub: String,
+        environment: AppEnvironment,
+        onProgramTap: @escaping (String) -> Void,
+        onUnauthorized: (() -> Void)? = nil,
+    ) {
+        _programsViewModel = State(initialValue: programsViewModel)
+        _creatorsViewModel = State(initialValue: creatorsViewModel)
+        _followingViewModel = State(initialValue: followingViewModel)
+        self.userSub = userSub
+        self.environment = environment
+        self.onProgramTap = onProgramTap
+        self.onUnauthorized = onUnauthorized
+
+        let persisted = UserDefaults.standard.string(forKey: Self.segmentStorageKey(for: userSub))
+        _selectedSegment = State(initialValue: CatalogHubSegment(rawValue: persisted ?? "") ?? .programs)
+    }
+
+    var body: some View {
+        VStack(spacing: FFSpacing.sm) {
+            Picker("Catalog Segment", selection: $selectedSegment) {
+                ForEach(CatalogHubSegment.allCases) { segment in
+                    Text(segment.title).tag(segment)
+                }
+            }
+            .pickerStyle(.segmented)
+            .padding(.horizontal, FFSpacing.md)
+            .padding(.top, FFSpacing.md)
+            .onChange(of: selectedSegment) { _, newValue in
+                UserDefaults.standard.set(newValue.rawValue, forKey: Self.segmentStorageKey(for: userSub))
+            }
+
+            switch selectedSegment {
+            case .programs:
+                CatalogScreen(
+                    viewModel: programsViewModel,
+                    environment: environment,
+                    onProgramTap: onProgramTap,
+                )
+            case .creators:
+                CreatorsDiscoveryView(
+                    viewModel: creatorsViewModel,
+                    environment: environment,
+                    onOpenCreatorProfile: { creator in
+                        selectedCreator = creator
+                    },
+                    onCreatorUpdated: { creator in
+                        applyCreatorUpdate(creator)
+                    },
+                )
+            case .following:
+                FollowingCreatorsView(
+                    viewModel: followingViewModel,
+                    environment: environment,
+                    onOpenCreatorProfile: { creator in
+                        selectedCreator = creator
+                    },
+                    onCreatorUpdated: { creator in
+                        applyCreatorUpdate(creator)
+                    },
+                )
+            }
+        }
+        .background(FFColors.background)
+        .navigationDestination(item: $selectedCreator) { creator in
+            CreatorProfileView(
+                viewModel: CreatorProfileViewModel(
+                    userSub: userSub,
+                    creator: creator,
+                    programsClient: programsViewModel.programsClientForCreatorFlows,
+                    onUnauthorized: onUnauthorized,
+                ),
+                environment: environment,
+                onProgramTap: { programID in
+                    onProgramTap(programID)
+                },
+                onCreatorUpdated: { updated in
+                    applyCreatorUpdate(updated)
+                },
+            )
+            .navigationTitle("Creator")
+        }
+    }
+
+    private func applyCreatorUpdate(_ creator: InfluencerPublicCard) {
+        creatorsViewModel.applyExternalCreatorUpdate(creator)
+        followingViewModel.applyExternalCreatorUpdate(creator)
+        if selectedCreator?.id == creator.id {
+            selectedCreator = creator
+        }
+    }
+
+    private static func segmentStorageKey(for userSub: String) -> String {
+        "catalog.segment.last.\(userSub)"
+    }
+}
+
+struct CreatorsDiscoveryView: View {
+    @State var viewModel: CreatorsDiscoveryViewModel
+    let environment: AppEnvironment
+    let onOpenCreatorProfile: (InfluencerPublicCard) -> Void
+    let onCreatorUpdated: (InfluencerPublicCard) -> Void
+
+    var body: some View {
+        ScrollView {
+            VStack(spacing: FFSpacing.md) {
+                if viewModel.isShowingCachedData {
+                    cachedDataBadge
+                }
+
+                FFTextField(
+                    label: "Search creators",
+                    placeholder: "Имя автора",
+                    text: Binding(
+                        get: { viewModel.query },
+                        set: { viewModel.searchQueryChanged($0) },
+                    ),
+                    helperText: "Поиск запускается автоматически",
+                )
+
+                if let infoMessage = viewModel.infoMessage {
+                    FFCard {
+                        Text(infoMessage)
+                            .font(FFTypography.caption)
+                            .foregroundStyle(FFColors.textSecondary)
+                    }
+                }
+
+                if viewModel.isLoading, viewModel.creators.isEmpty {
+                    FFLoadingState(title: "Загружаем авторов")
+                } else if let error = viewModel.error, viewModel.creators.isEmpty {
+                    FFErrorState(
+                        title: error.title,
+                        message: error.message,
+                        retryTitle: "Try again",
+                        onRetry: { Task { await viewModel.retry() } },
+                    )
+                } else if viewModel.creators.isEmpty {
+                    FFEmptyState(
+                        title: "Авторы не найдены",
+                        message: "Попробуйте изменить запрос или нажмите Try again позже.",
+                    )
+                } else {
+                    if viewModel.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        FFCard {
+                            Text("Featured / Recommended")
+                                .font(FFTypography.caption.weight(.semibold))
+                                .foregroundStyle(FFColors.textSecondary)
+                        }
+                    }
+
+                    LazyVStack(spacing: FFSpacing.sm) {
+                        ForEach(viewModel.creators) { creator in
+                            CreatorCardView(
+                                creator: creator,
+                                environment: environment,
+                                followButtonState: viewModel.isFollowLoading(creator.id) ? .loading : (creator.isFollowedByMe ? .following : .follow),
+                                isFollowEnabled: viewModel.canFollowActions,
+                                onTap: {
+                                    onOpenCreatorProfile(creator)
+                                },
+                                onFollowTap: {
+                                    Task {
+                                        if let updated = await viewModel.toggleFollow(influencerId: creator.id) {
+                                            onCreatorUpdated(updated)
+                                        }
+                                    }
+                                },
+                            )
+                            .onAppear {
+                                Task {
+                                    await viewModel.loadNextPageIfNeeded(lastID: creator.id)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            .padding(.horizontal, FFSpacing.md)
+            .padding(.bottom, FFSpacing.lg)
+        }
+        .background(FFColors.background)
+        .refreshable {
+            await viewModel.refresh()
+        }
+        .task {
+            await viewModel.onAppear()
+        }
+    }
+
+    private var cachedDataBadge: some View {
+        FFCard {
+            Text("Оффлайн. Показаны сохранённые данные creators.")
+                .font(FFTypography.caption.weight(.semibold))
+                .foregroundStyle(FFColors.primary)
+        }
+    }
+}
+
+struct FollowingCreatorsView: View {
+    @State var viewModel: FollowingCreatorsViewModel
+    let environment: AppEnvironment
+    let onOpenCreatorProfile: (InfluencerPublicCard) -> Void
+    let onCreatorUpdated: (InfluencerPublicCard) -> Void
+
+    var body: some View {
+        ScrollView {
+            VStack(spacing: FFSpacing.md) {
+                if viewModel.isShowingCachedData {
+                    cachedDataBadge
+                }
+
+                FFTextField(
+                    label: "Search following",
+                    placeholder: "Имя автора",
+                    text: Binding(
+                        get: { viewModel.query },
+                        set: { viewModel.searchQueryChanged($0) },
+                    ),
+                    helperText: "Поиск только по вашим подпискам",
+                )
+
+                if let infoMessage = viewModel.infoMessage {
+                    FFCard {
+                        Text(infoMessage)
+                            .font(FFTypography.caption)
+                            .foregroundStyle(FFColors.textSecondary)
+                    }
+                }
+
+                if viewModel.isLoading, viewModel.creators.isEmpty {
+                    FFLoadingState(title: "Загружаем подписки")
+                } else if let error = viewModel.error, viewModel.creators.isEmpty {
+                    FFErrorState(
+                        title: error.title,
+                        message: error.message,
+                        retryTitle: "Try again",
+                        onRetry: { Task { await viewModel.retry() } },
+                    )
+                } else if viewModel.creators.isEmpty {
+                    FFEmptyState(
+                        title: "Список подписок пуст",
+                        message: "Подпишитесь на авторов в разделе Creators.",
+                    )
+                } else {
+                    LazyVStack(spacing: FFSpacing.sm) {
+                        ForEach(viewModel.creators) { creator in
+                            CreatorCardView(
+                                creator: creator,
+                                environment: environment,
+                                followButtonState: viewModel.isFollowLoading(creator.id) ? .loading : (creator.isFollowedByMe ? .following : .follow),
+                                isFollowEnabled: viewModel.canFollowActions,
+                                onTap: {
+                                    onOpenCreatorProfile(creator)
+                                },
+                                onFollowTap: {
+                                    Task {
+                                        if let updated = await viewModel.toggleFollow(influencerId: creator.id) {
+                                            onCreatorUpdated(updated)
+                                        }
+                                    }
+                                },
+                            )
+                            .onAppear {
+                                Task {
+                                    await viewModel.loadNextPageIfNeeded(lastID: creator.id)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            .padding(.horizontal, FFSpacing.md)
+            .padding(.bottom, FFSpacing.lg)
+        }
+        .background(FFColors.background)
+        .refreshable {
+            await viewModel.refresh()
+        }
+        .task {
+            await viewModel.onAppear()
+        }
+    }
+
+    private var cachedDataBadge: some View {
+        FFCard {
+            Text("Оффлайн. Показаны сохранённые данные following.")
+                .font(FFTypography.caption.weight(.semibold))
+                .foregroundStyle(FFColors.primary)
+        }
+    }
+}
+
+struct CreatorProfileView: View {
+    @State var viewModel: CreatorProfileViewModel
+    let environment: AppEnvironment?
+    let onProgramTap: (String) -> Void
+    let onCreatorUpdated: (InfluencerPublicCard) -> Void
+
+    @Environment(\.openURL) private var openURL
+
+    var body: some View {
+        ScrollView {
+            VStack(spacing: FFSpacing.md) {
+                CreatorCardView(
+                    creator: viewModel.creator,
+                    environment: environment,
+                    followButtonState: viewModel.isFollowLoading ? .loading : (viewModel.creator.isFollowedByMe ? .following : .follow),
+                    isFollowEnabled: viewModel.canFollowActions,
+                    onTap: nil,
+                    onFollowTap: {
+                        Task {
+                            let updated = await viewModel.toggleFollow()
+                            onCreatorUpdated(updated)
+                        }
+                    },
+                )
+
+                if !viewModel.creator.socialLinks.orEmpty.isEmpty {
+                    FFCard {
+                        VStack(alignment: .leading, spacing: FFSpacing.xs) {
+                            Text("Social links")
+                                .font(FFTypography.h2)
+                                .foregroundStyle(FFColors.textPrimary)
+
+                            ForEach(viewModel.creator.socialLinks.orEmpty) { link in
+                                if let url = link.url {
+                                    Button {
+                                        openURL(url)
+                                    } label: {
+                                        HStack {
+                                            Text(link.platform ?? link.title ?? url.host ?? url.absoluteString)
+                                                .font(FFTypography.body.weight(.semibold))
+                                                .foregroundStyle(FFColors.accent)
+                                            Spacer(minLength: FFSpacing.sm)
+                                            Image(systemName: "arrow.up.right.square")
+                                                .foregroundStyle(FFColors.accent)
+                                        }
+                                    }
+                                    .buttonStyle(.plain)
+                                    .frame(minHeight: 44)
+                                }
+                            }
+                        }
+                    }
+                }
+
+                FFCard {
+                    VStack(alignment: .leading, spacing: FFSpacing.xs) {
+                        Text("Programs by creator")
+                            .font(FFTypography.h2)
+                            .foregroundStyle(FFColors.textPrimary)
+
+                        if viewModel.isShowingCachedData {
+                            Text("Показаны кэшированные программы")
+                                .font(FFTypography.caption)
+                                .foregroundStyle(FFColors.textSecondary)
+                        }
+
+                        if let info = viewModel.infoMessage {
+                            Text(info)
+                                .font(FFTypography.caption)
+                                .foregroundStyle(FFColors.textSecondary)
+                        }
+
+                        if viewModel.isLoadingPrograms, viewModel.programs.isEmpty {
+                            FFLoadingState(title: "Загружаем программы автора")
+                        } else if let error = viewModel.error, viewModel.programs.isEmpty {
+                            FFErrorState(
+                                title: error.title,
+                                message: error.message,
+                                retryTitle: "Try again",
+                                onRetry: { Task { await viewModel.refresh() } },
+                            )
+                        } else if viewModel.programs.isEmpty {
+                            Text("У автора пока нет опубликованных программ.")
+                                .font(FFTypography.body)
+                                .foregroundStyle(FFColors.textSecondary)
+                        } else {
+                            LazyVStack(spacing: FFSpacing.sm) {
+                                ForEach(viewModel.programs) { program in
+                                    Button {
+                                        viewModel.trackProgramOpened(programID: program.id)
+                                        onProgramTap(program.id)
+                                    } label: {
+                                        VStack(alignment: .leading, spacing: FFSpacing.xxs) {
+                                            Text(program.title)
+                                                .font(FFTypography.body.weight(.semibold))
+                                                .foregroundStyle(FFColors.textPrimary)
+                                            Text(program.description?.trimmedNilIfEmpty ?? "Описание не указано")
+                                                .font(FFTypography.caption)
+                                                .foregroundStyle(FFColors.textSecondary)
+                                                .lineLimit(2)
+                                        }
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                        .padding(.vertical, FFSpacing.xxs)
+                                    }
+                                    .buttonStyle(.plain)
+                                    .onAppear {
+                                        Task {
+                                            await viewModel.loadNextPageIfNeeded(lastID: program.id)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                FFCard {
+                    VStack(alignment: .leading, spacing: FFSpacing.xs) {
+                        Text("Latest updates")
+                            .font(FFTypography.h2)
+                            .foregroundStyle(FFColors.textPrimary)
+                        Text("Раздел подготовлен для будущего backend support.")
+                            .font(FFTypography.caption)
+                            .foregroundStyle(FFColors.textSecondary)
+                    }
+                }
+            }
+            .padding(.horizontal, FFSpacing.md)
+            .padding(.vertical, FFSpacing.md)
+        }
+        .background(FFColors.background)
+        .refreshable {
+            await viewModel.refresh()
+        }
+        .task {
+            await viewModel.onAppear()
+        }
+    }
+}
+
+struct CreatorCardView: View {
+    let creator: InfluencerPublicCard
+    let environment: AppEnvironment?
+    let followButtonState: FollowButtonState
+    let isFollowEnabled: Bool
+    let onTap: (() -> Void)?
+    let onFollowTap: (() -> Void)?
+
+    var body: some View {
+        FFCard {
+            VStack(alignment: .leading, spacing: FFSpacing.sm) {
+                HStack(alignment: .top, spacing: FFSpacing.sm) {
+                    Button {
+                        onTap?()
+                    } label: {
+                        HStack(alignment: .top, spacing: FFSpacing.sm) {
+                            avatarView
+                            VStack(alignment: .leading, spacing: FFSpacing.xxs) {
+                                Text(creator.displayName)
+                                    .font(FFTypography.h2)
+                                    .foregroundStyle(FFColors.textPrimary)
+                                    .lineLimit(1)
+
+                                if let bio = creator.bio?.trimmedNilIfEmpty {
+                                    Text(bio)
+                                        .font(FFTypography.caption)
+                                        .foregroundStyle(FFColors.textSecondary)
+                                        .lineLimit(2)
+                                } else {
+                                    Text("Bio не добавлено")
+                                        .font(FFTypography.caption)
+                                        .foregroundStyle(FFColors.textSecondary)
+                                }
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(onTap == nil)
+
+                    if let onFollowTap {
+                        FollowButton(
+                            state: followButtonState,
+                            isEnabled: isFollowEnabled,
+                            action: onFollowTap,
+                        )
+                        .frame(minHeight: 44)
+                    }
+                }
+
+                HStack(spacing: FFSpacing.sm) {
+                    statChip(title: "Followers", value: "\(creator.followersCount)")
+                    statChip(title: "Programs", value: "\(creator.programsCount)")
+                }
+            }
+        }
+    }
+
+    private var avatarView: some View {
+        Group {
+            if let url = resolvedAvatarURL(creator.avatar) {
+                FFRemoteImage(url: url) {
+                    avatarPlaceholder
+                }
+            } else {
+                avatarPlaceholder
+            }
+        }
+        .frame(width: 56, height: 56)
+        .clipShape(Circle())
+    }
+
+    private var avatarPlaceholder: some View {
+        Circle()
+            .fill(FFColors.gray700)
+            .overlay {
+                Image(systemName: "person.crop.circle.fill")
+                    .font(.system(size: 28, weight: .semibold))
+                    .foregroundStyle(FFColors.gray300)
+            }
+    }
+
+    private func statChip(title: String, value: String) -> some View {
+        HStack(spacing: FFSpacing.xxs) {
+            Text(title)
+                .font(FFTypography.caption)
+                .foregroundStyle(FFColors.textSecondary)
+            Text(value)
+                .font(FFTypography.caption.weight(.semibold))
+                .foregroundStyle(FFColors.textPrimary)
+        }
+        .padding(.horizontal, FFSpacing.xs)
+        .padding(.vertical, FFSpacing.xxs)
+        .background(FFColors.surface)
+        .clipShape(Capsule())
+        .overlay {
+            Capsule().stroke(FFColors.gray700, lineWidth: 1)
+        }
+    }
+
+    private func resolvedAvatarURL(_ url: URL?) -> URL? {
+        guard let url else { return nil }
+        if url.scheme != nil {
+            return url
+        }
+        guard let baseURL = environment?.backendBaseURL else {
+            return url
+        }
+        let normalizedPath = url.path.hasPrefix("/") ? String(url.path.dropFirst()) : url.path
+        return baseURL.appendingPathComponent(normalizedPath)
+    }
+}
+
+struct FollowButton: View {
+    let state: FollowButtonState
+    var isEnabled = true
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: FFSpacing.xxs) {
+                if state == .loading {
+                    ProgressView()
+                        .controlSize(.small)
+                        .tint(FFColors.background)
+                }
+                Text(title)
+                    .font(FFTypography.caption.weight(.semibold))
+            }
+            .padding(.horizontal, FFSpacing.sm)
+            .frame(minHeight: 36)
+            .background(backgroundColor)
+            .foregroundStyle(foregroundColor)
+            .clipShape(Capsule())
+            .overlay {
+                Capsule()
+                    .stroke(borderColor, lineWidth: 1)
+            }
+        }
+        .buttonStyle(.plain)
+        .disabled(!isEnabled || state == .loading)
+    }
+
+    private var title: String {
+        switch state {
+        case .follow:
+            "Follow"
+        case .following:
+            "Following"
+        case .loading:
+            "Loading"
+        }
+    }
+
+    private var backgroundColor: Color {
+        switch state {
+        case .follow:
+            FFColors.primary
+        case .following:
+            FFColors.surface
+        case .loading:
+            FFColors.gray700
+        }
+    }
+
+    private var foregroundColor: Color {
+        switch state {
+        case .follow, .loading:
+            FFColors.background
+        case .following:
+            FFColors.textPrimary
+        }
+    }
+
+    private var borderColor: Color {
+        switch state {
+        case .follow, .loading:
+            FFColors.primary
+        case .following:
+            FFColors.gray700
+        }
+    }
+}
+
+private extension CatalogViewModel {
+    var programsClientForCreatorFlows: ProgramsClientProtocol? {
+        programsClient
+    }
+}
+
+private extension Optional where Wrapped == [SocialLink] {
+    var orEmpty: [SocialLink] {
+        self ?? []
+    }
+}
+
+private func isCreatorFollowForbidden(_ apiError: APIError) -> Bool {
+    if apiError == .forbidden {
+        return true
+    }
+    if case let .httpError(statusCode, _) = apiError {
+        return statusCode == 403
+    }
+    return false
 }
 
 struct CatalogScreen: View {

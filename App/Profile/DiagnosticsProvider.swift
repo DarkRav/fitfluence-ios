@@ -7,7 +7,7 @@ protocol DiagnosticsProviding: Sendable {
     func clearCache(userSub: String) async
 }
 
-struct DiagnosticsProvider: DiagnosticsProviding {
+struct DiagnosticsProvider: DiagnosticsProviding, @unchecked Sendable {
     private let bundle: Bundle
     private let cacheStore: CacheStore
     private let fileManager: FileManager

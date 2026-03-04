@@ -99,7 +99,7 @@ final class WorkoutsFeatureAndProgressStoreTests: XCTestCase {
         await viewModel.incrementWeight(setIndex: 0)
 
         XCTAssertEqual(viewModel.currentExerciseState?.sets.first?.isCompleted, true)
-        XCTAssertEqual(viewModel.currentExerciseState?.sets.first?.repsText, "1")
+        XCTAssertEqual(viewModel.currentExerciseState?.sets.first?.repsText, "9")
         XCTAssertEqual(viewModel.currentExerciseState?.sets.first?.weightText, "2.5")
         XCTAssertTrue(viewModel.restTimer.isVisible)
 
@@ -178,11 +178,90 @@ final class WorkoutsFeatureAndProgressStoreTests: XCTestCase {
         await viewModel.incrementWeight(setIndex: 0)
         await viewModel.copyPreviousSet(setIndex: 1)
 
-        XCTAssertEqual(viewModel.currentExerciseState?.sets[1].repsText, "2")
+        XCTAssertEqual(viewModel.currentExerciseState?.sets[1].repsText, "8")
         XCTAssertEqual(viewModel.currentExerciseState?.sets[1].weightText, "2.5")
 
         await viewModel.jumpToExercise("ex-2")
         XCTAssertEqual(viewModel.currentExercise?.id, "ex-2")
+    }
+
+    func testWorkoutPlayerViewModelAppliesSmartDefaultsFromPlan() async {
+        let progressStore = MockWorkoutProgressStore(statuses: [:])
+        let sessionManager = WorkoutSessionManager(progressStore: progressStore)
+        let viewModel = WorkoutPlayerViewModel(
+            userSub: "u1",
+            programId: "p1",
+            workout: sampleWorkoutDetails,
+            sessionManager: sessionManager,
+        )
+
+        await viewModel.onAppear()
+
+        XCTAssertEqual(viewModel.currentExerciseState?.sets.first?.repsText, "8")
+        XCTAssertEqual(viewModel.currentExerciseState?.sets.first?.weightText, "")
+        XCTAssertEqual(viewModel.currentExerciseState?.sets.first?.rpeText, "8")
+    }
+
+    func testWorkoutPlayerViewModelAutoAdvanceAndUndoSnackbar() async {
+        let progressStore = MockWorkoutProgressStore(statuses: [:])
+        let sessionManager = WorkoutSessionManager(progressStore: progressStore)
+        let workout = WorkoutDetailsModel(
+            id: "w-auto",
+            title: "Auto",
+            dayOrder: 1,
+            coachNote: nil,
+            exercises: [
+                WorkoutExercise(
+                    id: "ex-1",
+                    name: "Squat",
+                    sets: 1,
+                    repsMin: 5,
+                    repsMax: 5,
+                    targetRpe: nil,
+                    restSeconds: 90,
+                    notes: nil,
+                    orderIndex: 0,
+                ),
+                WorkoutExercise(
+                    id: "ex-2",
+                    name: "Bench",
+                    sets: 1,
+                    repsMin: 5,
+                    repsMax: 5,
+                    targetRpe: nil,
+                    restSeconds: 90,
+                    notes: nil,
+                    orderIndex: 1,
+                ),
+            ],
+        )
+
+        let viewModel = WorkoutPlayerViewModel(
+            userSub: "u1",
+            programId: "p1",
+            workout: workout,
+            sessionManager: sessionManager,
+        )
+
+        await viewModel.onAppear()
+        XCTAssertEqual(viewModel.currentExercise?.id, "ex-1")
+
+        await viewModel.toggleSetComplete(setIndex: 0)
+
+        XCTAssertEqual(viewModel.currentExercise?.id, "ex-2")
+        XCTAssertNotNil(viewModel.autoAdvanceUndoState)
+
+        await viewModel.undoAutoAdvance()
+        XCTAssertEqual(viewModel.currentExercise?.id, "ex-1")
+        XCTAssertEqual(viewModel.currentExerciseState?.sets.first?.isCompleted, false)
+    }
+
+    func testWorkoutInstanceRouteStateMapping() {
+        XCTAssertEqual(resolveWorkoutInstanceRouteState(.planned), .requiresStart)
+        XCTAssertEqual(resolveWorkoutInstanceRouteState(.inProgress), .resume)
+        XCTAssertEqual(resolveWorkoutInstanceRouteState(.completed), .completed)
+        XCTAssertEqual(resolveWorkoutInstanceRouteState(.abandoned), .abandoned)
+        XCTAssertEqual(resolveWorkoutInstanceRouteState(nil), .resume)
     }
 
     func testLocalProgressStoreSaveAndLoad() async throws {

@@ -31,6 +31,16 @@ struct HelpAndDiagnosticsView: View {
                     }
                     .accessibilityLabel("Скопировать диагностику")
 
+                    FFButton(title: "Retry sync now", variant: .secondary) {
+                        Task { await viewModel.retrySyncNow() }
+                    }
+                    .accessibilityLabel("Повторить синхронизацию")
+
+                    FFButton(title: "Export sync log", variant: .secondary) {
+                        Task { await viewModel.exportSyncLog() }
+                    }
+                    .accessibilityLabel("Экспорт sync log")
+
                     if let infoMessage = viewModel.infoMessage {
                         Text(infoMessage)
                             .font(FFTypography.caption)
@@ -41,6 +51,26 @@ struct HelpAndDiagnosticsView: View {
             }
             .padding(.horizontal, FFSpacing.md)
             .padding(.top, FFSpacing.md)
+
+            FFCard {
+                VStack(alignment: .leading, spacing: FFSpacing.xs) {
+                    Text("Sync diagnostics")
+                        .font(FFTypography.h2)
+                        .foregroundStyle(FFColors.textPrimary)
+                    Text("Pending operations: \(viewModel.diagnostics.pendingSyncOperations)")
+                        .font(FFTypography.caption)
+                        .foregroundStyle(FFColors.textSecondary)
+                    Text("Last sync attempt: \(viewModel.diagnostics.lastSyncAttemptLabel)")
+                        .font(FFTypography.caption)
+                        .foregroundStyle(FFColors.textSecondary)
+                    Text("Last sync error: \(viewModel.diagnostics.lastSyncError ?? "—")")
+                        .font(FFTypography.caption)
+                        .foregroundStyle(
+                            viewModel.diagnostics.lastSyncError == nil ? FFColors.textSecondary : FFColors.danger,
+                        )
+                }
+            }
+            .padding(.horizontal, FFSpacing.md)
 
             FFCard {
                 VStack(alignment: .leading, spacing: FFSpacing.xs) {

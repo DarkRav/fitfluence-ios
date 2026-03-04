@@ -43,4 +43,7 @@ struct ProfileDiagnosticsSnapshot: Equatable, Sendable {
     let localStorageLabel: String
     let versionLabel: String
     let buildLabel: String
+    let pendingSyncOperations: Int
+    let lastSyncAttemptLabel: String
+    let lastSyncError: String?
 }
