@@ -288,6 +288,7 @@ private struct PlanTabContent: View {
                             programId: selectedProgram.programId,
                             userSub: selectedProgram.userSub,
                             programsClient: apiClient as? ProgramsClientProtocol,
+                            athleteTrainingClient: apiClient as? AthleteTrainingClientProtocol,
                         ),
                         apiClient: apiClient,
                     )
@@ -322,6 +323,7 @@ private struct TodayHubView: View {
                 sessionManager: WorkoutSessionManager(),
                 isOnline: isOnline,
                 programsClient: apiClient as? ProgramsClientProtocol,
+                athleteTrainingClient: apiClient as? AthleteTrainingClientProtocol,
             ),
             onPrimaryAction: { action in
                 switch action {
@@ -418,6 +420,7 @@ struct WorkoutLaunchView: View {
         let cacheStore = CompositeCacheStore()
         let progressStore = LocalWorkoutProgressStore()
         let cacheKey = "workout.details:\(programId):\(workoutId)"
+        let athleteTrainingClient = apiClient as? AthleteTrainingClientProtocol
 
         if let presetWorkout {
             details = presetWorkout
@@ -427,6 +430,31 @@ struct WorkoutLaunchView: View {
         }
 
         let canLoadFromProgramAPI = source == .program && UUID(uuidString: programId) != nil
+
+        if source == .program,
+           UUID(uuidString: workoutId) != nil,
+           let athleteTrainingClient
+        {
+            let athleteResult = await athleteTrainingClient.getWorkoutDetails(workoutInstanceId: workoutId)
+            switch athleteResult {
+            case let .success(workoutDetails):
+                if workoutDetails.workout.startedAt == nil {
+                    _ = await athleteTrainingClient.startWorkout(workoutInstanceId: workoutId, startedAt: Date())
+                }
+                let mapped = workoutDetails.asWorkoutDetailsModel()
+                details = mapped
+                error = nil
+                await cacheStore.set(cacheKey, value: mapped, namespace: userSub, ttl: 60 * 60 * 24)
+                return
+
+            case let .failure(apiError):
+                if case let .httpError(statusCode, _) = apiError, statusCode == 404 {
+                    // Fallback to template-based loading for non-instance workout ids.
+                } else {
+                    error = apiError.userFacing(context: .workoutPlayer)
+                }
+            }
+        }
 
         if canLoadFromProgramAPI, let apiClient, let programsClient = apiClient as? ProgramsClientProtocol {
             let workoutsClient = WorkoutsClient(programsClient: programsClient)

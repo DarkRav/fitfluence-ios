@@ -18,6 +18,7 @@ final class ProgramDetailsViewModel {
     let userSub: String
 
     private let programsClient: ProgramsClientProtocol?
+    private let athleteTrainingClient: AthleteTrainingClientProtocol?
     private let cacheStore: CacheStore
     private let networkMonitor: NetworkMonitoring
     private let progressStore: WorkoutProgressStore
@@ -35,11 +36,15 @@ final class ProgramDetailsViewModel {
     var totalWorkoutsCount = 0
     var upcomingWorkoutTitle: String?
     var lastCompletionTitle: String?
+    var isProgramAlreadyActive = false
+    var nextWorkoutInstanceId: String?
+    var nextWorkoutInstanceTitle: String?
 
     init(
         programId: String,
         userSub: String,
         programsClient: ProgramsClientProtocol?,
+        athleteTrainingClient: AthleteTrainingClientProtocol? = nil,
         cacheStore: CacheStore = CompositeCacheStore(),
         networkMonitor: NetworkMonitoring = StaticNetworkMonitor(currentStatus: true),
         progressStore: WorkoutProgressStore = LocalWorkoutProgressStore(),
@@ -48,6 +53,7 @@ final class ProgramDetailsViewModel {
         self.programId = programId
         self.userSub = userSub
         self.programsClient = programsClient
+        self.athleteTrainingClient = athleteTrainingClient
         self.cacheStore = cacheStore
         self.networkMonitor = networkMonitor
         self.progressStore = progressStore
@@ -63,7 +69,40 @@ final class ProgramDetailsViewModel {
         await load()
     }
 
-    func startProgram() async {
+    func handlePrimaryProgramAction() async {
+        if isProgramAlreadyActive, let nextWorkoutInstanceId {
+            selectedWorkout = SelectedWorkout(
+                userSub: userSub,
+                programId: programId,
+                workoutId: nextWorkoutInstanceId,
+            )
+            return
+        }
+
+        await startProgram()
+    }
+
+    var primaryProgramActionTitle: String {
+        if isStartingProgram {
+            return "Запускаем программу..."
+        }
+        if isProgramAlreadyActive {
+            return nextWorkoutInstanceId == nil ? "Программа уже активна" : "Продолжить программу"
+        }
+        return "Начать программу"
+    }
+
+    var isPrimaryProgramActionEnabled: Bool {
+        if isStartingProgram {
+            return false
+        }
+        if isProgramAlreadyActive {
+            return nextWorkoutInstanceId != nil
+        }
+        return details?.currentPublishedVersion?.id != nil
+    }
+
+    private func startProgram() async {
         guard let versionID = details?.currentPublishedVersion?.id, !isStartingProgram else { return }
         isStartingProgram = true
         defer { isStartingProgram = false }
@@ -76,9 +115,23 @@ final class ProgramDetailsViewModel {
 
         switch result {
         case .success:
-            successMessage = "Программа успешно начата."
+            successMessage = "Программа подключена."
             error = nil
+            await refreshEnrollmentContext()
+            if let nextWorkoutInstanceId {
+                selectedWorkout = SelectedWorkout(
+                    userSub: userSub,
+                    programId: programId,
+                    workoutId: nextWorkoutInstanceId,
+                )
+            }
         case let .failure(apiError):
+            if case .httpError(409, _) = apiError {
+                successMessage = "Программа уже активна."
+                error = nil
+                await refreshEnrollmentContext()
+                return
+            }
             error = apiError.userFacing(context: .programDetails)
         }
     }
@@ -118,6 +171,7 @@ final class ProgramDetailsViewModel {
             error = nil
             await cacheStore.set(cacheKey, value: details, namespace: userSub, ttl: 60 * 30)
             await refreshProgress(with: details)
+            await refreshEnrollmentContext()
 
         case let .failure(apiError):
             if apiError == .offline || !networkMonitor.currentStatus, details != nil {
@@ -126,6 +180,7 @@ final class ProgramDetailsViewModel {
                 if let details {
                     await refreshProgress(with: details)
                 }
+                await refreshEnrollmentContext()
                 return
             }
             error = apiError.userFacing(context: .programDetails)
@@ -160,6 +215,41 @@ final class ProgramDetailsViewModel {
 
     private var cacheKey: String {
         "program.details:\(programId)"
+    }
+
+    private func refreshEnrollmentContext() async {
+        guard let athleteTrainingClient else { return }
+
+        let result = await athleteTrainingClient.activeEnrollmentProgress()
+        switch result {
+        case let .success(progress):
+            let isCurrentProgram = progress.programId == programId
+            isProgramAlreadyActive = isCurrentProgram
+
+            guard isCurrentProgram else {
+                nextWorkoutInstanceId = nil
+                nextWorkoutInstanceTitle = nil
+                return
+            }
+
+            nextWorkoutInstanceId = progress.nextWorkoutId
+            nextWorkoutInstanceTitle = progress.nextWorkoutTitle
+
+            if let completed = progress.completedSessions {
+                completedWorkoutsCount = completed
+            }
+            if let total = progress.totalSessions {
+                totalWorkoutsCount = total
+            }
+            if let nextWorkoutTitle = progress.nextWorkoutTitle?.trimmedNilIfEmpty {
+                upcomingWorkoutTitle = nextWorkoutTitle
+            }
+
+        case let .failure(apiError):
+            if apiError == .offline {
+                return
+            }
+        }
     }
 }
 
@@ -393,12 +483,19 @@ struct ProgramDetailsScreen: View {
     private func startProgramBlock(details: ProgramDetails) -> some View {
         if details.currentPublishedVersion?.id != nil {
             FFButton(
-                title: viewModel.isStartingProgram ? "Запускаем программу..." : "Начать программу",
-                variant: viewModel.isStartingProgram ? .disabled : .primary,
-                action: { Task { await viewModel.startProgram() } },
+                title: viewModel.primaryProgramActionTitle,
+                variant: viewModel.isPrimaryProgramActionEnabled ? .primary : .disabled,
+                action: { Task { await viewModel.handlePrimaryProgramAction() } },
             )
             .accessibilityLabel("Начать программу")
             .accessibilityHint("Создаст активное прохождение программы для вашего профиля")
+            if viewModel.isProgramAlreadyActive {
+                FFCard {
+                    Text("Активная программа найдена. Продолжайте по серверному расписанию.")
+                        .font(FFTypography.caption)
+                        .foregroundStyle(FFColors.textSecondary)
+                }
+            }
         } else {
             FFCard {
                 Text("Скоро можно будет начать программу в приложении.")
@@ -432,5 +529,12 @@ struct ProgramDetailsScreen: View {
             return absolute.deletingLastPathComponent().appendingPathComponent(pathOrURL)
         }
         return URL(string: pathOrURL)
+    }
+}
+
+private extension String {
+    var trimmedNilIfEmpty: String? {
+        let trimmed = trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
     }
 }

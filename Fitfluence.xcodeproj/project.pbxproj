@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		0032E7A6426CBD61763F0439 /* AthleteTrainingClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 99CF5CA3D52FA9CB69262B34 /* AthleteTrainingClient.swift */; };
 		037DA4B0A17D3A336DF64827 /* TrainingHubView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2168C23890FEB64360E40A5 /* TrainingHubView.swift */; };
 		04999B39195137AB9BA71B9A /* AppAuth in Frameworks */ = {isa = PBXBuildFile; productRef = 6BE6FBF509B0BB844E656549 /* AppAuth */; };
 		06931F2CD054F4E2CB1A73B4 /* Logging.swift in Sources */ = {isa = PBXBuildFile; fileRef = B0CE9CC0E1302819C8010358 /* Logging.swift */; };
@@ -137,6 +138,7 @@
 		94FD710E5EFA916159BCCE7D /* DesignSystemTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DesignSystemTests.swift; sourceTree = "<group>"; };
 		967F2EF94A530FC0D94A6D5C /* PreviewMocks.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PreviewMocks.swift; sourceTree = "<group>"; };
 		98D854DFFDCBED597F3ABAE3 /* PlanScheduleView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlanScheduleView.swift; sourceTree = "<group>"; };
+		99CF5CA3D52FA9CB69262B34 /* AthleteTrainingClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AthleteTrainingClient.swift; sourceTree = "<group>"; };
 		9E4CF13A2531205E9575D66B /* APIRequest.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIRequest.swift; sourceTree = "<group>"; };
 		A2E5D8994FEA468EC4504CD0 /* Typography.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Typography.swift; sourceTree = "<group>"; };
 		A56CE81EAF5FA874DDFE6201 /* CatalogView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CatalogView.swift; sourceTree = "<group>"; };
@@ -259,6 +261,7 @@
 				ED3B939F25D70B624ECD73AC /* APILogger.swift */,
 				9E4CF13A2531205E9575D66B /* APIRequest.swift */,
 				D3D152248888DA9E6279DACD /* AthleteProfileClient.swift */,
+				99CF5CA3D52FA9CB69262B34 /* AthleteTrainingClient.swift */,
 				73D40B15217387B49B13527A /* AuthTokenProvider.swift */,
 				14C19E971649693B43AC91DB /* HTTPClient.swift */,
 				862F48B6CFE0972C4137CDAF /* InfluencerProfileClient.swift */,
@@ -521,6 +524,7 @@
 				553A3B4DA2F534094E3AA5C8 /* APILogger.swift in Sources */,
 				0AF9ACEEACEF5516F5A125FC /* APIRequest.swift in Sources */,
 				AB5CB6D21AA03EE03C7DF1D1 /* AthleteProfileClient.swift in Sources */,
+				0032E7A6426CBD61763F0439 /* AthleteTrainingClient.swift in Sources */,
 				CB6448969D574D903A200B23 /* AuthService.swift in Sources */,
 				28A1BACADED54018734A2488 /* AuthTokenProvider.swift in Sources */,
 				9BA85066DCAEF7E479AEA974 /* CacheStore.swift in Sources */,

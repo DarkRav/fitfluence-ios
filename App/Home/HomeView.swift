@@ -37,6 +37,7 @@ final class HomeViewModel {
     private let cacheStore: CacheStore
     private let progressStore: WorkoutProgressStore
     private let programsClient: ProgramsClientProtocol?
+    private let athleteTrainingClient: AthleteTrainingClientProtocol?
     private let userSub: String
     private let isOnline: Bool
     private let calendar: Calendar
@@ -60,6 +61,7 @@ final class HomeViewModel {
         cacheStore: CacheStore = CompositeCacheStore(),
         progressStore: WorkoutProgressStore = LocalWorkoutProgressStore(),
         programsClient: ProgramsClientProtocol? = nil,
+        athleteTrainingClient: AthleteTrainingClientProtocol? = nil,
         calendar: Calendar = .current,
     ) {
         self.userSub = userSub
@@ -68,6 +70,7 @@ final class HomeViewModel {
         self.cacheStore = cacheStore
         self.progressStore = progressStore
         self.programsClient = programsClient
+        self.athleteTrainingClient = athleteTrainingClient
         self.isOnline = isOnline
         self.calendar = calendar
     }
@@ -133,7 +136,10 @@ final class HomeViewModel {
         } else {
             activeSession = nil
         }
-        await loadTodayPlan()
+        await loadActiveEnrollmentContext()
+        if plannedWorkoutToday == nil {
+            await loadTodayPlan()
+        }
         if let plannedWorkoutToday {
             canLaunchPlannedWorkout = await canLaunch(plannedWorkout: plannedWorkoutToday)
         } else {
@@ -145,6 +151,11 @@ final class HomeViewModel {
             if activeSession.programId.isUUID {
                 await loadProgramContext(programId: activeSession.programId)
             }
+            return
+        }
+
+        if let activeProgramId, activeProgramId.isUUID {
+            await loadProgramContext(programId: activeProgramId)
             return
         }
 
@@ -164,6 +175,84 @@ final class HomeViewModel {
             activeProgramId = programId
             activeProgramTitle = cachedFirstPage?.cards.first?.title
             await loadProgramContext(programId: programId)
+        }
+    }
+
+    private func loadActiveEnrollmentContext() async {
+        guard let athleteTrainingClient, isOnline else { return }
+
+        let result = await athleteTrainingClient.activeEnrollmentProgress()
+        switch result {
+        case let .success(progress):
+            guard let programId = progress.programId?.trimmedNilIfEmpty else { return }
+
+            activeProgramId = programId
+            activeProgramTitle = progress.programTitle?.trimmedNilIfEmpty
+
+            if let nextWorkoutId = progress.nextWorkoutId?.trimmedNilIfEmpty {
+                plannedWorkoutToday = HomePlannedWorkoutSnapshot(
+                    title: progress.nextWorkoutTitle?.trimmedNilIfEmpty ?? "Следующая тренировка",
+                    status: .planned,
+                    statusText: "Запланирована",
+                    subtitle: "Активная программа",
+                    source: .program,
+                    programId: programId,
+                    workoutId: nextWorkoutId,
+                )
+
+                await loadWorkoutSnapshotFromInstance(workoutInstanceId: nextWorkoutId)
+            } else {
+                plannedWorkoutToday = nil
+            }
+
+            if let completed = progress.completedSessions, let total = progress.totalSessions, total > 0 {
+                lastWorkoutSummary = "Прогресс программы: \(completed)/\(total)"
+            }
+
+        case .failure:
+            break
+        }
+    }
+
+    private func loadWorkoutSnapshotFromInstance(workoutInstanceId: String) async {
+        guard let athleteTrainingClient else { return }
+
+        let detailsResult = await athleteTrainingClient.getWorkoutDetails(workoutInstanceId: workoutInstanceId)
+        guard case let .success(details) = detailsResult else { return }
+
+        let exercises = details.exercises
+        let durationFromServer = details.workout.durationSeconds.map { max(10, $0 / 60) }
+        let estimatedDuration = durationFromServer ?? estimateDuration(exercises: exercises)
+        let title = details.workout.title?.trimmedNilIfEmpty ?? "Тренировка"
+
+        nextWorkout = WorkoutSummary(
+            id: details.workout.id,
+            title: title,
+            dayOrder: 0,
+            exerciseCount: exercises.count,
+            estimatedDurationMinutes: estimatedDuration,
+        )
+
+        if let current = todayWorkout {
+            todayWorkout = HomeTodayWorkoutSnapshot(
+                title: title,
+                exerciseCount: exercises.count,
+                durationMinutes: estimatedDuration,
+                focus: current.focus,
+                difficulty: current.difficulty,
+                equipment: current.equipment,
+                lastCompletion: current.lastCompletion,
+            )
+        } else {
+            todayWorkout = HomeTodayWorkoutSnapshot(
+                title: title,
+                exerciseCount: exercises.count,
+                durationMinutes: estimatedDuration,
+                focus: "По активной программе",
+                difficulty: "Уровень уточняется",
+                equipment: "Оборудование: уточняется",
+                lastCompletion: "Ещё не выполняли",
+            )
         }
     }
 
@@ -332,6 +421,13 @@ final class HomeViewModel {
         return max(10, (sets * 90) / 60)
     }
 
+    private func estimateDuration(exercises: [AthleteExerciseExecution]) -> Int {
+        let sets = exercises.reduce(0) { partial, exercise in
+            partial + max(1, exercise.plannedSets ?? exercise.sets?.count ?? 1)
+        }
+        return max(10, (sets * 90) / 60)
+    }
+
     private func canLaunch(session: ActiveWorkoutSession) async -> Bool {
         if session.source == .program, session.programId.isUUID, isOnline {
             return true
@@ -359,7 +455,7 @@ final class HomeViewModel {
         else {
             return false
         }
-        if programsClient != nil, isOnline {
+        if programsClient != nil || athleteTrainingClient != nil, isOnline {
             return true
         }
         if await hasCachedWorkoutDetails(programId: programId, workoutId: workoutId) {

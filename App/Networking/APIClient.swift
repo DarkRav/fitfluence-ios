@@ -119,7 +119,7 @@ final class APIClient: APIClientProtocol, MeClientProtocol, AthleteProfileClient
         }
     }
 
-    private func decode<T: Decodable>(_ request: APIRequest, as _: T.Type) async -> Result<T, APIError> {
+    func decode<T: Decodable>(_ request: APIRequest, as _: T.Type) async -> Result<T, APIError> {
         await decodeWithRetry(request, allowRetryAfterRefresh: true)
     }
 
