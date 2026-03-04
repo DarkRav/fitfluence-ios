@@ -129,8 +129,16 @@ final class APIClient: APIClientProtocol, MeClientProtocol, AthleteProfileClient
     ) async -> Result<T, APIError> {
         do {
             let response = try await httpClient.send(request)
-            let decoded = try JSONDecoder().decode(T.self, from: response.data)
-            return .success(decoded)
+            do {
+                let decoded = try JSONDecoder().decode(T.self, from: response.data)
+                return .success(decoded)
+            } catch let decodingError as DecodingError {
+                let snippet = String(data: response.data.prefix(600), encoding: .utf8) ?? "<non-utf8>"
+                FFLog.error(
+                    "API decode failed method=\(request.method.rawValue) path=\(request.path) error=\(String(describing: decodingError)); bodySnippet=\(snippet)",
+                )
+                return .failure(.decodingError)
+            }
         } catch let apiError as APIError {
             if case .unauthorized = apiError, allowRetryAfterRefresh, let authService {
                 let refreshed = await authService.refresh()
@@ -141,11 +149,6 @@ final class APIClient: APIClientProtocol, MeClientProtocol, AthleteProfileClient
                 return .failure(.unauthorized)
             }
             return .failure(apiError)
-        } catch let decodingError as DecodingError {
-            FFLog.error(
-                "API decode failed method=\(request.method.rawValue) path=\(request.path) error=\(String(describing: decodingError))",
-            )
-            return .failure(.decodingError)
         } catch {
             return .failure(.unknown)
         }
