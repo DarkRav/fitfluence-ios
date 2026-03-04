@@ -119,6 +119,66 @@ final class OIDCAndTokenStoreTests: XCTestCase {
         )
     }
 
+    func testOIDCDiscoveryFallsBackToAuthPrefixedEndpointWhenPrimaryIsHTML() async throws {
+        MockURLProtocol.requestHandler = { request in
+            let url = try XCTUnwrap(request.url)
+
+            if url.path == "/realms/fitfluence/.well-known/openid-configuration" {
+                let response = try HTTPURLResponse(
+                    url: url,
+                    statusCode: 200,
+                    httpVersion: nil,
+                    headerFields: ["Content-Type": "text/html; charset=utf-8"],
+                )!
+                return (response, Data("<html>not keycloak</html>".utf8))
+            }
+
+            if url.path == "/auth/realms/fitfluence/.well-known/openid-configuration" {
+                let json = """
+                {
+                  "issuer": "https://176.108.251.89/auth/realms/fitfluence",
+                  "authorization_endpoint": "https://176.108.251.89/auth/realms/fitfluence/protocol/openid-connect/auth",
+                  "token_endpoint": "https://176.108.251.89/auth/realms/fitfluence/protocol/openid-connect/token",
+                  "end_session_endpoint": "https://176.108.251.89/auth/realms/fitfluence/protocol/openid-connect/logout"
+                }
+                """
+                let response = try HTTPURLResponse(
+                    url: url,
+                    statusCode: 200,
+                    httpVersion: nil,
+                    headerFields: ["Content-Type": "application/json"],
+                )!
+                return (response, Data(json.utf8))
+            }
+
+            XCTFail("Unexpected URL: \(url.absoluteString)")
+            let response = try HTTPURLResponse(
+                url: url,
+                statusCode: 404,
+                httpVersion: nil,
+                headerFields: nil,
+            )!
+            return (response, Data())
+        }
+
+        let service = try OIDCDiscoveryService(
+            baseURL: XCTUnwrap(URL(string: "https://176.108.251.89")),
+            realm: "fitfluence",
+            session: testSession,
+        )
+        let document = try await service.discover()
+
+        XCTAssertEqual(document.issuer.absoluteString, "https://176.108.251.89/auth/realms/fitfluence")
+        XCTAssertEqual(
+            document.authorizationEndpoint.absoluteString,
+            "https://176.108.251.89/auth/realms/fitfluence/protocol/openid-connect/auth",
+        )
+        XCTAssertEqual(
+            document.tokenEndpoint.absoluteString,
+            "https://176.108.251.89/auth/realms/fitfluence/protocol/openid-connect/token",
+        )
+    }
+
     func testTokenSetExpiryChecks() {
         let now = Date()
         let expired = TokenSet(

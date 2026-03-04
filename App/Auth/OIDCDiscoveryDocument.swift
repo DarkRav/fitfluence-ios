@@ -31,45 +31,57 @@ struct OIDCDiscoveryService: OIDCDiscoveryServiceProtocol {
         guard !realm.isEmpty else {
             throw APIError.invalidURL
         }
+        var lastError: APIError = .unknown
 
-        let endpoint = baseURL
-            .appendingPathComponent("realms")
-            .appendingPathComponent(realm)
-            .appendingPathComponent(".well-known")
-            .appendingPathComponent("openid-configuration")
-
-        do {
-            let (data, response) = try await session.data(from: endpoint)
-            guard let httpResponse = response as? HTTPURLResponse else {
-                FFLog.error("OIDC discovery: non-HTTP response from \(endpoint.absoluteString)")
-                throw APIError.unknown
-            }
-
-            if let apiError = APIError.from(statusCode: httpResponse.statusCode, data: data) {
-                FFLog.error(
-                    "OIDC discovery failed status=\(httpResponse.statusCode) url=\(endpoint.absoluteString)",
-                )
-                throw apiError
-            }
-
+        for endpoint in discoveryEndpoints() {
             do {
-                let decoded = try JSONDecoder().decode(OIDCDiscoveryDocument.self, from: data)
-                return normalized(document: decoded)
+                let (data, response) = try await session.data(from: endpoint)
+                guard let httpResponse = response as? HTTPURLResponse else {
+                    FFLog.error("OIDC discovery: non-HTTP response from \(endpoint.absoluteString)")
+                    lastError = .unknown
+                    continue
+                }
+
+                if let apiError = APIError.from(statusCode: httpResponse.statusCode, data: data) {
+                    FFLog.error(
+                        "OIDC discovery failed status=\(httpResponse.statusCode) url=\(endpoint.absoluteString)",
+                    )
+                    lastError = apiError
+                    continue
+                }
+
+                if let mimeType = httpResponse.mimeType?.lowercased(), mimeType.contains("html") {
+                    FFLog.error(
+                        "OIDC discovery returned non-JSON mimeType=\(mimeType) url=\(endpoint.absoluteString)",
+                    )
+                    lastError = .decodingError
+                    continue
+                }
+
+                do {
+                    let decoded = try JSONDecoder().decode(OIDCDiscoveryDocument.self, from: data)
+                    return normalized(document: decoded)
+                } catch {
+                    FFLog.error("OIDC discovery decoding failed for \(endpoint.absoluteString)")
+                    lastError = .decodingError
+                    continue
+                }
+            } catch let urlError as URLError {
+                FFLog.error(
+                    "OIDC discovery network error code=\(urlError.code.rawValue) url=\(endpoint.absoluteString)",
+                )
+                throw APIError.from(urlError: urlError)
+            } catch let apiError as APIError {
+                lastError = apiError
+                continue
             } catch {
-                FFLog.error("OIDC discovery decoding failed for \(endpoint.absoluteString)")
-                throw APIError.decodingError
+                FFLog.error("OIDC discovery unknown error for \(endpoint.absoluteString)")
+                lastError = .unknown
+                continue
             }
-        } catch let apiError as APIError {
-            throw apiError
-        } catch let urlError as URLError {
-            FFLog.error(
-                "OIDC discovery network error code=\(urlError.code.rawValue) url=\(endpoint.absoluteString)",
-            )
-            throw APIError.from(urlError: urlError)
-        } catch {
-            FFLog.error("OIDC discovery unknown error for \(endpoint.absoluteString)")
-            throw APIError.unknown
         }
+
+        throw lastError
     }
 
     private func normalized(document: OIDCDiscoveryDocument) -> OIDCDiscoveryDocument {
@@ -91,8 +103,13 @@ struct OIDCDiscoveryService: OIDCDiscoveryServiceProtocol {
 
         // Keycloak can return stale absolute URLs in discovery after host/IP changes.
         // For endpoints bound to our configured realm we trust runtime baseURL host.
-        let realmBasePath = "/realms/\(realm)"
-        let belongsToRealm = url.path == realmBasePath || url.path.hasPrefix("\(realmBasePath)/")
+        let realmBasePaths = [
+            "/realms/\(realm)",
+            "/auth/realms/\(realm)",
+        ]
+        let belongsToRealm = realmBasePaths.contains { basePath in
+            url.path == basePath || url.path.hasPrefix("\(basePath)/")
+        }
         let shouldRewriteHost = isLoopback || (belongsToRealm && host != (baseURL.host ?? "").lowercased())
         guard shouldRewriteHost else {
             return url
@@ -106,5 +123,38 @@ struct OIDCDiscoveryService: OIDCDiscoveryServiceProtocol {
             components?.port = port
         }
         return components?.url ?? url
+    }
+
+    private func discoveryEndpoints() -> [URL] {
+        var endpoints: [URL] = []
+        var seen = Set<String>()
+
+        func append(_ url: URL) {
+            let key = url.absoluteString
+            guard !seen.contains(key) else { return }
+            seen.insert(key)
+            endpoints.append(url)
+        }
+
+        let primary = baseURL
+            .appendingPathComponent("realms")
+            .appendingPathComponent(realm)
+            .appendingPathComponent(".well-known")
+            .appendingPathComponent("openid-configuration")
+        append(primary)
+
+        let pathSegments = baseURL.path.split(separator: "/").map(String.init)
+        let hasAuthPrefix = pathSegments.first?.lowercased() == "auth"
+        if !hasAuthPrefix {
+            let authPrefixed = baseURL
+                .appendingPathComponent("auth")
+                .appendingPathComponent("realms")
+                .appendingPathComponent(realm)
+                .appendingPathComponent(".well-known")
+                .appendingPathComponent("openid-configuration")
+            append(authPrefixed)
+        }
+
+        return endpoints
     }
 }
