@@ -1,7 +1,7 @@
 #include "Base.xcconfig"
 SLASH = /
-BASE_URL = http:$(SLASH)$(SLASH)192.168.88.81:9876
-KEYCLOAK_URL = http:$(SLASH)$(SLASH)192.168.88.81:9990
+BASE_URL = https:$(SLASH)$(SLASH)176.108.251.89
+KEYCLOAK_URL = https:$(SLASH)$(SLASH)176.108.251.89
 KEYCLOAK_REALM = fitfluence
 KEYCLOAK_CLIENT_ID = fitfluence-ios
 KEYCLOAK_REDIRECT_URI = fitfluence:$(SLASH)$(SLASH)oauth/callback
