@@ -163,7 +163,7 @@ private struct ProfileMenuRow: View {
             isOnline: true,
         )
         vm.loadState = .loaded
-        vm.displayName = "Athlete Preview"
+        vm.displayName = "Атлет (предпросмотр)"
         vm.avatarInitials = "AP"
         return vm
     }()
@@ -193,7 +193,7 @@ private struct ProfileMenuRow: View {
             isOnline: false,
         )
         vm.loadState = .loaded
-        vm.displayName = "Offline Athlete"
+        vm.displayName = "Атлет (офлайн)"
         vm.avatarInitials = "OA"
         return vm
     }()

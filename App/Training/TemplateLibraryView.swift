@@ -312,7 +312,7 @@ struct TemplateLibraryView: View {
 
                 FFTextField(
                     label: "Название",
-                    placeholder: "Upper A / Push",
+                    placeholder: "Силовой верх",
                     text: $viewModel.templateName,
                     helperText: "Короткое и понятное имя",
                 )
@@ -590,7 +590,7 @@ struct TemplateLibraryView: View {
             WorkoutTemplateDraft(
                 id: "preset-upper-lower",
                 userSub: "preset",
-                name: "Upper / Lower",
+                name: "Верх / Низ",
                 exercises: [
                     .init(id: "bp", name: "Жим лёжа", sets: 4, repsMin: 5, repsMax: 8, restSeconds: 120),
                     .init(id: "row", name: "Тяга в наклоне", sets: 4, repsMin: 8, repsMax: 12, restSeconds: 90),
@@ -602,7 +602,7 @@ struct TemplateLibraryView: View {
             WorkoutTemplateDraft(
                 id: "preset-ppl",
                 userSub: "preset",
-                name: "Push / Pull / Legs",
+                name: "Жим / Тяга / Ноги",
                 exercises: [
                     .init(id: "ohp", name: "Жим стоя", sets: 4, repsMin: 6, repsMax: 10, restSeconds: 90),
                     .init(id: "pull", name: "Подтягивания", sets: 4, repsMin: 6, repsMax: 12, restSeconds: 90),

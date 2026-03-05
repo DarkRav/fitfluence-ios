@@ -543,29 +543,23 @@ final class WorkoutHomeViewModel {
     }
 
     private func canLaunch(session: ActiveWorkoutSession) async -> Bool {
-        if session.source == .program,
-           UUID(uuidString: session.programId) != nil,
-           networkMonitor.currentStatus
-        {
-            return true
-        }
-        if await cacheStore.get(
+        let hasCachedWorkoutDetails = await cacheStore.get(
             "workout.details:\(session.programId):\(session.workoutId)",
             as: WorkoutDetailsModel.self,
             namespace: userSub,
-        ) != nil {
-            return true
-        }
-        if let snapshot = await progressStore.load(
+        ) != nil
+        let snapshot = await progressStore.load(
             userSub: session.userSub,
             programId: session.programId,
             workoutId: session.workoutId,
-        ),
-            snapshot.workoutDetails != nil
-        {
-            return true
-        }
-        return false
+        )
+        let hasSnapshotDetails = snapshot?.workoutDetails != nil
+        return WorkoutDomainRules.canLaunchSession(
+            session: session,
+            isOnline: networkMonitor.currentStatus,
+            hasCachedWorkoutDetails: hasCachedWorkoutDetails,
+            hasSnapshotDetails: hasSnapshotDetails,
+        )
     }
 
     private func shouldShowProgramProgress(_ progress: ProgramProgress, now: Date = Date()) -> Bool {

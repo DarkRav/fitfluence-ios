@@ -31,15 +31,15 @@ struct HelpAndDiagnosticsView: View {
                     }
                     .accessibilityLabel("Скопировать диагностику")
 
-                    FFButton(title: "Retry sync now", variant: .secondary) {
+                    FFButton(title: "Повторить синхронизацию", variant: .secondary) {
                         Task { await viewModel.retrySyncNow() }
                     }
                     .accessibilityLabel("Повторить синхронизацию")
 
-                    FFButton(title: "Export sync log", variant: .secondary) {
+                    FFButton(title: "Скопировать журнал синхронизации", variant: .secondary) {
                         Task { await viewModel.exportSyncLog() }
                     }
-                    .accessibilityLabel("Экспорт sync log")
+                    .accessibilityLabel("Скопировать журнал синхронизации")
 
                     if let infoMessage = viewModel.infoMessage {
                         Text(infoMessage)
@@ -54,16 +54,16 @@ struct HelpAndDiagnosticsView: View {
 
             FFCard {
                 VStack(alignment: .leading, spacing: FFSpacing.xs) {
-                    Text("Sync diagnostics")
+                    Text("Диагностика синхронизации")
                         .font(FFTypography.h2)
                         .foregroundStyle(FFColors.textPrimary)
-                    Text("Pending operations: \(viewModel.diagnostics.pendingSyncOperations)")
+                    Text("Операций в очереди: \(viewModel.diagnostics.pendingSyncOperations)")
                         .font(FFTypography.caption)
                         .foregroundStyle(FFColors.textSecondary)
-                    Text("Last sync attempt: \(viewModel.diagnostics.lastSyncAttemptLabel)")
+                    Text("Последняя попытка: \(viewModel.diagnostics.lastSyncAttemptLabel)")
                         .font(FFTypography.caption)
                         .foregroundStyle(FFColors.textSecondary)
-                    Text("Last sync error: \(viewModel.diagnostics.lastSyncError ?? "—")")
+                    Text("Последняя ошибка: \(viewModel.diagnostics.lastSyncError ?? "—")")
                         .font(FFTypography.caption)
                         .foregroundStyle(
                             viewModel.diagnostics.lastSyncError == nil ? FFColors.textSecondary : FFColors.danger,
@@ -77,7 +77,7 @@ struct HelpAndDiagnosticsView: View {
                     Text("Версия приложения: \(viewModel.diagnostics.versionLabel)")
                         .font(FFTypography.caption)
                         .foregroundStyle(FFColors.textSecondary)
-                    Text("Build: \(viewModel.diagnostics.buildLabel)")
+                    Text("Сборка: \(viewModel.diagnostics.buildLabel)")
                         .font(FFTypography.caption)
                         .foregroundStyle(FFColors.gray300)
                 }
@@ -89,7 +89,7 @@ struct HelpAndDiagnosticsView: View {
         .navigationTitle("Помощь и диагностика")
         .sheet(isPresented: $isMailComposerPresented) {
             MailComposerView(
-                subject: "Fitfluence iOS: проблема",
+                subject: "Проблема в приложении",
                 body: "\n\n--- Диагностика ---\n\(viewModel.diagnosticsText)",
                 recipients: ["support@fitfluence.app"],
             )
@@ -97,7 +97,9 @@ struct HelpAndDiagnosticsView: View {
         .alert("Почта недоступна", isPresented: $isMailFallbackAlertPresented) {
             Button("Открыть почтовое приложение") {
                 let encoded = "support@fitfluence.app"
-                if let url = URL(string: "mailto:\(encoded)?subject=Fitfluence%20iOS%3A%20проблема") {
+                let subject = "Проблема в приложении".addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed)
+                    ?? "Проблема"
+                if let url = URL(string: "mailto:\(encoded)?subject=\(subject)") {
                     openURL(url)
                 }
             }

@@ -433,22 +433,22 @@ final class HomeViewModel {
     }
 
     private func canLaunch(session: ActiveWorkoutSession) async -> Bool {
-        if session.source == .program, session.programId.isUUID, isOnline {
-            return true
-        }
-        if await hasCachedWorkoutDetails(programId: session.programId, workoutId: session.workoutId) {
-            return true
-        }
-        if let snapshot = await progressStore.load(
+        let hasCachedWorkoutDetails = await hasCachedWorkoutDetails(
+            programId: session.programId,
+            workoutId: session.workoutId,
+        )
+        let snapshot = await progressStore.load(
             userSub: session.userSub,
             programId: session.programId,
             workoutId: session.workoutId,
-        ),
-            snapshot.workoutDetails != nil
-        {
-            return true
-        }
-        return false
+        )
+        let hasSnapshotDetails = snapshot?.workoutDetails != nil
+        return WorkoutDomainRules.canLaunchSession(
+            session: session,
+            isOnline: isOnline,
+            hasCachedWorkoutDetails: hasCachedWorkoutDetails,
+            hasSnapshotDetails: hasSnapshotDetails,
+        )
     }
 
     private func canLaunch(plannedWorkout: HomePlannedWorkoutSnapshot) async -> Bool {

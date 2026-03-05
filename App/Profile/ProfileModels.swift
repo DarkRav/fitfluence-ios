@@ -9,7 +9,7 @@ enum TrainingWeightUnit: String, CaseIterable, Codable, Equatable, Sendable {
         case .kilograms:
             "Килограммы (кг)"
         case .pounds:
-            "Фунты (lb)"
+            "Фунты"
         }
     }
 }

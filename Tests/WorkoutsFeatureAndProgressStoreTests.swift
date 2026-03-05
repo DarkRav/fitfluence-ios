@@ -333,6 +333,123 @@ final class WorkoutsFeatureAndProgressStoreTests: XCTestCase {
         XCTAssertEqual(latest?.status, .inProgress)
     }
 
+    func testWorkoutLifecycleTransitionsInvariant() {
+        XCTAssertTrue(WorkoutDomainRules.canTransition(from: .draft, to: .inProgress))
+        XCTAssertTrue(WorkoutDomainRules.canTransition(from: .draft, to: .completed))
+        XCTAssertTrue(WorkoutDomainRules.canTransition(from: .inProgress, to: .completed))
+        XCTAssertTrue(WorkoutDomainRules.canTransition(from: .inProgress, to: .cancelled))
+        XCTAssertTrue(WorkoutDomainRules.canTransition(from: .draft, to: .draft))
+
+        XCTAssertFalse(WorkoutDomainRules.canTransition(from: .completed, to: .inProgress))
+        XCTAssertFalse(WorkoutDomainRules.canTransition(from: .cancelled, to: .inProgress))
+    }
+
+    func testWorkoutProgressStatusResolutionInvariant() {
+        let empty = WorkoutDomainRules.progressStatus(isFinished: false, exercises: [:])
+        XCTAssertEqual(empty, .notStarted)
+
+        let inProgress = WorkoutDomainRules.progressStatus(
+            isFinished: false,
+            exercises: [
+                "e1": StoredExerciseProgress(sets: [
+                    StoredSetProgress(isCompleted: false, repsText: "8", weightText: "", rpeText: ""),
+                ]),
+            ],
+        )
+        XCTAssertEqual(inProgress, .inProgress)
+
+        let completed = WorkoutDomainRules.progressStatus(
+            isFinished: true,
+            exercises: [:],
+        )
+        XCTAssertEqual(completed, .completed)
+    }
+
+    func testUserFacingUILiteralsAreRussianOnly() throws {
+        let projectRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let appRoot = projectRoot.appendingPathComponent("App")
+        let files = try swiftFiles(at: appRoot)
+        var violations: [String] = []
+
+        for fileURL in files {
+            let source = try String(contentsOf: fileURL, encoding: .utf8)
+            let literals = extractUILiterals(from: source)
+            for literal in literals {
+                let normalized = sanitizeUILiteral(literal)
+                guard !normalized.isEmpty else { continue }
+                if normalized.range(of: "[A-Za-z]", options: .regularExpression) != nil {
+                    violations.append("\(fileURL.path): \"\(literal)\"")
+                }
+            }
+        }
+
+        XCTAssertTrue(
+            violations.isEmpty,
+            "Найдены пользовательские строки с латиницей:\n\(violations.joined(separator: "\n"))",
+        )
+    }
+
+    private func swiftFiles(at root: URL) throws -> [URL] {
+        let enumerator = FileManager.default.enumerator(
+            at: root,
+            includingPropertiesForKeys: nil,
+            options: [.skipsHiddenFiles],
+        )
+
+        var result: [URL] = []
+        while let file = enumerator?.nextObject() as? URL {
+            if file.pathExtension == "swift" {
+                result.append(file)
+            }
+        }
+        return result
+    }
+
+    private func extractUILiterals(from source: String) -> [String] {
+        let patterns = [
+            #"Text\(\s*"((?:[^"\\]|\\.)*)"\s*\)"#,
+            #"Button\(\s*"((?:[^"\\]|\\.)*)"\s*(?:,|\))"#,
+            #"FFButton\(\s*title:\s*"((?:[^"\\]|\\.)*)""#,
+            #"navigationTitle\(\s*"((?:[^"\\]|\\.)*)"\s*\)"#,
+            #"alert\(\s*"((?:[^"\\]|\\.)*)"\s*,"#,
+            #"accessibility(?:Label|Hint)\(\s*"((?:[^"\\]|\\.)*)"\s*\)"#,
+            #"FFTextField\(\s*label:\s*"((?:[^"\\]|\\.)*)""#,
+            #"FFTextField\(\s*label:\s*"(?:[^"\\]|\\.)*"\s*,\s*placeholder:\s*"((?:[^"\\]|\\.)*)""#,
+            #"FF(?:EmptyState|ErrorState|LoadingState)\(\s*title:\s*"((?:[^"\\]|\\.)*)""#,
+            #"FF(?:EmptyState|ErrorState)\(\s*title:\s*"(?:[^"\\]|\\.)*"\s*,\s*message:\s*"((?:[^"\\]|\\.)*)""#,
+        ]
+
+        return patterns.flatMap { pattern in
+            guard let regex = try? NSRegularExpression(
+                pattern: pattern,
+                options: [.dotMatchesLineSeparators],
+            ) else {
+                return [String]()
+            }
+            let matches = regex.matches(in: source, range: NSRange(source.startIndex..., in: source))
+            return matches.compactMap { match in
+                guard match.numberOfRanges > 1,
+                      let range = Range(match.range(at: 1), in: source)
+                else {
+                    return nil
+                }
+                return String(source[range])
+            }
+        }
+    }
+
+    private func sanitizeUILiteral(_ value: String) -> String {
+        var text = value
+        text = text.replacingOccurrences(of: #"\\\([^"]*\)"#, with: "", options: .regularExpression)
+        text = text.replacingOccurrences(of: #"`[^`]*`"#, with: "", options: .regularExpression)
+        text = text.replacingOccurrences(of: #"(?:https?|mailto):\S+"#, with: "", options: .regularExpression)
+        text = text.replacingOccurrences(of: #"/v\d+/[^\s`]+"#, with: "", options: .regularExpression)
+        text = text.replacingOccurrences(of: #"\\n|\\t|\\r"#, with: " ", options: .regularExpression)
+        return text.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     private var sampleWorkoutDetails: WorkoutDetailsModel {
         WorkoutDetailsModel(
             id: "w1",

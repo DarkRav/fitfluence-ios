@@ -1,5 +1,71 @@
 import Foundation
 
+enum WorkoutLifecycleState: String, Equatable, Sendable {
+    case draft
+    case inProgress
+    case completed
+    case cancelled
+}
+
+enum WorkoutDomainRules {
+    static func progressStatus(
+        isFinished: Bool,
+        exercises: [String: StoredExerciseProgress],
+    ) -> WorkoutProgressStatus {
+        if isFinished {
+            return .completed
+        }
+
+        let allSets = exercises.values.flatMap(\.sets)
+        let hasCompletedSet = allSets.contains(where: \.isCompleted)
+        let hasEnteredValues = allSets.contains { set in
+            !set.repsText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                || !set.weightText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                || !set.rpeText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+
+        if hasCompletedSet || hasEnteredValues {
+            return .inProgress
+        }
+
+        return .notStarted
+    }
+
+    static func canTransition(from: WorkoutLifecycleState, to: WorkoutLifecycleState) -> Bool {
+        if from == to {
+            return true
+        }
+
+        switch (from, to) {
+        case (.draft, .inProgress), (.draft, .completed), (.draft, .cancelled):
+            return true
+        case (.inProgress, .completed), (.inProgress, .cancelled):
+            return true
+        case (.completed, _), (.cancelled, _):
+            return false
+        default:
+            return false
+        }
+    }
+
+    static func canLaunchSession(
+        session: ActiveWorkoutSession,
+        isOnline: Bool,
+        hasCachedWorkoutDetails: Bool,
+        hasSnapshotDetails: Bool,
+    ) -> Bool {
+        if session.source == .program, UUID(uuidString: session.programId) != nil, isOnline {
+            return true
+        }
+
+        if hasCachedWorkoutDetails || hasSnapshotDetails {
+            return true
+        }
+
+        return false
+    }
+}
+
 enum WorkoutProgressStatus: String, Equatable, Sendable {
     case notStarted
     case inProgress
@@ -41,23 +107,10 @@ struct WorkoutProgressSnapshot: Codable, Equatable, Sendable {
     var exercises: [String: StoredExerciseProgress]
 
     var status: WorkoutProgressStatus {
-        if isFinished {
-            return .completed
-        }
-
-        let allSets = exercises.values.flatMap(\.sets)
-        let hasCompletedSet = allSets.contains(where: \.isCompleted)
-        let hasEnteredValues = allSets.contains { set in
-            !set.repsText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                || !set.weightText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                || !set.rpeText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        }
-
-        if hasCompletedSet || hasEnteredValues {
-            return .inProgress
-        }
-
-        return .notStarted
+        WorkoutDomainRules.progressStatus(
+            isFinished: isFinished,
+            exercises: exercises,
+        )
     }
 }
 

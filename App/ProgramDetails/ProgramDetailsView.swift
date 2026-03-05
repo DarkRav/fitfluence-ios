@@ -715,12 +715,11 @@ final class ProgramDetailsViewModel {
         isCreatorFollowLoading = true
         creatorInfoMessage = nil
 
-        let result: Result<Void, APIError> = switch action {
-        case .follow:
-            await programsClient.followCreator(influencerId: creatorCard.id)
-        case .unfollow:
-            await programsClient.unfollowCreator(influencerId: creatorCard.id)
-        }
+        let result = await FollowMutationExecutor.perform(
+            action: action,
+            influencerId: creatorCard.id,
+            programsClient: programsClient,
+        )
 
         isCreatorFollowLoading = false
 
@@ -930,7 +929,7 @@ struct ProgramDetailsScreen: View {
             } else {
                 FFErrorState(
                     title: "Тренировки недоступны",
-                    message: "Проверьте конфигурацию API-клиента для загрузки тренировок.",
+                    message: "Проверьте конфигурацию клиента сервера для загрузки тренировок.",
                     retryTitle: "Назад",
                 ) {
                     viewModel.isWorkoutsPresented = false

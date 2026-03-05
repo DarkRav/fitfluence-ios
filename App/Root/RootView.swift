@@ -89,7 +89,7 @@ private struct AuthEntryView: View {
                     Text("Добро пожаловать")
                         .font(FFTypography.h1)
                         .foregroundStyle(FFColors.textPrimary)
-                    Text("Войдите, чтобы начать тренировки в Fitfluence.")
+                    Text("Войдите, чтобы начать тренировки.")
                         .font(FFTypography.body)
                         .foregroundStyle(FFColors.textSecondary)
                 }
@@ -372,6 +372,65 @@ private struct AthleteShellView: View {
     }
 }
 
+private struct ProgramWorkoutRoute: Identifiable, Hashable {
+    let programId: String
+    let workoutId: String
+
+    var id: String {
+        "\(programId)::\(workoutId)"
+    }
+}
+
+private struct PresetWorkoutRoute: Identifiable {
+    let workout: WorkoutDetailsModel
+    let source: WorkoutSource
+
+    var id: String {
+        "\(source.rawValue)::\(workout.id)"
+    }
+}
+
+private struct RecentWorkoutDetailsRoute: Identifiable {
+    let record: CompletedWorkoutRecord
+
+    var id: String {
+        record.id
+    }
+}
+
+private enum RepeatWorkoutTemplateFallback {
+    case quickBuilder
+    case templateLibrary
+}
+
+private enum RepeatWorkoutNavigationTarget {
+    case program(ProgramWorkoutRoute)
+    case quickBuilder
+    case templateLibrary
+}
+
+private func resolveRepeatWorkoutTarget(
+    for record: CompletedWorkoutRecord,
+    templateFallback: RepeatWorkoutTemplateFallback,
+) -> RepeatWorkoutNavigationTarget {
+    switch record.source {
+    case .program:
+        if UUID(uuidString: record.programId) != nil {
+            return .program(ProgramWorkoutRoute(programId: record.programId, workoutId: record.workoutId))
+        }
+        return .quickBuilder
+    case .template:
+        switch templateFallback {
+        case .quickBuilder:
+            return .quickBuilder
+        case .templateLibrary:
+            return .templateLibrary
+        }
+    case .freestyle:
+        return .quickBuilder
+    }
+}
+
 private struct PlanTabContent: View {
     let apiClient: APIClientProtocol?
     let userSub: String
@@ -381,40 +440,6 @@ private struct PlanTabContent: View {
     @State private var presetWorkoutRoute: PresetWorkoutRoute?
     @State private var recentWorkoutDetailsRoute: RecentWorkoutDetailsRoute?
     @State private var isQuickBuilderPresented = false
-
-    private struct ProgramWorkoutRoute: Identifiable, Hashable {
-        let programId: String
-        let workoutId: String
-
-        var id: String {
-            "\(programId)::\(workoutId)"
-        }
-    }
-
-    private struct PresetWorkoutRoute: Identifiable {
-        let workout: WorkoutDetailsModel
-        let source: WorkoutSource
-
-        var id: String {
-            "\(source.rawValue)::\(workout.id)"
-        }
-    }
-
-    private struct RecentWorkoutDetailsRoute: Identifiable, Hashable {
-        let record: CompletedWorkoutRecord
-
-        var id: String {
-            record.id
-        }
-
-        static func == (lhs: RecentWorkoutDetailsRoute, rhs: RecentWorkoutDetailsRoute) -> Bool {
-            lhs.id == rhs.id
-        }
-
-        func hash(into hasher: inout Hasher) {
-            hasher.combine(id)
-        }
-    }
 
     init(
         apiClient: APIClientProtocol?,
@@ -485,16 +510,12 @@ private struct PlanTabContent: View {
     }
 
     private func openRepeatWorkout(_ record: CompletedWorkoutRecord) {
-        switch record.source {
-        case .program:
-            guard UUID(uuidString: record.programId) != nil else {
-                isQuickBuilderPresented = true
-                return
-            }
-            programWorkoutRoute = ProgramWorkoutRoute(programId: record.programId, workoutId: record.workoutId)
-        case .template:
+        switch resolveRepeatWorkoutTarget(for: record, templateFallback: .quickBuilder) {
+        case let .program(route):
+            programWorkoutRoute = route
+        case .quickBuilder:
             isQuickBuilderPresented = true
-        case .freestyle:
+        case .templateLibrary:
             isQuickBuilderPresented = true
         }
     }
@@ -1459,14 +1480,7 @@ struct WorkoutSummaryView: View {
     }
 
     private var syncStatusMessage: String {
-        switch syncStatus {
-        case .synced:
-            "Прогресс сохранён"
-        case .savedLocally:
-            "Сохранено на устройстве"
-        case .delayed:
-            "Ошибка синхронизации"
-        }
+        syncStatus.title
     }
 
     private func volumeComparisonText(comparison: WorkoutSummaryState.ComparisonDelta) -> String {
@@ -1511,44 +1525,12 @@ private struct TrainingTabContent: View {
     @State private var isQuickBuilderPresented = false
     @State private var isTemplateLibraryPresented = false
 
-    private struct ProgramWorkoutRoute: Identifiable, Hashable {
-        let programId: String
-        let workoutId: String
-        var id: String {
-            "\(programId)::\(workoutId)"
-        }
-    }
-
-    private struct PresetWorkoutRoute: Identifiable {
-        let workout: WorkoutDetailsModel
-        let source: WorkoutSource
-        var id: String {
-            "\(source.rawValue)::\(workout.id)"
-        }
-    }
-
     private struct ProgramHistoryRoute: Identifiable, Hashable {
         let programId: String
         let programTitle: String
 
         var id: String {
             programId
-        }
-    }
-
-    private struct RecentWorkoutDetailsRoute: Identifiable, Hashable {
-        let record: CompletedWorkoutRecord
-
-        var id: String {
-            record.id
-        }
-
-        static func == (lhs: RecentWorkoutDetailsRoute, rhs: RecentWorkoutDetailsRoute) -> Bool {
-            lhs.id == rhs.id
-        }
-
-        func hash(into hasher: inout Hasher) {
-            hasher.combine(id)
         }
     }
 
@@ -1670,17 +1652,13 @@ private struct TrainingTabContent: View {
     }
 
     private func openRepeatWorkout(_ record: CompletedWorkoutRecord) {
-        switch record.source {
-        case .program:
-            guard UUID(uuidString: record.programId) != nil else {
-                isQuickBuilderPresented = true
-                return
-            }
-            programWorkoutRoute = ProgramWorkoutRoute(programId: record.programId, workoutId: record.workoutId)
-        case .template:
-            isTemplateLibraryPresented = true
-        case .freestyle:
+        switch resolveRepeatWorkoutTarget(for: record, templateFallback: .templateLibrary) {
+        case let .program(route):
+            programWorkoutRoute = route
+        case .quickBuilder:
             isQuickBuilderPresented = true
+        case .templateLibrary:
+            isTemplateLibraryPresented = true
         }
     }
 

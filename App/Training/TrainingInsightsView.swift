@@ -1715,7 +1715,7 @@ private struct ProgressAnalyticsView: View {
                             }
                             Spacer(minLength: FFSpacing.sm)
                             VStack(alignment: .trailing, spacing: FFSpacing.xxs) {
-                                Text("PR")
+                                Text("Рекорд")
                                     .font(FFTypography.caption.weight(.bold))
                                     .foregroundStyle(FFColors.background)
                                     .padding(.horizontal, FFSpacing.xs)

@@ -130,7 +130,7 @@ struct DataAndOfflineView: View {
             buildLabel: "42",
             pendingSyncOperations: 3,
             lastSyncAttemptLabel: "Сегодня, 10:42",
-            lastSyncError: "Offline",
+            lastSyncError: "Нет сети",
         )
         return vm
     }()

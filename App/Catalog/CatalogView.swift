@@ -732,6 +732,25 @@ enum FollowMutationAction {
     case unfollow
 }
 
+enum FollowMutationExecutor {
+    static func perform(
+        action: FollowMutationAction,
+        influencerId: UUID,
+        programsClient: ProgramsClientProtocol?,
+    ) async -> Result<Void, APIError> {
+        guard let programsClient else {
+            return .failure(.invalidURL)
+        }
+
+        switch action {
+        case .follow:
+            return await programsClient.followCreator(influencerId: influencerId)
+        case .unfollow:
+            return await programsClient.unfollowCreator(influencerId: influencerId)
+        }
+    }
+}
+
 fileprivate enum FollowFeatureAvailability {
     case unknown
     case available
@@ -971,16 +990,11 @@ final class AthletesShowcaseViewModel {
         error = nil
         infoMessage = nil
 
-        let result: Result<Void, APIError> = if let programsClient {
-            switch action {
-            case .follow:
-                await programsClient.followCreator(influencerId: influencerId)
-            case .unfollow:
-                await programsClient.unfollowCreator(influencerId: influencerId)
-            }
-        } else {
-            .failure(.invalidURL)
-        }
+        let result = await FollowMutationExecutor.perform(
+            action: action,
+            influencerId: influencerId,
+            programsClient: programsClient,
+        )
 
         followLoadingIDs.remove(influencerId)
 
@@ -1336,16 +1350,11 @@ final class AthleteSearchViewModel {
         error = nil
         infoMessage = nil
 
-        let result: Result<Void, APIError> = if let programsClient {
-            switch action {
-            case .follow:
-                await programsClient.followCreator(influencerId: influencerId)
-            case .unfollow:
-                await programsClient.unfollowCreator(influencerId: influencerId)
-            }
-        } else {
-            .failure(.invalidURL)
-        }
+        let result = await FollowMutationExecutor.perform(
+            action: action,
+            influencerId: influencerId,
+            programsClient: programsClient,
+        )
 
         followLoadingIDs.remove(influencerId)
 
@@ -1643,16 +1652,11 @@ final class FollowingAthletesViewModel {
         error = nil
         infoMessage = nil
 
-        let result: Result<Void, APIError> = if let programsClient {
-            switch action {
-            case .follow:
-                await programsClient.followCreator(influencerId: influencerId)
-            case .unfollow:
-                await programsClient.unfollowCreator(influencerId: influencerId)
-            }
-        } else {
-            .failure(.invalidURL)
-        }
+        let result = await FollowMutationExecutor.perform(
+            action: action,
+            influencerId: influencerId,
+            programsClient: programsClient,
+        )
 
         followLoadingIDs.remove(influencerId)
 
@@ -1938,16 +1942,11 @@ final class AthleteProfileViewModel {
         error = nil
         infoMessage = nil
 
-        let result: Result<Void, APIError> = if let programsClient {
-            switch action {
-            case .follow:
-                await programsClient.followCreator(influencerId: creatorID)
-            case .unfollow:
-                await programsClient.unfollowCreator(influencerId: creatorID)
-            }
-        } else {
-            .failure(.invalidURL)
-        }
+        let result = await FollowMutationExecutor.perform(
+            action: action,
+            influencerId: creatorID,
+            programsClient: programsClient,
+        )
 
         followLoading = false
 
@@ -3608,7 +3607,7 @@ private struct AthleteProfileHeader: View {
 
     private var aboutSection: some View {
         VStack(alignment: .leading, spacing: FFSpacing.xxs) {
-            Text("О тренере")
+            Text("Об атлете")
                 .font(FFTypography.caption.weight(.semibold))
                 .foregroundStyle(FFColors.textSecondary)
             HStack(alignment: .top, spacing: FFSpacing.xs) {
@@ -4156,10 +4155,10 @@ private func resolveSocialProofBadges(for creator: InfluencerPublicCard) -> [Str
         {
             result.append("🔥 Популярный")
         }
-        if (normalized.contains("top") || normalized.contains("топ") || normalized.contains("trainer") || normalized.contains("тренер") || normalized.contains("⭐")),
-           !result.contains("⭐ Топ тренер")
+        if (normalized.contains("top") || normalized.contains("топ") || normalized.contains("trainer") || normalized.contains("тренер") || normalized.contains("athlete") || normalized.contains("атлет") || normalized.contains("⭐")),
+           !result.contains("⭐ Топ атлет")
         {
-            result.append("⭐ Топ тренер")
+            result.append("⭐ Топ атлет")
         }
     }
 

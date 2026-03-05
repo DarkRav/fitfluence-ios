@@ -9,7 +9,7 @@ struct DiagnosticsView: View {
             VStack(spacing: FFSpacing.md) {
                 FFCard {
                     VStack(alignment: .leading, spacing: FFSpacing.xs) {
-                        Text("Диагностика API")
+                        Text("Диагностика сервера")
                             .font(FFTypography.h2)
                             .foregroundStyle(FFColors.textPrimary)
                         Text("Проверка выполняет безопасный запрос `/v1/programs/published/search`.")

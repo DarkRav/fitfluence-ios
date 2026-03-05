@@ -61,7 +61,7 @@ struct QuickWorkoutBuilderView: View {
                     FFCard {
                         FFTextField(
                             label: "Название тренировки",
-                            placeholder: "Например, Круговая A",
+                            placeholder: "Например, Круговая 1",
                             text: $workoutTitle,
                         )
                     }

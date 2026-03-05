@@ -27,9 +27,9 @@ final class ProfileViewModel {
     var settings: ProfileSettings = .default
 
     var displayName = "Атлет"
-    var email = "Email не указан"
-    var avatarInitials = "AT"
-    var syncStatus = "Локальные данные на устройстве"
+    var email = "Электронная почта не указана"
+    var avatarInitials = "АТ"
+    var syncStatus = SyncStatusKind.savedLocally.title
     var activeSession: ProfileSessionSnapshot?
     var diagnostics = ProfileDiagnosticsSnapshot(
         isOnline: false,
@@ -70,17 +70,17 @@ final class ProfileViewModel {
 
     var diagnosticsText: String {
         """
-        Fitfluence iOS
+        Приложение тренировок
         Пользователь: \(userSub)
         Статус сети: \(syncStatusTitle)
         Устройство: \(UIDevice.current.model)
-        iOS: \(UIDevice.current.systemVersion)
+        Версия системы: \(UIDevice.current.systemVersion)
         Версия: \(diagnostics.versionLabel) (\(diagnostics.buildLabel))
         Кэш: \(diagnostics.cacheSizeLabel)
         Локальные данные: \(diagnostics.localStorageLabel)
-        Pending sync operations: \(diagnostics.pendingSyncOperations)
-        Last sync attempt: \(diagnostics.lastSyncAttemptLabel)
-        Last sync error: \(diagnostics.lastSyncError ?? "—")
+        Операций в очереди синхронизации: \(diagnostics.pendingSyncOperations)
+        Последняя попытка синхронизации: \(diagnostics.lastSyncAttemptLabel)
+        Последняя ошибка синхронизации: \(diagnostics.lastSyncError ?? "—")
         """
     }
 
@@ -111,9 +111,9 @@ final class ProfileViewModel {
         let activeSessionValue = await progressStore.latestActiveSession(userSub: userSub)
 
         displayName = resolvedDisplayName()
-        email = me.email ?? "Email не указан"
+        email = me.email ?? "Электронная почта не указана"
         avatarInitials = initials(from: displayName)
-        syncStatus = isOnline ? "Синхронизация включена" : "Локальные данные на устройстве"
+        syncStatus = isOnline ? SyncStatusKind.synced.title : SyncStatusKind.savedLocally.title
         if let activeSessionValue, await canLaunch(session: activeSessionValue) {
             activeSession = buildActiveSession(activeSessionValue)
         } else {
@@ -137,7 +137,7 @@ final class ProfileViewModel {
 
     func updateNetworkStatus(_ online: Bool) {
         isOnline = online
-        syncStatus = online ? "Синхронизация включена" : "Локальные данные на устройстве"
+        syncStatus = online ? SyncStatusKind.synced.title : SyncStatusKind.savedLocally.title
         diagnostics = ProfileDiagnosticsSnapshot(
             isOnline: online,
             cacheSizeLabel: diagnostics.cacheSizeLabel,
@@ -148,6 +148,9 @@ final class ProfileViewModel {
             lastSyncAttemptLabel: diagnostics.lastSyncAttemptLabel,
             lastSyncError: diagnostics.lastSyncError,
         )
+        Task {
+            await refreshSyncDiagnostics()
+        }
     }
 
     func persistSettings() async {
@@ -184,7 +187,7 @@ final class ProfileViewModel {
     func exportSyncLog() async {
         let logText = await syncCoordinator.exportSyncLog(namespace: userSub)
         UIPasteboard.general.string = logText
-        infoMessage = "Sync log скопирован"
+        infoMessage = "Журнал синхронизации скопирован"
     }
 
     func resetActiveSession() async {
@@ -213,26 +216,23 @@ final class ProfileViewModel {
     }
 
     private func canLaunch(session: ActiveWorkoutSession) async -> Bool {
-        if session.source == .program, UUID(uuidString: session.programId) != nil, isOnline {
-            return true
-        }
-        if await cacheStore.get(
+        let hasCachedWorkoutDetails = await cacheStore.get(
             "workout.details:\(session.programId):\(session.workoutId)",
             as: WorkoutDetailsModel.self,
             namespace: userSub,
-        ) != nil {
-            return true
-        }
-        if let snapshot = await progressStore.load(
+        ) != nil
+        let snapshot = await progressStore.load(
             userSub: session.userSub,
             programId: session.programId,
             workoutId: session.workoutId,
-        ),
-            snapshot.workoutDetails != nil
-        {
-            return true
-        }
-        return false
+        )
+        let hasSnapshotDetails = snapshot?.workoutDetails != nil
+        return WorkoutDomainRules.canLaunchSession(
+            session: session,
+            isOnline: isOnline,
+            hasCachedWorkoutDetails: hasCachedWorkoutDetails,
+            hasSnapshotDetails: hasSnapshotDetails,
+        )
     }
 
     private func resolvedDisplayName() -> String {
@@ -252,7 +252,7 @@ final class ProfileViewModel {
             .prefix(2)
             .map { String($0.prefix(1)).uppercased() }
         if parts.isEmpty {
-            return "AT"
+            return "АТ"
         }
         return parts.joined()
     }
@@ -282,5 +282,10 @@ final class ProfileViewModel {
             lastSyncAttemptLabel: lastSyncAttemptLabel,
             lastSyncError: snapshot.lastSyncError,
         )
+        if snapshot.pendingCount > 0 {
+            syncStatus = snapshot.hasDelayedRetries ? SyncStatusKind.delayed.title : SyncStatusKind.savedLocally.title
+            return
+        }
+        syncStatus = (await syncCoordinator.resolveSyncIndicator(namespace: userSub)).title
     }
 }

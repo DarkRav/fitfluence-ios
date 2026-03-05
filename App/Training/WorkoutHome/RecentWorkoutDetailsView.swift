@@ -45,7 +45,7 @@ struct RecentWorkoutDetailsView: View {
                         metricRow(title: "Общий объём", value: "\(formattedVolume(record.volume)) кг")
 
                         if let overallRPE = record.overallRPE {
-                            metricRow(title: "Общее RPE", value: "\(overallRPE)")
+                            metricRow(title: "Субъективная нагрузка", value: "\(overallRPE)")
                         }
                     }
                 }
@@ -207,7 +207,7 @@ struct RecentWorkoutDetailsView: View {
 
                         let repsLabel = reps ?? "—"
                         let weightLabel = weight ?? "—"
-                        let rpeSuffix = rpe.map { " • RPE \($0)" } ?? ""
+                        let rpeSuffix = rpe.map { " • нагрузка \($0)" } ?? ""
                         let line = "\(repsLabel) повт • \(weightLabel) кг\(rpeSuffix)"
                         return SetLine(index: index + 1, valueLine: line)
                     }

@@ -94,7 +94,7 @@ struct WorkoutSettingsView: View {
                             },
                         ),
                         label: {
-                            Text("Показывать RPE")
+                            Text("Показывать субъективную нагрузку")
                                 .font(FFTypography.body)
                                 .foregroundStyle(FFColors.textPrimary)
                         },
