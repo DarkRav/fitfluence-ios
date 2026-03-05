@@ -149,7 +149,7 @@ private struct AthleteShellView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            if let session = resumeSession, selectedTab != .training {
+            if let session = resumeSession {
                 WorkoutInProgressBanner(
                     workoutName: resumeSessionTitle,
                     detailsText: nil,
@@ -159,7 +159,9 @@ private struct AthleteShellView: View {
                             properties: ["source": "other_tab_banner"],
                         )
                         pendingResumeRequest = session
-                        selectedTab = .training
+                        if selectedTab != .training {
+                            selectedTab = .training
+                        }
                     },
                 )
                 .padding(.horizontal, FFSpacing.md)
@@ -183,6 +185,9 @@ private struct AthleteShellView: View {
                             }
                         },
                     )
+                    .navigationTitle("Тренировка")
+                    .navigationBarTitleDisplayMode(.inline)
+                    .navigationBarBackButtonHidden(true)
                 }
                 .tabItem {
                     Label("Тренировка", systemImage: "dumbbell.fill")
@@ -198,6 +203,9 @@ private struct AthleteShellView: View {
                         onOpenPlanTab: { selectedTab = .plan },
                         onOpenWorkoutHubTab: { selectedTab = .training },
                     )
+                    .navigationTitle("Каталог")
+                    .navigationBarTitleDisplayMode(.inline)
+                    .navigationBarBackButtonHidden(true)
                 }
                 .tabItem {
                     Label("Каталог", systemImage: "square.grid.2x2")
@@ -209,6 +217,9 @@ private struct AthleteShellView: View {
                         apiClient: apiClient,
                         userSub: me.subject ?? "anonymous",
                     )
+                    .navigationTitle("План")
+                    .navigationBarTitleDisplayMode(.inline)
+                    .navigationBarBackButtonHidden(true)
                 }
                 .tabItem {
                     Label("План", systemImage: "calendar")
@@ -225,6 +236,9 @@ private struct AthleteShellView: View {
                         onOpenPlan: { selectedTab = .plan },
                         onStartNextWorkout: { selectedTab = .training },
                     )
+                    .navigationTitle("Прогресс")
+                    .navigationBarTitleDisplayMode(.inline)
+                    .navigationBarBackButtonHidden(true)
                 }
                 .tabItem {
                     Label("Прогресс", systemImage: "chart.line.uptrend.xyaxis")
@@ -239,6 +253,9 @@ private struct AthleteShellView: View {
                         apiClient: apiClient,
                         onLogout: onLogout,
                     )
+                    .navigationTitle("Профиль")
+                    .navigationBarTitleDisplayMode(.inline)
+                    .navigationBarBackButtonHidden(true)
                 }
                 .tabItem {
                     Label("Профиль", systemImage: "person.crop.circle")
@@ -438,7 +455,6 @@ private struct PlanTabContent: View {
                 recentWorkoutDetailsRoute = RecentWorkoutDetailsRoute(record: record)
             },
         )
-            .navigationTitle("План")
             .navigationDestination(item: $programWorkoutRoute) { route in
                 WorkoutLaunchView(
                     userSub: userSub,
@@ -447,6 +463,7 @@ private struct PlanTabContent: View {
                     apiClient: apiClient,
                     onOpenPlan: {},
                 )
+                .navigationBarBackButtonHidden(false)
             }
             .navigationDestination(item: $presetWorkoutRoute) { route in
                 WorkoutLaunchView(
@@ -458,6 +475,7 @@ private struct PlanTabContent: View {
                     source: route.source,
                     onOpenPlan: {},
                 )
+                .navigationBarBackButtonHidden(false)
             }
             .navigationDestination(item: $recentWorkoutDetailsRoute) { route in
                 RecentWorkoutDetailsView(
@@ -466,6 +484,7 @@ private struct PlanTabContent: View {
                         openRepeatWorkout(route.record)
                     },
                 )
+                .navigationBarBackButtonHidden(false)
             }
             .fullScreenCover(isPresented: $isQuickBuilderPresented) {
                 NavigationStack {
@@ -567,8 +586,6 @@ private struct CatalogTabContent: View {
                     store.send(.logoutTapped)
                 },
             )
-            .navigationTitle("Каталог")
-            .navigationBarTitleDisplayMode(.inline)
             .navigationDestination(
                 isPresented: Binding(
                     get: { viewStore.state != nil },
@@ -605,6 +622,7 @@ private struct CatalogTabContent: View {
                         },
                     )
                     .navigationTitle("Программа")
+                    .navigationBarBackButtonHidden(false)
                 }
             }
         }
@@ -818,6 +836,7 @@ struct WorkoutLaunchView: View {
                 onBackToWorkoutHub: onBackToWorkoutHub,
                 onOpenPlan: onOpenPlan,
             )
+            .navigationBarBackButtonHidden(false)
         }
     }
 
@@ -1541,6 +1560,7 @@ private struct TrainingTabContent: View {
                 source: session.source,
                 onOpenPlan: onOpenPlan,
             )
+            .navigationBarBackButtonHidden(false)
         }
         .navigationDestination(item: $programWorkoutRoute) { route in
             WorkoutLaunchView(
@@ -1550,6 +1570,7 @@ private struct TrainingTabContent: View {
                 apiClient: apiClient,
                 onOpenPlan: onOpenPlan,
             )
+            .navigationBarBackButtonHidden(false)
         }
         .navigationDestination(item: $presetWorkoutRoute) { route in
             WorkoutLaunchView(
@@ -1561,6 +1582,7 @@ private struct TrainingTabContent: View {
                 source: route.source,
                 onOpenPlan: onOpenPlan,
             )
+            .navigationBarBackButtonHidden(false)
         }
         .navigationDestination(item: $programHistoryRoute) { route in
             ProgramWorkoutHistoryScreen(
@@ -1577,6 +1599,7 @@ private struct TrainingTabContent: View {
                     recentWorkoutDetailsRoute = RecentWorkoutDetailsRoute(record: record)
                 },
             )
+            .navigationBarBackButtonHidden(false)
         }
         .navigationDestination(item: $recentWorkoutDetailsRoute) { route in
             RecentWorkoutDetailsView(
@@ -1585,6 +1608,7 @@ private struct TrainingTabContent: View {
                     openRepeatWorkout(route.record)
                 },
             )
+            .navigationBarBackButtonHidden(false)
         }
         .fullScreenCover(isPresented: $isQuickBuilderPresented) {
             NavigationStack {
@@ -1685,6 +1709,7 @@ private struct ProfileTabView: View {
                 workoutId: session.workoutId,
                 apiClient: apiClient,
             )
+            .navigationBarBackButtonHidden(false)
         }
     }
 }

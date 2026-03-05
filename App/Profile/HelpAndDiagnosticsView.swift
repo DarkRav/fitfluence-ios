@@ -87,6 +87,7 @@ struct HelpAndDiagnosticsView: View {
         }
         .background(FFColors.background)
         .navigationTitle("Помощь и диагностика")
+        .navigationBarBackButtonHidden(false)
         .sheet(isPresented: $isMailComposerPresented) {
             MailComposerView(
                 subject: "Проблема в приложении",

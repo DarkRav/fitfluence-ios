@@ -21,18 +21,6 @@ struct WorkoutHomeScreen: View {
                     offlineBanner
                 }
 
-                if let resumeWorkout = viewModel.resumeWorkout,
-                   viewModel.hasResumeWorkout
-                {
-                    WorkoutInProgressBanner(
-                        workoutName: resumeWorkout.workoutName,
-                        detailsText: resumeProgressText(for: resumeWorkout),
-                        onContinue: {
-                            runResumeAction(resumeWorkout)
-                        }
-                    )
-                }
-
                 if !viewModel.hasResumeWorkout {
                     StartWorkoutCard(
                         isLoading: false,
@@ -87,8 +75,6 @@ struct WorkoutHomeScreen: View {
             .padding(.bottom, 16)
         }
         .background(FFColors.background)
-        .navigationTitle("Тренировка")
-        .navigationBarTitleDisplayMode(.inline)
         .refreshable {
             await viewModel.reload()
         }
@@ -112,20 +98,6 @@ struct WorkoutHomeScreen: View {
 
                 Spacer(minLength: 4)
             }
-        }
-    }
-
-    private func runResumeAction(_ resumeWorkout: WorkoutHomeViewModel.ResumeWorkout) {
-        ClientAnalytics.track(
-            .workoutContinueButtonTapped,
-            properties: ["source": "hub_resume"],
-        )
-
-        switch resumeWorkout.source {
-        case let .local(activeSession):
-            onContinueSession(activeSession)
-        case let .remote(target):
-            onOpenRemoteWorkout(target)
         }
     }
 
@@ -173,9 +145,6 @@ struct WorkoutHomeScreen: View {
         }
     }
 
-    private func resumeProgressText(for workout: WorkoutHomeViewModel.ResumeWorkout) -> String {
-        "\(workout.completedExercisesCount) из \(max(workout.totalExercisesCount, 1)) упражнений"
-    }
 }
 
 #Preview("Экран тренировки") {

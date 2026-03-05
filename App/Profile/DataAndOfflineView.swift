@@ -83,6 +83,7 @@ struct DataAndOfflineView: View {
         }
         .background(FFColors.background)
         .navigationTitle("Данные и офлайн")
+        .navigationBarBackButtonHidden(false)
         .alert("Сбросить тренировку?", isPresented: $isResetConfirmationPresented) {
             Button("Отмена", role: .cancel) {}
             Button("Сбросить", role: .destructive) {

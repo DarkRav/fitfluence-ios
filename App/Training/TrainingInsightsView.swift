@@ -1392,7 +1392,6 @@ struct TrainingInsightsView: View {
             .padding(.vertical, FFSpacing.md)
         }
         .background(FFColors.background)
-        .navigationTitle("Прогресс")
         .refreshable {
             await viewModel.reload()
         }
@@ -1897,11 +1896,13 @@ struct ExerciseProgressDetailsView: View {
         }
         .background(FFColors.background)
         .navigationTitle(viewModel.item.name)
+        .navigationBarBackButtonHidden(false)
         .task {
             await viewModel.onAppear()
         }
         .navigationDestination(item: $selectedWorkoutSummary) { summary in
             WorkoutSummaryView(summary: summary)
+                .navigationBarBackButtonHidden(false)
         }
     }
 

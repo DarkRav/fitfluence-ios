@@ -34,7 +34,6 @@ struct ProfileScreen: View {
             .padding(.vertical, FFSpacing.md)
         }
         .background(FFColors.background)
-        .navigationTitle("Профиль")
         .task {
             await viewModel.onAppear()
         }

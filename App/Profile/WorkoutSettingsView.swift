@@ -118,5 +118,6 @@ struct WorkoutSettingsView: View {
         }
         .background(FFColors.background)
         .navigationTitle("Настройки тренировки")
+        .navigationBarBackButtonHidden(false)
     }
 }
