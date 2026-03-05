@@ -101,6 +101,9 @@ struct InfluencerPublicCard: Codable, Equatable, Sendable, Identifiable, Hashabl
     let followersCount: Int
     let programsCount: Int
     let isFollowedByMe: Bool
+    let directionTag: String?
+    let achievements: [String]?
+    let trainingPhilosophy: String?
 
     private enum CodingKeys: String, CodingKey {
         case id
@@ -111,6 +114,18 @@ struct InfluencerPublicCard: Codable, Equatable, Sendable, Identifiable, Hashabl
         case followersCount
         case programsCount
         case isFollowedByMe
+        case directionTag
+        case trainingDirection
+        case specialization
+        case tag
+        case focus
+        case achievements
+        case achievementsList
+        case highlights
+        case titles
+        case trainingPhilosophy
+        case philosophy
+        case aboutDirection
     }
 
     init(
@@ -122,6 +137,9 @@ struct InfluencerPublicCard: Codable, Equatable, Sendable, Identifiable, Hashabl
         followersCount: Int,
         programsCount: Int,
         isFollowedByMe: Bool,
+        directionTag: String? = nil,
+        achievements: [String]? = nil,
+        trainingPhilosophy: String? = nil,
     ) {
         self.id = id
         self.displayName = displayName
@@ -131,6 +149,12 @@ struct InfluencerPublicCard: Codable, Equatable, Sendable, Identifiable, Hashabl
         self.followersCount = max(0, followersCount)
         self.programsCount = max(0, programsCount)
         self.isFollowedByMe = isFollowedByMe
+        self.directionTag = directionTag?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+        self.achievements = achievements?
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .nilIfEmpty
+        self.trainingPhilosophy = trainingPhilosophy?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
     }
 
     init(from decoder: Decoder) throws {
@@ -146,7 +170,7 @@ struct InfluencerPublicCard: Codable, Equatable, Sendable, Identifiable, Hashabl
             throw DecodingError.dataCorruptedError(forKey: .id, in: container, debugDescription: "Invalid influencer id")
         }
 
-        displayName = container.decodeLossyString(forKeys: [.displayName]) ?? "Creator"
+        displayName = container.decodeLossyString(forKeys: [.displayName]) ?? "Атлет"
         bio = container.decodeLossyString(forKeys: [.bio])
 
         if let directURL = container.decodeLossyURL(forKeys: [.avatar]) {
@@ -166,6 +190,31 @@ struct InfluencerPublicCard: Codable, Equatable, Sendable, Identifiable, Hashabl
         followersCount = max(0, container.decodeLossyInt(forKeys: [.followersCount]) ?? 0)
         programsCount = max(0, container.decodeLossyInt(forKeys: [.programsCount]) ?? 0)
         isFollowedByMe = container.decodeLossyBool(forKeys: [.isFollowedByMe]) ?? false
+        directionTag = container.decodeLossyString(forKeys: [.directionTag, .trainingDirection, .specialization, .tag, .focus])?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .nilIfEmpty
+        achievements = container.decodeLossyStringArray(forKeys: [.achievements, .achievementsList, .highlights, .titles])?
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .nilIfEmpty
+        trainingPhilosophy = container.decodeLossyString(forKeys: [.trainingPhilosophy, .philosophy, .aboutDirection])?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .nilIfEmpty
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(displayName, forKey: .displayName)
+        try container.encodeIfPresent(bio, forKey: .bio)
+        try container.encodeIfPresent(avatar, forKey: .avatar)
+        try container.encodeIfPresent(socialLinks, forKey: .socialLinks)
+        try container.encode(followersCount, forKey: .followersCount)
+        try container.encode(programsCount, forKey: .programsCount)
+        try container.encode(isFollowedByMe, forKey: .isFollowedByMe)
+        try container.encodeIfPresent(directionTag, forKey: .directionTag)
+        try container.encodeIfPresent(achievements, forKey: .achievements)
+        try container.encodeIfPresent(trainingPhilosophy, forKey: .trainingPhilosophy)
     }
 }
 
@@ -315,7 +364,7 @@ struct InfluencerBrief: Codable, Equatable, Sendable {
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         id = container.decodeLossyString(forKeys: [.id]) ?? ""
-        displayName = container.decodeLossyString(forKeys: [.displayName]) ?? "Creator"
+        displayName = container.decodeLossyString(forKeys: [.displayName]) ?? "Атлет"
         bio = container.decodeLossyString(forKeys: [.bio])
         socialLinks = try? container.decodeIfPresent([SocialLink].self, forKey: .socialLinks)
         followersCount = container.decodeLossyInt(forKeys: [.followersCount])
@@ -631,5 +680,52 @@ private extension KeyedDecodingContainer {
             }
         }
         return nil
+    }
+
+    func decodeLossyStringArray(forKeys keys: [Key]) -> [String]? {
+        for key in keys {
+            if let direct = try? decodeIfPresent([String].self, forKey: key) {
+                return direct
+            }
+
+            if let single = try? decodeIfPresent(String.self, forKey: key) {
+                let parts = single
+                    .split(whereSeparator: { [",", ";", "\n", "•"].contains($0) })
+                    .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
+                    .filter { !$0.isEmpty }
+                return parts.isEmpty ? [single] : parts
+            }
+
+            if let values = try? decodeIfPresent([JSONValue].self, forKey: key) {
+                let mapped = values.compactMap { value -> String? in
+                    switch value {
+                    case let .string(text):
+                        return text
+                    case let .int(number):
+                        return String(number)
+                    case let .double(number):
+                        return String(number)
+                    default:
+                        return nil
+                    }
+                }
+                if !mapped.isEmpty {
+                    return mapped
+                }
+            }
+        }
+        return nil
+    }
+}
+
+private extension Array where Element == String {
+    var nilIfEmpty: [String]? {
+        isEmpty ? nil : self
+    }
+}
+
+private extension String {
+    var nilIfEmpty: String? {
+        isEmpty ? nil : self
     }
 }

@@ -383,8 +383,9 @@ private struct CatalogTabContent: View {
     let onOpenWorkoutHubTab: () -> Void
 
     @State private var viewModel: CatalogViewModel
-    @State private var creatorsViewModel: CreatorsDiscoveryViewModel
-    @State private var followingViewModel: FollowingCreatorsViewModel
+    @State private var athletesShowcaseViewModel: AthletesShowcaseViewModel
+    @State private var athletesSearchViewModel: AthleteSearchViewModel
+    @State private var followingViewModel: FollowingAthletesViewModel
 
     init(
         store: StoreOf<RootFeature>,
@@ -410,15 +411,22 @@ private struct CatalogTabContent: View {
                 onUnauthorized: unauthorizedHandler,
             ),
         )
-        _creatorsViewModel = State(
-            initialValue: CreatorsDiscoveryViewModel(
+        _athletesShowcaseViewModel = State(
+            initialValue: AthletesShowcaseViewModel(
+                userSub: userSub,
+                programsClient: apiClient as? ProgramsClientProtocol,
+                onUnauthorized: unauthorizedHandler,
+            ),
+        )
+        _athletesSearchViewModel = State(
+            initialValue: AthleteSearchViewModel(
                 userSub: userSub,
                 programsClient: apiClient as? ProgramsClientProtocol,
                 onUnauthorized: unauthorizedHandler,
             ),
         )
         _followingViewModel = State(
-            initialValue: FollowingCreatorsViewModel(
+            initialValue: FollowingAthletesViewModel(
                 userSub: userSub,
                 programsClient: apiClient as? ProgramsClientProtocol,
                 onUnauthorized: unauthorizedHandler,
@@ -431,9 +439,10 @@ private struct CatalogTabContent: View {
             store,
             observe: \.selectedProgram,
         ) { viewStore in
-            CatalogHubScreen(
+            CatalogScreen(
                 programsViewModel: viewModel,
-                creatorsViewModel: creatorsViewModel,
+                athletesShowcaseViewModel: athletesShowcaseViewModel,
+                athletesSearchViewModel: athletesSearchViewModel,
                 followingViewModel: followingViewModel,
                 userSub: userSub,
                 environment: environment,
@@ -510,6 +519,7 @@ struct WorkoutSummaryState: Equatable, Identifiable {
     let comparison: ComparisonDelta?
     let nextWorkout: NextWorkout?
     let hasNewPersonalRecord: Bool
+    let personalRecordHighlights: [String]
 }
 
 enum WorkoutInstanceRouteState: Equatable {
@@ -578,6 +588,7 @@ struct WorkoutLaunchView: View {
             } else if routeState == .completed, let summary = readOnlySummary {
                 WorkoutSummaryView(
                     summary: summary,
+                    syncNamespace: userSub,
                     onStartNextWorkout: summary.nextWorkout == nil ? nil : {
                         Task { await startNextWorkout(from: summary) }
                     },
@@ -585,6 +596,7 @@ struct WorkoutLaunchView: View {
                         dismiss()
                         onBackToWorkoutHub?()
                     },
+                    onOpenPlan: onOpenPlan,
                 )
             } else if routeState == .abandoned {
                 abandonedWorkoutState
@@ -626,32 +638,23 @@ struct WorkoutLaunchView: View {
         .task {
             await load()
         }
-        .alert("Выйти из тренировки?", isPresented: $isExitConfirmationPresented) {
-            Button("Отмена", role: .cancel) {}
-            if source == .program,
-               UUID(uuidString: workoutId) != nil,
-               routeState == .resume
-            {
-                Button("Сохранить и выйти") {
-                    dismiss()
-                }
-                Button("Прервать тренировку", role: .destructive) {
-                    Task { await abandonWorkoutAndExit() }
-                }
-            } else {
-                Button("Выйти", role: .destructive) {
-                    dismiss()
-                }
+        .alert("Завершить тренировку?", isPresented: $isExitConfirmationPresented) {
+            Button("Продолжить тренировку", role: .cancel) {}
+            Button("Сохранить и выйти") {
+                ClientAnalytics.track(
+                    .workoutSaveAndExit,
+                    properties: [
+                        "program_id": programId,
+                        "workout_id": workoutId,
+                    ],
+                )
+                dismiss()
+            }
+            Button("Отменить тренировку", role: .destructive) {
+                Task { await abandonWorkoutAndExit() }
             }
         } message: {
-            if source == .program,
-               UUID(uuidString: workoutId) != nil,
-               routeState == .resume
-            {
-                Text("Действие «Сохранить и выйти» оставит тренировку в статусе «В процессе».")
-            } else {
-                Text("Прогресс сохранится на устройстве.")
-            }
+            Text("Прогресс сохранён на устройстве.")
         }
         .overlay {
             if isCompletingWorkout {
@@ -677,6 +680,7 @@ struct WorkoutLaunchView: View {
         .sheet(item: $workoutSummary) { summary in
             WorkoutSummaryView(
                 summary: summary,
+                syncNamespace: userSub,
                 onStartNextWorkout: {
                     Task { await startNextWorkout(from: summary) }
                 },
@@ -685,6 +689,7 @@ struct WorkoutLaunchView: View {
                     dismiss()
                     onBackToWorkoutHub?()
                 },
+                onOpenPlan: onOpenPlan,
             )
         }
         .navigationDestination(item: $nextWorkoutRoute) { route in
@@ -816,6 +821,7 @@ struct WorkoutLaunchView: View {
         var comparison: WorkoutSummaryState.ComparisonDelta?
         var nextWorkout: WorkoutSummaryState.NextWorkout?
         var hasNewPersonalRecord = false
+        var personalRecordHighlights: [String] = []
 
         if source == .program, UUID(uuidString: workoutId) != nil {
             _ = await SyncCoordinator.shared.enqueueCompleteWorkout(
@@ -849,8 +855,9 @@ struct WorkoutLaunchView: View {
                     )
                 }
 
+                personalRecordHighlights = makePersonalRecordHighlights(comparisonResponse.personalRecords ?? [])
                 hasNewPersonalRecord = comparisonResponse.hasNewPersonalRecord == true ||
-                    !(comparisonResponse.personalRecords ?? []).isEmpty
+                    !personalRecordHighlights.isEmpty
             }
 
             let activeEnrollmentResult = await athleteTrainingClient.activeEnrollmentProgress()
@@ -889,6 +896,7 @@ struct WorkoutLaunchView: View {
             comparison: comparison,
             nextWorkout: nextWorkout,
             hasNewPersonalRecord: hasNewPersonalRecord,
+            personalRecordHighlights: personalRecordHighlights,
         )
     }
 
@@ -928,6 +936,14 @@ struct WorkoutLaunchView: View {
     }
 
     private func abandonWorkoutAndExit() async {
+        ClientAnalytics.track(
+            .workoutCancelled,
+            properties: [
+                "program_id": programId,
+                "workout_id": workoutId,
+            ],
+        )
+
         guard source == .program, UUID(uuidString: workoutId) != nil else {
             dismiss()
             return
@@ -958,6 +974,7 @@ struct WorkoutLaunchView: View {
         var comparison: WorkoutSummaryState.ComparisonDelta?
         var nextWorkout: WorkoutSummaryState.NextWorkout?
         var hasNewPersonalRecord = false
+        var personalRecordHighlights: [String] = []
 
         if let athleteTrainingClient = apiClient as? AthleteTrainingClientProtocol {
             let comparisonResult = await athleteTrainingClient.workoutComparison(workoutInstanceId: workoutDetails.workout.id)
@@ -979,8 +996,9 @@ struct WorkoutLaunchView: View {
                     )
                 }
 
+                personalRecordHighlights = makePersonalRecordHighlights(comparisonResponse.personalRecords ?? [])
                 hasNewPersonalRecord = comparisonResponse.hasNewPersonalRecord == true ||
-                    !(comparisonResponse.personalRecords ?? []).isEmpty
+                    !personalRecordHighlights.isEmpty
             }
 
             let activeEnrollmentResult = await athleteTrainingClient.activeEnrollmentProgress()
@@ -1010,7 +1028,35 @@ struct WorkoutLaunchView: View {
             comparison: comparison,
             nextWorkout: nextWorkout,
             hasNewPersonalRecord: hasNewPersonalRecord,
+            personalRecordHighlights: personalRecordHighlights,
         )
+    }
+
+    private func makePersonalRecordHighlights(_ records: [AthletePersonalRecord]) -> [String] {
+        records
+            .prefix(3)
+            .map { record in
+                let exerciseName = record.exerciseName?.trimmingCharacters(in: .whitespacesAndNewlines)
+                let title = (exerciseName?.isEmpty == false ? exerciseName! : "Упражнение")
+                return "\(title): \(formattedPersonalRecordValue(record)) — личный рекорд"
+            }
+    }
+
+    private func formattedPersonalRecordValue(_ record: AthletePersonalRecord) -> String {
+        guard let value = record.value else {
+            return "новое значение"
+        }
+        let valueText: String
+        if floor(value) == value {
+            valueText = "\(Int(value))"
+        } else {
+            valueText = String(format: "%.1f", value)
+        }
+        let unit = record.unit?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if unit.isEmpty {
+            return valueText
+        }
+        return "\(valueText) \(unit)"
     }
 
     private func deriveMetrics(from exercises: [AthleteExerciseExecution]) -> (totalSets: Int, totalReps: Int, volume: Double, derivedDurationSeconds: Int) {
@@ -1089,19 +1135,47 @@ extension WorkoutPlayerViewModel.CompletionSummary: Identifiable {
 
 struct WorkoutSummaryView: View {
     let summary: WorkoutSummaryState
+    var syncNamespace: String? = nil
     var onStartNextWorkout: (() -> Void)? = nil
     var onBackToWorkoutHub: (() -> Void)? = nil
+    var onOpenPlan: (() -> Void)? = nil
 
-    private let isPRPlaceholderEnabled = false
+    @State private var syncStatus: SyncStatusKind = .savedLocally
+    @State private var pendingSyncCount = 0
 
     var body: some View {
         ScrollView {
             VStack(spacing: FFSpacing.md) {
+                if let syncNamespace {
+                    FFCard {
+                        HStack(spacing: FFSpacing.xs) {
+                            SyncStatusIndicator(status: syncStatus, compact: true)
+                            if pendingSyncCount > 0 {
+                                Text("\(pendingSyncCount)")
+                                    .font(FFTypography.caption.weight(.semibold))
+                                    .foregroundStyle(FFColors.primary)
+                                    .padding(.horizontal, FFSpacing.xs)
+                                    .padding(.vertical, FFSpacing.xxs)
+                                    .background(FFColors.primary.opacity(0.14))
+                                    .clipShape(Capsule())
+                            }
+                            Spacer(minLength: FFSpacing.xs)
+                            if syncStatus == .delayed {
+                                Button("Повторить") {
+                                    Task { await retrySync(syncNamespace: syncNamespace) }
+                                }
+                                .font(FFTypography.caption.weight(.semibold))
+                                .foregroundStyle(FFColors.accent)
+                            }
+                        }
+                    }
+                }
+
                 FFCard {
                     VStack(alignment: .leading, spacing: FFSpacing.xs) {
                         Text("Итоги тренировки")
                             .font(FFTypography.h1)
-                            .foregroundStyle(FFColors.textPrimary)
+                        .foregroundStyle(FFColors.textPrimary)
                         Text(summary.workoutTitle)
                             .font(FFTypography.body.weight(.semibold))
                             .foregroundStyle(FFColors.textPrimary)
@@ -1110,63 +1184,114 @@ struct WorkoutSummaryView: View {
 
                 FFCard {
                     VStack(alignment: .leading, spacing: FFSpacing.xs) {
+                        Text("Сводка")
+                            .font(FFTypography.h2)
+                            .foregroundStyle(FFColors.textPrimary)
                         metricRow(title: "Длительность", value: formattedDuration(summary.durationSeconds))
-                        metricRow(title: "Подходов", value: "\(summary.totalSets)")
-                        metricRow(title: "Повторений", value: "\(summary.totalReps)")
-                        metricRow(title: "Объём", value: "\(Int(summary.volume))")
+                        metricRow(title: "Выполнено подходов", value: "\(summary.totalSets)")
+                        metricRow(title: "Общий объём", value: "\(Int(summary.volume)) кг")
                     }
                 }
 
                 if let comparison = summary.comparison {
                     FFCard {
                         VStack(alignment: .leading, spacing: FFSpacing.xs) {
-                            Text("Сравнение с прошлой тренировкой")
+                            Text("Сравнение")
                                 .font(FFTypography.h2)
                                 .foregroundStyle(FFColors.textPrimary)
-                            deltaRow(title: "Изменение повторений", value: comparison.repsDelta.map { signed($0) } ?? "—")
-                            deltaRow(title: "Изменение объёма", value: comparison.volumeDelta.map { signed(Int($0)) } ?? "—")
-                            deltaRow(
-                                title: "Изменение длительности",
-                                value: comparison.durationDeltaSeconds.map { signed($0) } ?? "—",
-                            )
+                            deltaRow(title: "Объём", value: volumeComparisonText(comparison: comparison))
+                            if let repsDelta = comparison.repsDelta {
+                                deltaRow(title: "Повторы", value: signed(repsDelta))
+                            }
+                            if let durationDelta = comparison.durationDeltaSeconds {
+                                deltaRow(title: "Длительность", value: signed(durationDelta))
+                            }
                         }
                     }
                 }
 
-                if isPRPlaceholderEnabled, summary.hasNewPersonalRecord {
+                if !summary.personalRecordHighlights.isEmpty {
                     FFCard {
-                        Text("Новый личный рекорд")
-                            .font(FFTypography.h2)
-                            .foregroundStyle(FFColors.accent)
+                        VStack(alignment: .leading, spacing: FFSpacing.xs) {
+                            Text("Личные рекорды")
+                                .font(FFTypography.h2)
+                                .foregroundStyle(FFColors.textPrimary)
+                            ForEach(summary.personalRecordHighlights, id: \.self) { item in
+                                Text(item)
+                                    .font(FFTypography.body)
+                                    .foregroundStyle(FFColors.accent)
+                            }
+                        }
                     }
                 }
 
-                FFCard {
-                    VStack(alignment: .leading, spacing: FFSpacing.xs) {
-                        Text("Следующая тренировка")
-                            .font(FFTypography.h2)
-                            .foregroundStyle(FFColors.textPrimary)
-                        Text(summary.nextWorkout?.title ?? "Следующая тренировка появится после синхронизации.")
+                if summary.comparison == nil, summary.personalRecordHighlights.isEmpty {
+                    FFCard {
+                        Text("Тренировка сохранена. Продолжайте тренироваться — и здесь появится больше статистики.")
                             .font(FFTypography.body)
                             .foregroundStyle(FFColors.textSecondary)
                     }
                 }
 
-                if summary.nextWorkout != nil, let onStartNextWorkout {
-                    FFButton(
-                        title: "Начать следующую тренировку",
-                        variant: .primary,
-                        action: onStartNextWorkout,
-                    )
-                }
-                if let onBackToWorkoutHub {
-                    FFButton(title: "Вернуться в хаб тренировок", variant: .secondary, action: onBackToWorkoutHub)
+                FFCard {
+                    VStack(alignment: .leading, spacing: FFSpacing.sm) {
+                        Text("Что дальше")
+                            .font(FFTypography.h2)
+                            .foregroundStyle(FFColors.textPrimary)
+
+                        if let nextWorkout = summary.nextWorkout {
+                            Text(nextWorkout.title)
+                                .font(FFTypography.body)
+                                .foregroundStyle(FFColors.textSecondary)
+                        } else {
+                            Text("Вы можете вернуться в раздел тренировок и выбрать следующую сессию.")
+                                .font(FFTypography.body)
+                                .foregroundStyle(FFColors.textSecondary)
+                        }
+
+                        if summary.nextWorkout != nil ? onStartNextWorkout != nil : onBackToWorkoutHub != nil {
+                            FFButton(title: summary.nextWorkout == nil ? "Вернуться к тренировкам" : "Начать следующую тренировку", variant: .primary) {
+                                if summary.nextWorkout != nil {
+                                    ClientAnalytics.track(
+                                        .summaryNextWorkoutTapped,
+                                        properties: ["workout_id": summary.id],
+                                    )
+                                    onStartNextWorkout?()
+                                } else {
+                                    onBackToWorkoutHub?()
+                                }
+                            }
+                        }
+
+                        if let onOpenPlan {
+                            Button("Посмотреть план") {
+                                onOpenPlan()
+                            }
+                            .font(FFTypography.caption.weight(.semibold))
+                            .foregroundStyle(FFColors.accent)
+                            .buttonStyle(.plain)
+                        }
+
+                        Text(syncStatusMessage)
+                            .font(FFTypography.caption)
+                            .foregroundStyle(FFColors.textSecondary)
+                    }
                 }
             }
             .padding(.horizontal, FFSpacing.md)
             .padding(.vertical, FFSpacing.md)
         }
         .background(FFColors.background)
+        .task {
+            ClientAnalytics.track(
+                .workoutSummaryScreenOpened,
+                properties: ["workout_id": summary.id],
+            )
+        }
+        .task(id: syncNamespace) {
+            guard let syncNamespace else { return }
+            await refreshSync(syncNamespace: syncNamespace)
+        }
     }
 
     private func metricRow(title: String, value: String) -> some View {
@@ -1204,6 +1329,42 @@ struct WorkoutSummaryView: View {
             return "\(minutes) мин"
         }
         return "\(total) сек"
+    }
+
+    private var syncStatusMessage: String {
+        switch syncStatus {
+        case .synced:
+            "Прогресс сохранён"
+        case .savedLocally:
+            "Сохранено на устройстве"
+        case .delayed:
+            "Ошибка синхронизации"
+        }
+    }
+
+    private func volumeComparisonText(comparison: WorkoutSummaryState.ComparisonDelta) -> String {
+        guard let volumeDelta = comparison.volumeDelta else { return "—" }
+        let previousVolume = summary.volume - volumeDelta
+        if previousVolume > 0.1 {
+            let percent = Int((volumeDelta / previousVolume) * 100)
+            return "\(percent > 0 ? "+" : "")\(percent)%"
+        }
+        return signed(Int(volumeDelta))
+    }
+
+    private func retrySync(syncNamespace: String) async {
+        await SyncCoordinator.shared.retryNow(namespace: syncNamespace)
+        await refreshSync(syncNamespace: syncNamespace)
+    }
+
+    private func refreshSync(syncNamespace: String) async {
+        let diagnostics = await SyncCoordinator.shared.diagnostics(namespace: syncNamespace)
+        pendingSyncCount = diagnostics.pendingCount
+        if diagnostics.pendingCount > 0 {
+            syncStatus = diagnostics.hasDelayedRetries ? .delayed : .savedLocally
+            return
+        }
+        syncStatus = await SyncCoordinator.shared.resolveSyncIndicator(namespace: syncNamespace)
     }
 }
 

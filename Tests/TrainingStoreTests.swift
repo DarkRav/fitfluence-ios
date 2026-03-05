@@ -97,7 +97,7 @@ final class TrainingStoreTests: XCTestCase {
         let insight = ProgressInsightEngine.resolve(context: context, now: Date(), calendar: .current)
 
         XCTAssertEqual(insight.action, .openPlan)
-        XCTAssertEqual(insight.ctaTitle, "Open Plan")
+        XCTAssertEqual(insight.ctaTitle, "Открыть план")
     }
 
     func testProgressInsightEngineShowsRecentPRAction() {
@@ -115,7 +115,7 @@ final class TrainingStoreTests: XCTestCase {
         let insight = ProgressInsightEngine.resolve(context: context, now: Date(), calendar: calendar)
 
         XCTAssertEqual(insight.action, .openExercise(exerciseId: "ex-bench"))
-        XCTAssertEqual(insight.ctaTitle, "Open Exercise")
+        XCTAssertEqual(insight.ctaTitle, "Открыть упражнение")
     }
 
     func testProgressInsightEngineDetectsLongPause() {
@@ -133,6 +133,6 @@ final class TrainingStoreTests: XCTestCase {
         let insight = ProgressInsightEngine.resolve(context: context, now: Date(), calendar: calendar)
 
         XCTAssertEqual(insight.action, .startNextWorkout)
-        XCTAssertEqual(insight.ctaTitle, "Start next workout")
+        XCTAssertEqual(insight.ctaTitle, "Начать следующую тренировку")
     }
 }

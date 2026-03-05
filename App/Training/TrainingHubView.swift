@@ -4,7 +4,7 @@ import SwiftUI
 
 @Observable
 @MainActor
-final class TrainingHubViewModel {
+final class WorkoutHomeViewModel {
     struct RemoteWorkoutTarget: Equatable, Identifiable {
         let programId: String
         let workoutId: String
@@ -15,11 +15,32 @@ final class TrainingHubViewModel {
         }
     }
 
-    struct TodayScheduleItem: Equatable, Identifiable {
-        let id: String
+    struct ResumeWorkout: Equatable {
+        enum Source: Equatable {
+            case local(ActiveWorkoutSession)
+            case remote(RemoteWorkoutTarget)
+        }
+
+        let source: Source
         let title: String
-        let subtitle: String
-        let status: AthleteWorkoutInstanceStatus
+        let completedExercises: Int
+    }
+
+    struct ProgramProgress: Equatable {
+        let programId: String
+        let title: String
+        let completedWorkouts: Int
+        let totalWorkouts: Int
+
+        var progressText: String {
+            "\(completedWorkouts) / \(totalWorkouts) тренировок"
+        }
+
+        var progressValue: Double {
+            guard totalWorkouts > 0 else { return 0 }
+            let value = Double(completedWorkouts) / Double(totalWorkouts)
+            return min(max(value, 0), 1)
+        }
     }
 
     typealias SyncIndicatorState = SyncStatusKind
@@ -35,13 +56,19 @@ final class TrainingHubViewModel {
 
     var isLoading = false
     var isShowingCachedData = false
-    var activeSession: ActiveWorkoutSession?
-    var serverInProgressWorkout: RemoteWorkoutTarget?
-    var nextWorkout: RemoteWorkoutTarget?
-    var nextWorkoutProgressText: String?
-    var todaySchedule: [TodayScheduleItem] = []
+    var isOffline = false
+    var resumeWorkout: ResumeWorkout?
+    var startWorkoutTarget: RemoteWorkoutTarget?
+    var programProgress: ProgramProgress?
+    var recentWorkouts: [CompletedWorkoutRecord] = []
     var lastCompleted: CompletedWorkoutRecord?
+    var noActiveProgram = true
+    var noRecentWorkouts = true
     var syncIndicator: SyncIndicatorState = .savedLocally
+
+    private var localResumeCandidate: ResumeWorkout?
+    private var remoteResumeCandidate: ResumeWorkout?
+    private var serverInProgressWorkout: RemoteWorkoutTarget?
 
     init(
         userSub: String,
@@ -70,7 +97,11 @@ final class TrainingHubViewModel {
     func reload() async {
         guard !userSub.isEmpty else { return }
         isLoading = true
-        defer { isLoading = false }
+        isOffline = !networkMonitor.currentStatus
+        defer {
+            isLoading = false
+            finalizeStates()
+        }
 
         await syncCoordinator.activate(namespace: userSub)
         await loadLocalContext()
@@ -78,7 +109,6 @@ final class TrainingHubViewModel {
 
         guard networkMonitor.currentStatus, let athleteTrainingClient else {
             syncIndicator = .savedLocally
-            await ensureTodayScheduleFallback()
             return
         }
 
@@ -89,33 +119,53 @@ final class TrainingHubViewModel {
         await applyActiveEnrollment(await progressResult, cacheTTL: 60 * 5)
         await applyCalendar(await calendarResult, cacheTTL: 60 * 5)
         await applySyncStatus(await syncResult, cacheTTL: 60 * 2)
-
-        await ensureTodayScheduleFallback()
     }
 
     func startNextWorkout() async -> RemoteWorkoutTarget? {
-        guard let nextWorkout else { return nil }
+        guard let startWorkoutTarget else { return nil }
         _ = await syncCoordinator.enqueueStartWorkout(
             namespace: userSub,
-            workoutInstanceId: nextWorkout.workoutId,
+            workoutInstanceId: startWorkoutTarget.workoutId,
             startedAt: Date(),
         )
-        return nextWorkout
+        return startWorkoutTarget
+    }
+
+    func continueProgram() async -> RemoteWorkoutTarget? {
+        if let serverInProgressWorkout {
+            return serverInProgressWorkout
+        }
+        return await startNextWorkout()
     }
 
     private func loadLocalContext() async {
         async let active = progressStore.latestActiveSession(userSub: userSub)
-        async let history = trainingStore.history(userSub: userSub, source: nil, limit: 180)
+        async let history = trainingStore.history(userSub: userSub, source: nil, limit: 10)
 
-        let activeCandidate = await active
-        if let activeCandidate, await canLaunch(session: activeCandidate) {
-            activeSession = activeCandidate
+        if let activeCandidate = await active,
+           await canLaunch(session: activeCandidate)
+        {
+            let snapshot = await progressStore.load(
+                userSub: activeCandidate.userSub,
+                programId: activeCandidate.programId,
+                workoutId: activeCandidate.workoutId,
+            )
+            localResumeCandidate = ResumeWorkout(
+                source: .local(activeCandidate),
+                title: snapshot?.workoutDetails?.title.trimmedNilIfEmpty ?? "Незавершённая тренировка",
+                completedExercises: completedExercisesCount(
+                    snapshot: snapshot,
+                    fallbackCurrentExerciseIndex: activeCandidate.currentExerciseIndex,
+                ),
+            )
         } else {
-            activeSession = nil
+            localResumeCandidate = nil
         }
 
         let allHistory = await history
+        recentWorkouts = allHistory
         lastCompleted = allHistory.first
+        rebuildResume()
     }
 
     private func loadCachedRemoteContext() async {
@@ -128,7 +178,7 @@ final class TrainingHubViewModel {
             namespace: userSub,
         ) {
             isShowingCachedData = true
-            apply(progress: cachedEnrollment)
+            await apply(progress: cachedEnrollment)
         }
 
         if let cachedCalendar = await cacheStore.get(
@@ -137,7 +187,7 @@ final class TrainingHubViewModel {
             namespace: userSub,
         ) {
             isShowingCachedData = true
-            apply(calendar: cachedCalendar)
+            await apply(calendar: cachedCalendar)
         }
 
         if let cachedSync = await cacheStore.get(
@@ -162,7 +212,7 @@ final class TrainingHubViewModel {
     ) async {
         switch result {
         case let .success(progress):
-            apply(progress: progress)
+            await apply(progress: progress)
             await cacheStore.set(cacheKeys.enrollment, value: progress, namespace: userSub, ttl: cacheTTL)
             isShowingCachedData = false
         case .failure:
@@ -176,7 +226,7 @@ final class TrainingHubViewModel {
     ) async {
         switch result {
         case let .success(calendarResponse):
-            apply(calendar: calendarResponse)
+            await apply(calendar: calendarResponse)
             await cacheStore.set(
                 cacheKeys.calendar(month: monthKey(for: Date())),
                 value: calendarResponse,
@@ -211,41 +261,26 @@ final class TrainingHubViewModel {
         }
     }
 
-    private func ensureTodayScheduleFallback() async {
-        guard todaySchedule.isEmpty else { return }
-        let localPlans = await trainingStore.plans(userSub: userSub, month: Date())
-        let today = calendar.startOfDay(for: Date())
-        let mapped = localPlans
-            .filter { calendar.isDate($0.day, inSameDayAs: today) }
-            .map { plan in
-                TodayScheduleItem(
-                    id: "local-\(plan.id)",
-                    title: plan.title,
-                    subtitle: statusSubtitle(for: plan.status),
-                    status: status(for: plan.status),
-                )
-            }
-        todaySchedule = Array(mapped.prefix(1))
-    }
-
-    private func apply(progress: ActiveEnrollmentProgressResponse) {
-        let programId = progress.programId?.trimmedNilIfEmpty ?? "program"
+    private func apply(progress: ActiveEnrollmentProgressResponse) async {
+        let programId = progress.programId?.trimmedNilIfEmpty
         let nextWorkoutId = progress.nextWorkoutId?.trimmedNilIfEmpty
         let nextWorkoutTitle = progress.nextWorkoutTitle?.trimmedNilIfEmpty ?? "Следующая тренировка"
 
         if let currentWorkoutId = progress.currentWorkoutId?.trimmedNilIfEmpty,
-           progress.currentWorkoutStatus == .inProgress
+           progress.currentWorkoutStatus == .inProgress,
+           let resolvedProgramId = programId
         {
             serverInProgressWorkout = RemoteWorkoutTarget(
-                programId: programId,
+                programId: resolvedProgramId,
                 workoutId: currentWorkoutId,
                 title: progress.currentWorkoutTitle?.trimmedNilIfEmpty ?? "Текущая тренировка",
             )
         } else if let nextWorkoutId,
-                  progress.nextWorkoutStatus == .inProgress
+                  progress.nextWorkoutStatus == .inProgress,
+                  let resolvedProgramId = programId
         {
             serverInProgressWorkout = RemoteWorkoutTarget(
-                programId: programId,
+                programId: resolvedProgramId,
                 workoutId: nextWorkoutId,
                 title: nextWorkoutTitle,
             )
@@ -253,59 +288,105 @@ final class TrainingHubViewModel {
             serverInProgressWorkout = nil
         }
 
-        if let nextWorkoutId, serverInProgressWorkout?.workoutId != nextWorkoutId {
-            nextWorkout = RemoteWorkoutTarget(
-                programId: programId,
+        if let nextWorkoutId,
+           let resolvedProgramId = programId,
+           serverInProgressWorkout?.workoutId != nextWorkoutId
+        {
+            startWorkoutTarget = RemoteWorkoutTarget(
+                programId: resolvedProgramId,
                 workoutId: nextWorkoutId,
                 title: nextWorkoutTitle,
             )
         } else {
-            nextWorkout = nil
+            startWorkoutTarget = nil
         }
 
-        if let completed = progress.completedSessions, let total = progress.totalSessions, total > 0 {
-            nextWorkoutProgressText = "\(completed)/\(total) сессий"
+        if let resolvedProgramId = programId {
+            let completed = max(0, progress.completedSessions ?? 0)
+            let total = max(1, progress.totalSessions ?? completed)
+            programProgress = ProgramProgress(
+                programId: resolvedProgramId,
+                title: progress.programTitle?.trimmedNilIfEmpty ?? "Активная программа",
+                completedWorkouts: min(completed, total),
+                totalWorkouts: total,
+            )
         } else {
-            nextWorkoutProgressText = nil
+            programProgress = nil
         }
+
+        await updateRemoteResumeCandidate()
     }
 
-    private func apply(calendar response: AthleteCalendarResponse) {
-        let today = calendar.startOfDay(for: Date())
-        let todaysWorkouts = response.workouts
-            .filter { workout in
-                guard let date = parseDate(workout.scheduledDate ?? workout.startedAt ?? workout.completedAt) else {
-                    return false
+    private func apply(calendar response: AthleteCalendarResponse) async {
+        guard serverInProgressWorkout == nil,
+              let inProgress = response.workouts.first(where: { $0.status == .inProgress })
+        else {
+            return
+        }
+
+        serverInProgressWorkout = RemoteWorkoutTarget(
+            programId: inProgress.programId?.trimmedNilIfEmpty ?? "program",
+            workoutId: inProgress.id,
+            title: inProgress.title?.trimmedNilIfEmpty ?? "Текущая тренировка",
+        )
+
+        await updateRemoteResumeCandidate()
+    }
+
+    private func updateRemoteResumeCandidate() async {
+        guard let serverInProgressWorkout else {
+            remoteResumeCandidate = nil
+            rebuildResume()
+            return
+        }
+
+        let snapshot = await progressStore.load(
+            userSub: userSub,
+            programId: serverInProgressWorkout.programId,
+            workoutId: serverInProgressWorkout.workoutId,
+        )
+
+        remoteResumeCandidate = ResumeWorkout(
+            source: .remote(serverInProgressWorkout),
+            title: serverInProgressWorkout.title,
+            completedExercises: completedExercisesCount(snapshot: snapshot, fallbackCurrentExerciseIndex: nil),
+        )
+        rebuildResume()
+    }
+
+    private func rebuildResume() {
+        resumeWorkout = localResumeCandidate ?? remoteResumeCandidate
+    }
+
+    private func finalizeStates() {
+        noActiveProgram = programProgress == nil
+        noRecentWorkouts = recentWorkouts.isEmpty
+    }
+
+    private func completedExercisesCount(
+        snapshot: WorkoutProgressSnapshot?,
+        fallbackCurrentExerciseIndex: Int?,
+    ) -> Int {
+        if let snapshot {
+            let completed = snapshot.exercises.values.reduce(0) { partial, exercise in
+                let hasProgress = exercise.sets.contains { set in
+                    set.isCompleted
+                        || !set.repsText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                        || !set.weightText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                        || !set.rpeText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                 }
-                return calendar.isDate(date, inSameDayAs: today)
+                return partial + (hasProgress ? 1 : 0)
             }
-            .sorted { lhs, rhs in
-                let left = parseDate(lhs.scheduledDate ?? lhs.startedAt ?? lhs.completedAt) ?? .distantFuture
-                let right = parseDate(rhs.scheduledDate ?? rhs.startedAt ?? rhs.completedAt) ?? .distantFuture
-                return left < right
+            if completed > 0 {
+                return completed
             }
-
-        todaySchedule = todaysWorkouts.prefix(1).map { workout in
-            let status = workout.status ?? .planned
-            let time = parseDate(workout.scheduledDate ?? workout.startedAt)?.formatted(date: .omitted, time: .shortened)
-            let subtitle = [statusTitle(status), time].compactMap { $0 }.joined(separator: " • ")
-
-            return TodayScheduleItem(
-                id: workout.id,
-                title: workout.title?.trimmedNilIfEmpty ?? "Тренировка",
-                subtitle: subtitle.isEmpty ? "Без времени" : subtitle,
-                status: status,
-            )
         }
 
-        guard activeSession == nil, serverInProgressWorkout == nil else { return }
-        if let inProgress = response.workouts.first(where: { $0.status == .inProgress }) {
-            serverInProgressWorkout = RemoteWorkoutTarget(
-                programId: inProgress.programId?.trimmedNilIfEmpty ?? "program",
-                workoutId: inProgress.id,
-                title: inProgress.title?.trimmedNilIfEmpty ?? "Текущая тренировка",
-            )
+        if let fallbackCurrentExerciseIndex {
+            return max(0, fallbackCurrentExerciseIndex)
         }
+
+        return 0
     }
 
     private func mapSyncState(_ response: AthleteSyncStatusResponse) -> SyncIndicatorState {
@@ -368,82 +449,9 @@ final class TrainingHubViewModel {
         return formatter.string(from: date)
     }
 
-    private func parseDate(_ value: String?) -> Date? {
-        guard let value, !value.isEmpty else {
-            return nil
-        }
-        if let date = Self.iso8601WithFractions.date(from: value) {
-            return date
-        }
-        if let date = Self.iso8601.date(from: value) {
-            return date
-        }
-        if let dateOnly = Self.dateOnly.date(from: value) {
-            return dateOnly
-        }
-        return nil
-    }
-
-    private func statusTitle(_ status: AthleteWorkoutInstanceStatus) -> String {
-        switch status {
-        case .planned:
-            "Запланирована"
-        case .inProgress:
-            "В процессе"
-        case .completed:
-            "Завершена"
-        case .missed:
-            "Пропущена"
-        case .abandoned:
-            "Прервана"
-        }
-    }
-
-    private func statusSubtitle(for status: TrainingDayStatus) -> String {
-        switch status {
-        case .planned:
-            "Запланирована"
-        case .completed:
-            "Завершена"
-        case .missed:
-            "Пропущена"
-        }
-    }
-
-    private func status(for status: TrainingDayStatus) -> AthleteWorkoutInstanceStatus {
-        switch status {
-        case .planned:
-            .planned
-        case .completed:
-            .completed
-        case .missed:
-            .abandoned
-        }
-    }
-
     private var cacheKeys: CacheKeys {
         CacheKeys()
     }
-
-    private static let iso8601WithFractions: ISO8601DateFormatter = {
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        return formatter
-    }()
-
-    private static let iso8601: ISO8601DateFormatter = {
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime]
-        return formatter
-    }()
-
-    private static let dateOnly: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.timeZone = TimeZone(secondsFromGMT: 0)
-        formatter.dateFormat = "yyyy-MM-dd"
-        return formatter
-    }()
 
     private struct CacheKeys {
         let enrollment = "athlete.enrollment.active"
@@ -455,35 +463,82 @@ final class TrainingHubViewModel {
     }
 }
 
-struct TrainingHubView: View {
-    @State var viewModel: TrainingHubViewModel
+struct WorkoutHomeScreen: View {
+    @State var viewModel: WorkoutHomeViewModel
 
     let onContinueSession: (ActiveWorkoutSession) -> Void
-    let onOpenRemoteWorkout: (TrainingHubViewModel.RemoteWorkoutTarget) -> Void
+    let onOpenRemoteWorkout: (WorkoutHomeViewModel.RemoteWorkoutTarget) -> Void
     let onStartQuickWorkout: () -> Void
     let onOpenTemplates: () -> Void
     let onRepeatWorkout: (CompletedWorkoutRecord) -> Void
 
-    private enum PrimaryAction {
-        case continueLocal(ActiveWorkoutSession)
-        case continueRemote(TrainingHubViewModel.RemoteWorkoutTarget)
-        case startNext(TrainingHubViewModel.RemoteWorkoutTarget)
-        case startQuickWorkout
-    }
-
     var body: some View {
         ScrollView {
             VStack(spacing: FFSpacing.md) {
-                primaryCTACard
-                nextWorkoutCard
-                programProgressCard
-                quickActionsCard
+                if viewModel.isOffline {
+                    offlineStateCard
+                }
+
+                if let resumeWorkout = viewModel.resumeWorkout {
+                    ResumeWorkoutCard(
+                        title: resumeWorkout.title,
+                        completedExercises: resumeWorkout.completedExercises,
+                        onContinue: {
+                            runResumeAction(resumeWorkout)
+                        },
+                    )
+                }
+
+                StartWorkoutCard(
+                    isLoading: false,
+                    onStartWorkout: runStartWorkout,
+                )
+
+                if let progress = viewModel.programProgress {
+                    ProgramProgressCard(
+                        programTitle: progress.title,
+                        progressText: progress.progressText,
+                        progressValue: progress.progressValue,
+                        isEnabled: programContinueIsEnabled,
+                        onContinueProgram: runContinueProgram,
+                    )
+                } else if viewModel.noActiveProgram {
+                    noActiveProgramCard
+                }
+
+                QuickActionsSection(
+                    canRepeatLast: viewModel.lastCompleted != nil,
+                    onQuickWorkout: {
+                        ClientAnalytics.track(.workoutQuickButtonTapped)
+                        onStartQuickWorkout()
+                    },
+                    onOpenTemplates: {
+                        ClientAnalytics.track(.workoutTemplatesButtonTapped)
+                        onOpenTemplates()
+                    },
+                    onRepeatLast: {
+                        guard let lastCompleted = viewModel.lastCompleted else { return }
+                        ClientAnalytics.track(.workoutRepeatLastButtonTapped)
+                        onRepeatWorkout(lastCompleted)
+                    },
+                )
+
+                RecentWorkoutsSection(
+                    workouts: viewModel.recentWorkouts,
+                    isLoading: viewModel.isLoading,
+                    isEmpty: viewModel.noRecentWorkouts,
+                    onOpenWorkout: { workout in
+                        onRepeatWorkout(workout)
+                    },
+                )
             }
             .padding(.horizontal, FFSpacing.md)
-            .padding(.vertical, FFSpacing.md)
+            .padding(.top, FFSpacing.xs)
+            .padding(.bottom, FFSpacing.md)
         }
         .background(FFColors.background)
         .navigationTitle("Тренировка")
+        .navigationBarTitleDisplayMode(.inline)
         .refreshable {
             await viewModel.reload()
         }
@@ -493,268 +548,368 @@ struct TrainingHubView: View {
         }
     }
 
-    private var primaryCTACard: some View {
+    private var offlineStateCard: some View {
         FFCard {
-            VStack(alignment: .leading, spacing: FFSpacing.sm) {
-                HStack(alignment: .center, spacing: FFSpacing.sm) {
-                    Text(primaryTitle)
-                        .font(FFTypography.h2)
+            HStack(spacing: FFSpacing.sm) {
+                Image(systemName: "wifi.slash")
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundStyle(FFColors.primary)
+                VStack(alignment: .leading, spacing: FFSpacing.xxs) {
+                    Text("Вы офлайн")
+                        .font(FFTypography.body.weight(.semibold))
                         .foregroundStyle(FFColors.textPrimary)
-                    Spacer(minLength: FFSpacing.xs)
-                    syncIndicatorPill
-                }
-
-                if let subtitle = primarySubtitle {
-                    Text(subtitle)
+                    Text("Показываем локальные данные. Обновление будет после подключения.")
                         .font(FFTypography.caption)
                         .foregroundStyle(FFColors.textSecondary)
-                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
-
-                FFButton(title: primaryButtonTitle, variant: .primary, action: runPrimaryAction)
-
-                if let continueStartedText {
-                    Text(continueStartedText)
-                        .font(FFTypography.caption)
-                        .foregroundStyle(FFColors.textSecondary)
-                }
+                Spacer(minLength: FFSpacing.xs)
             }
         }
     }
 
-    private var quickActionsCard: some View {
+    private var noActiveProgramCard: some View {
+        FFCard {
+            VStack(alignment: .leading, spacing: FFSpacing.xxs) {
+                Text("Активной программы нет")
+                    .font(FFTypography.body.weight(.semibold))
+                    .foregroundStyle(FFColors.textPrimary)
+                Text("Начните быструю тренировку или используйте шаблоны.")
+                    .font(FFTypography.caption)
+                    .foregroundStyle(FFColors.textSecondary)
+            }
+        }
+    }
+
+    private var programContinueIsEnabled: Bool {
+        viewModel.startWorkoutTarget != nil || viewModel.continueProgramTargetAvailable
+    }
+
+    private func runResumeAction(_ resumeWorkout: WorkoutHomeViewModel.ResumeWorkout) {
+        ClientAnalytics.track(
+            .workoutContinueButtonTapped,
+            properties: ["source": "hub_resume"],
+        )
+
+        switch resumeWorkout.source {
+        case let .local(activeSession):
+            onContinueSession(activeSession)
+        case let .remote(target):
+            onOpenRemoteWorkout(target)
+        }
+    }
+
+    private func runStartWorkout() {
+        guard viewModel.startWorkoutTarget != nil else {
+            ClientAnalytics.track(.workoutStartButtonTapped)
+            onStartQuickWorkout()
+            return
+        }
+
+        ClientAnalytics.track(.workoutStartNextButtonTapped)
+        Task {
+            if let target = await viewModel.startNextWorkout() {
+                onOpenRemoteWorkout(target)
+            } else {
+                onStartQuickWorkout()
+            }
+        }
+    }
+
+    private func runContinueProgram() {
+        guard programContinueIsEnabled else { return }
+
+        ClientAnalytics.track(
+            .workoutStartNextButtonTapped,
+            properties: ["source": "hub_program"],
+        )
+
+        Task {
+            if let target = await viewModel.continueProgram() {
+                onOpenRemoteWorkout(target)
+            }
+        }
+    }
+}
+
+struct ResumeWorkoutCard: View {
+    let title: String
+    let completedExercises: Int
+    let onContinue: () -> Void
+
+    var body: some View {
+        FFCard {
+            VStack(alignment: .leading, spacing: FFSpacing.sm) {
+                Text("Продолжить тренировку")
+                    .font(FFTypography.h2)
+                    .foregroundStyle(FFColors.textPrimary)
+
+                VStack(alignment: .leading, spacing: FFSpacing.xxs) {
+                    Text(title)
+                        .font(FFTypography.body.weight(.semibold))
+                        .foregroundStyle(FFColors.textPrimary)
+                        .lineLimit(2)
+
+                    Text("\(completedExercises) \(exerciseWord(for: completedExercises)) выполнено")
+                        .font(FFTypography.caption)
+                        .foregroundStyle(FFColors.textSecondary)
+                }
+
+                FFButton(
+                    title: "Продолжить",
+                    variant: .secondary,
+                    action: onContinue,
+                )
+            }
+        }
+    }
+
+    private func exerciseWord(for count: Int) -> String {
+        let mod10 = count % 10
+        let mod100 = count % 100
+
+        if mod10 == 1, mod100 != 11 {
+            return "упражнение"
+        }
+
+        if (2 ... 4).contains(mod10), !(12 ... 14).contains(mod100) {
+            return "упражнения"
+        }
+
+        return "упражнений"
+    }
+}
+
+struct StartWorkoutCard: View {
+    var isLoading = false
+    let onStartWorkout: () -> Void
+
+    var body: some View {
+        FFCard {
+            VStack(alignment: .leading, spacing: FFSpacing.sm) {
+                Text("Начать тренировку")
+                    .font(FFTypography.h2)
+                    .foregroundStyle(FFColors.textPrimary)
+
+                Text("Выберите формат и начните тренировку")
+                    .font(FFTypography.caption)
+                    .foregroundStyle(FFColors.textSecondary)
+
+                FFButton(
+                    title: "Начать тренировку",
+                    variant: .primary,
+                    isLoading: isLoading,
+                    action: onStartWorkout,
+                )
+            }
+        }
+    }
+}
+
+struct ProgramProgressCard: View {
+    let programTitle: String
+    let progressText: String
+    let progressValue: Double
+    var isEnabled = true
+    let onContinueProgram: () -> Void
+
+    var body: some View {
+        FFCard {
+            VStack(alignment: .leading, spacing: FFSpacing.sm) {
+                Text("Прогресс программы")
+                    .font(FFTypography.h2)
+                    .foregroundStyle(FFColors.textPrimary)
+
+                Text(programTitle)
+                    .font(FFTypography.body.weight(.semibold))
+                    .foregroundStyle(FFColors.textPrimary)
+                    .lineLimit(2)
+
+                Text(progressText)
+                    .font(FFTypography.caption)
+                    .foregroundStyle(FFColors.textSecondary)
+
+                ProgressView(value: progressValue)
+                    .tint(FFColors.accent)
+
+                FFButton(
+                    title: "Продолжить программу",
+                    variant: isEnabled ? .secondary : .disabled,
+                    action: onContinueProgram,
+                )
+            }
+        }
+    }
+}
+
+struct QuickActionsSection: View {
+    let canRepeatLast: Bool
+    let onQuickWorkout: () -> Void
+    let onOpenTemplates: () -> Void
+    let onRepeatLast: () -> Void
+
+    private let columns = [
+        GridItem(.flexible(), spacing: FFSpacing.xs),
+        GridItem(.flexible(), spacing: FFSpacing.xs),
+        GridItem(.flexible(), spacing: FFSpacing.xs),
+    ]
+
+    var body: some View {
         FFCard {
             VStack(alignment: .leading, spacing: FFSpacing.sm) {
                 Text("Быстрые действия")
                     .font(FFTypography.h2)
                     .foregroundStyle(FFColors.textPrimary)
 
-                HStack(spacing: FFSpacing.xs) {
-                    compactActionButton(
+                LazyVGrid(columns: columns, spacing: FFSpacing.xs) {
+                    QuickActionCard(
                         title: "Быстрая тренировка",
+                        subtitle: "без программы",
                         systemImage: "bolt.fill",
                         isEnabled: true,
-                        action: {
-                            ClientAnalytics.track(.workoutQuickButtonTapped)
-                            onStartQuickWorkout()
-                        },
+                        action: onQuickWorkout,
                     )
-                    compactActionButton(
+
+                    QuickActionCard(
                         title: "Шаблоны",
+                        subtitle: "ваши сохранённые",
                         systemImage: "square.stack.3d.up.fill",
                         isEnabled: true,
-                        action: {
-                            ClientAnalytics.track(.workoutTemplatesButtonTapped)
-                            onOpenTemplates()
-                        },
+                        action: onOpenTemplates,
                     )
-                    compactActionButton(
+
+                    QuickActionCard(
                         title: "Повторить последнюю",
+                        subtitle: "последняя тренировка",
                         systemImage: "arrow.trianglehead.counterclockwise.rotate.90",
-                        isEnabled: viewModel.lastCompleted != nil,
-                        action: {
-                            guard let lastCompleted = viewModel.lastCompleted else { return }
-                            ClientAnalytics.track(.workoutRepeatLastButtonTapped)
-                            onRepeatWorkout(lastCompleted)
-                        },
+                        isEnabled: canRepeatLast,
+                        action: onRepeatLast,
                     )
                 }
             }
         }
     }
+}
 
-    @ViewBuilder
-    private var nextWorkoutCard: some View {
-        if let nextWorkout = viewModel.nextWorkout {
-            FFCard {
-                VStack(alignment: .leading, spacing: FFSpacing.xxs) {
-                    Text("Следующая тренировка")
-                        .font(FFTypography.caption.weight(.semibold))
-                        .foregroundStyle(FFColors.textSecondary)
-                    Text(nextWorkout.title)
-                        .font(FFTypography.body.weight(.semibold))
-                        .foregroundStyle(FFColors.textPrimary)
-                        .lineLimit(1)
-                    Text("По активной программе")
-                        .font(FFTypography.caption)
-                        .foregroundStyle(FFColors.textSecondary)
-                }
-            }
-        }
-    }
+struct QuickActionCard: View {
+    let title: String
+    let subtitle: String
+    let systemImage: String
+    var isEnabled = true
+    let action: () -> Void
 
-    @ViewBuilder
-    private var programProgressCard: some View {
-        if let progress = viewModel.nextWorkoutProgressText {
-            FFCard {
-                VStack(alignment: .leading, spacing: FFSpacing.xxs) {
-                    Text("Прогресс программы")
-                        .font(FFTypography.caption.weight(.semibold))
-                        .foregroundStyle(FFColors.textSecondary)
-                    Text(progress)
-                        .font(FFTypography.body.weight(.semibold))
-                        .foregroundStyle(FFColors.textPrimary)
-                }
-            }
-        }
-    }
-
-    private var primaryAction: PrimaryAction {
-        if let activeSession = viewModel.activeSession {
-            return .continueLocal(activeSession)
-        }
-        if let inProgress = viewModel.serverInProgressWorkout {
-            return .continueRemote(inProgress)
-        }
-        if let nextWorkout = viewModel.nextWorkout {
-            return .startNext(nextWorkout)
-        }
-        return .startQuickWorkout
-    }
-
-    private var primaryTitle: String {
-        switch primaryAction {
-        case .continueLocal, .continueRemote:
-            return "Продолжить тренировку"
-        case .startNext:
-            return "Начать следующую тренировку"
-        case .startQuickWorkout:
-            return "Начать тренировку"
-        }
-    }
-
-    private var primarySubtitle: String? {
-        switch primaryAction {
-        case .continueLocal:
-            return "Текущая незавершённая тренировка"
-        case let .continueRemote(target):
-            return target.title
-        case let .startNext(target):
-            return target.title
-        case .startQuickWorkout:
-            return "Выберите формат тренировки и начните в один тап."
-        }
-    }
-
-    private var primaryButtonTitle: String {
-        switch primaryAction {
-        case .continueLocal, .continueRemote:
-            return "Продолжить тренировку"
-        case .startNext:
-            return "Начать следующую тренировку"
-        case .startQuickWorkout:
-            return "Начать тренировку"
-        }
-    }
-
-    private var continueStartedText: String? {
-        switch primaryAction {
-        case let .continueLocal(activeSession):
-            let minutes = max(1, Int(Date().timeIntervalSince(activeSession.lastUpdated) / 60))
-            return "Начата \(minutes) мин назад"
-        case .continueRemote:
-            return "Начата недавно"
-        case .startNext, .startQuickWorkout:
-            return nil
-        }
-    }
-
-    private var syncIndicatorPill: some View {
-        HStack(spacing: FFSpacing.xxs) {
-            Circle()
-                .fill(syncTint)
-                .frame(width: 8, height: 8)
-            Text(syncTitle)
-                .font(FFTypography.caption.weight(.semibold))
-                .foregroundStyle(syncTint)
-        }
-        .padding(.horizontal, FFSpacing.xs)
-        .padding(.vertical, FFSpacing.xxs)
-        .background(syncTint.opacity(0.14))
-        .clipShape(Capsule())
-    }
-
-    private var syncTitle: String {
-        switch viewModel.syncIndicator {
-        case .synced:
-            return "Синхронизировано"
-        case .savedLocally:
-            return "Сохранено на устройстве"
-        case .delayed:
-            return "Ошибка синхронизации"
-        }
-    }
-
-    private var syncTint: Color {
-        switch viewModel.syncIndicator {
-        case .synced:
-            return FFColors.accent
-        case .savedLocally:
-            return FFColors.primary
-        case .delayed:
-            return FFColors.danger
-        }
-    }
-
-    private func runPrimaryAction() {
-        switch primaryAction {
-        case let .continueLocal(activeSession):
-            ClientAnalytics.track(
-                .workoutContinueButtonTapped,
-                properties: ["source": "hub_primary"],
-            )
-            onContinueSession(activeSession)
-        case let .continueRemote(target):
-            ClientAnalytics.track(
-                .workoutContinueButtonTapped,
-                properties: ["source": "hub_primary"],
-            )
-            onOpenRemoteWorkout(target)
-        case .startQuickWorkout:
-            ClientAnalytics.track(.workoutStartButtonTapped)
-            onStartQuickWorkout()
-        case .startNext:
-            ClientAnalytics.track(.workoutStartNextButtonTapped)
-            Task {
-                if let target = await viewModel.startNextWorkout() {
-                    onOpenRemoteWorkout(target)
-                }
-            }
-        }
-    }
-
-    private func compactActionButton(
-        title: String,
-        systemImage: String,
-        isEnabled: Bool,
-        action: @escaping () -> Void,
-    ) -> some View {
+    var body: some View {
         Button(action: action) {
-            VStack(spacing: FFSpacing.xxs) {
+            VStack(alignment: .leading, spacing: FFSpacing.xxs) {
                 Image(systemName: systemImage)
                     .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(isEnabled ? FFColors.primary : FFColors.gray500)
+
+                Spacer(minLength: FFSpacing.xxs)
+
                 Text(title)
                     .font(FFTypography.caption.weight(.semibold))
-                    .multilineTextAlignment(.center)
+                    .foregroundStyle(isEnabled ? FFColors.textPrimary : FFColors.textSecondary)
                     .lineLimit(2)
+                    .multilineTextAlignment(.leading)
+
+                Text(subtitle)
+                    .font(FFTypography.caption)
+                    .foregroundStyle(FFColors.textSecondary)
+                    .lineLimit(2)
+                    .multilineTextAlignment(.leading)
             }
-            .foregroundStyle(isEnabled ? FFColors.textPrimary : FFColors.textSecondary)
-            .frame(maxWidth: .infinity, minHeight: 68)
-            .padding(.horizontal, FFSpacing.xs)
-            .padding(.vertical, FFSpacing.xs)
+            .frame(maxWidth: .infinity, minHeight: 108, alignment: .leading)
+            .padding(FFSpacing.sm)
             .background(FFColors.surface)
             .clipShape(RoundedRectangle(cornerRadius: FFTheme.Radius.control))
             .overlay {
                 RoundedRectangle(cornerRadius: FFTheme.Radius.control)
                     .stroke(FFColors.gray700, lineWidth: 1)
             }
-            .contentShape(Rectangle())
             .opacity(isEnabled ? 1 : 0.6)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .disabled(!isEnabled)
-        .accessibilityLabel(title)
-        .accessibilityHint("Быстрое действие")
+    }
+}
+
+struct RecentWorkoutsSection: View {
+    let workouts: [CompletedWorkoutRecord]
+    let isLoading: Bool
+    let isEmpty: Bool
+    let onOpenWorkout: (CompletedWorkoutRecord) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: FFSpacing.sm) {
+            Text("Последние тренировки")
+                .font(FFTypography.h2)
+                .foregroundStyle(FFColors.textPrimary)
+
+            if isLoading, workouts.isEmpty {
+                FFLoadingState(title: "Загружаем последние тренировки")
+            } else if isEmpty {
+                FFEmptyState(
+                    title: "Пока нет тренировок",
+                    message: "Завершите первую тренировку, и она появится здесь.",
+                )
+            } else {
+                FFCard(padding: 0) {
+                    VStack(spacing: 0) {
+                        ForEach(Array(workouts.enumerated()), id: \.element.id) { index, workout in
+                            Button {
+                                onOpenWorkout(workout)
+                            } label: {
+                                HStack(spacing: FFSpacing.sm) {
+                                    VStack(alignment: .leading, spacing: FFSpacing.xxs) {
+                                        Text(workout.workoutTitle)
+                                            .font(FFTypography.body.weight(.semibold))
+                                            .foregroundStyle(FFColors.textPrimary)
+                                            .lineLimit(2)
+
+                                        Text(dateFormatter.string(from: workout.finishedAt))
+                                            .font(FFTypography.caption)
+                                            .foregroundStyle(FFColors.textSecondary)
+                                    }
+                                    Spacer(minLength: FFSpacing.xs)
+                                    Image(systemName: "chevron.right")
+                                        .font(.system(size: 12, weight: .semibold))
+                                        .foregroundStyle(FFColors.textSecondary)
+                                }
+                                .padding(.horizontal, FFSpacing.md)
+                                .padding(.vertical, FFSpacing.sm)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+
+                            if index < workouts.count - 1 {
+                                Divider()
+                                    .overlay(FFColors.gray700)
+                                    .padding(.leading, FFSpacing.md)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private var dateFormatter: DateFormatter {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "ru_RU")
+        formatter.dateStyle = .medium
+        return formatter
+    }
+}
+
+typealias TrainingHubViewModel = WorkoutHomeViewModel
+typealias TrainingHubView = WorkoutHomeScreen
+
+private extension WorkoutHomeViewModel {
+    var continueProgramTargetAvailable: Bool {
+        serverInProgressWorkout != nil || startWorkoutTarget != nil
     }
 }
 
@@ -767,8 +922,8 @@ private extension String {
 
 #Preview("Экран тренировки") {
     NavigationStack {
-        TrainingHubView(
-            viewModel: TrainingHubViewModel(userSub: "preview"),
+        WorkoutHomeScreen(
+            viewModel: WorkoutHomeViewModel(userSub: "preview"),
             onContinueSession: { _ in },
             onOpenRemoteWorkout: { _ in },
             onStartQuickWorkout: {},

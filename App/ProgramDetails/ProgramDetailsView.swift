@@ -17,18 +17,21 @@ final class ProgramDetailsViewModel {
         }
     }
 
-    struct EnrollmentConfirmationRoute: Equatable, Identifiable {
+    struct ProgramOnboardingRoute: Equatable, Identifiable {
         let id: String
         let programId: String
         let programTitle: String
+        let authorName: String?
+        let authorAvatarURL: URL?
+        let summaryLine: String?
+        let previewSectionTitle: String
+        let previewItems: [String]
         let frequencyPerWeek: Int?
         let level: String?
         let estimatedDurationMinutes: Int?
         let firstWorkoutTitle: String?
-        let firstWorkoutEstimatedDurationMinutes: Int?
         let firstWorkoutInstanceId: String?
         let fallbackWorkoutTemplateId: String?
-        let fallbackWorkoutTitles: [String]
         let isPendingEnrollment: Bool
 
         var canStartFirstWorkout: Bool {
@@ -75,7 +78,7 @@ final class ProgramDetailsViewModel {
     var isProgramAlreadyActive = false
     var nextWorkoutInstanceId: String?
     var nextWorkoutInstanceTitle: String?
-    var enrollmentConfirmation: EnrollmentConfirmationRoute?
+    var enrollmentConfirmation: ProgramOnboardingRoute?
     var workoutIntro: WorkoutIntroRoute?
     var isPreparingFirstWorkout = false
     var creatorCard: InfluencerPublicCard?
@@ -134,6 +137,10 @@ final class ProgramDetailsViewModel {
             return
         }
 
+        ClientAnalytics.track(
+            .programStartButtonTapped,
+            properties: ["program_id": programId],
+        )
         await startProgram()
     }
 
@@ -142,7 +149,7 @@ final class ProgramDetailsViewModel {
             return "Запускаем программу..."
         }
         if isProgramAlreadyActive {
-            return nextWorkoutInstanceId == nil ? "Программа уже активна" : "Продолжить программу"
+            return "Продолжить программу"
         }
         return "Начать программу"
     }
@@ -173,6 +180,13 @@ final class ProgramDetailsViewModel {
             successMessage = "Программа подключена."
             error = nil
             ClientAnalytics.track(
+                .programActivated,
+                properties: [
+                    "program_id": programId,
+                    "activation_mode": "remote",
+                ],
+            )
+            ClientAnalytics.track(
                 .programEnrolled,
                 properties: [
                     "program_id": programId,
@@ -194,6 +208,13 @@ final class ProgramDetailsViewModel {
             if case .httpError(409, _) = apiError {
                 successMessage = "Программа уже активна."
                 error = nil
+                ClientAnalytics.track(
+                    .programActivated,
+                    properties: [
+                        "program_id": programId,
+                        "activation_mode": "already_active",
+                    ],
+                )
                 await refreshEnrollmentContext()
                 openEnrollmentConfirmation(isPendingEnrollment: false)
                 return
@@ -270,6 +291,11 @@ final class ProgramDetailsViewModel {
         isPreparingFirstWorkout = true
         defer { isPreparingFirstWorkout = false }
 
+        ClientAnalytics.track(
+            .programOnboardingStartFirstWorkoutTapped,
+            properties: ["program_id": route.programId],
+        )
+
         if let firstWorkoutInstanceId = route.firstWorkoutInstanceId,
            let intro = await prepareRemoteWorkoutIntro(
                workoutInstanceId: firstWorkoutInstanceId,
@@ -278,7 +304,7 @@ final class ProgramDetailsViewModel {
            )
         {
             error = nil
-            workoutIntro = intro
+            launchWorkoutFromIntro(intro)
             ClientAnalytics.track(
                 .firstWorkoutStarted,
                 properties: [
@@ -298,7 +324,7 @@ final class ProgramDetailsViewModel {
            )
         {
             error = nil
-            workoutIntro = intro
+            launchWorkoutFromIntro(intro)
             ClientAnalytics.track(
                 .firstWorkoutStarted,
                 properties: [
@@ -408,27 +434,108 @@ final class ProgramDetailsViewModel {
         let sortedWorkouts = (details.workouts ?? []).sorted(by: { $0.dayOrder < $1.dayOrder })
         let fallbackWorkout = sortedWorkouts.first
         let fallbackTitle = fallbackWorkout?.title?.trimmedNilIfEmpty ?? fallbackWorkout.map { "День \($0.dayOrder)" }
-        let fallbackDuration = fallbackWorkout.flatMap { estimateDurationMinutes(exercises: $0.exercises ?? []) }
+        let preview = onboardingPreview(for: sortedWorkouts)
+        let frequencyPerWeek = details.currentPublishedVersion?.frequencyPerWeek
+        let level = localizedLevel(details.currentPublishedVersion?.level)
+        let estimatedDurationMinutes = estimatedProgramDurationMinutes(details: details)
+        let authorName = creatorCard?.displayName ?? details.influencer?.displayName.trimmedNilIfEmpty
+        let authorAvatar = creatorCard?.avatar ?? details.influencer?.avatar.flatMap { URL(string: $0.url) }
 
         let firstWorkoutInstanceId = nextWorkoutInstanceId?.trimmedNilIfEmpty
         let firstWorkoutTitle = nextWorkoutInstanceTitle?.trimmedNilIfEmpty ?? fallbackTitle
 
-        enrollmentConfirmation = EnrollmentConfirmationRoute(
+        enrollmentConfirmation = ProgramOnboardingRoute(
             id: "enrollment-confirmation-\(programId)-\(Date().timeIntervalSince1970)",
             programId: programId,
             programTitle: details.title,
-            frequencyPerWeek: details.currentPublishedVersion?.frequencyPerWeek,
-            level: localizedLevel(details.currentPublishedVersion?.level),
-            estimatedDurationMinutes: estimatedProgramDurationMinutes(details: details),
+            authorName: authorName,
+            authorAvatarURL: authorAvatar,
+            summaryLine: programSummaryLine(
+                workoutsCount: sortedWorkouts.count,
+                frequencyPerWeek: frequencyPerWeek,
+            ),
+            previewSectionTitle: preview.title,
+            previewItems: preview.items,
+            frequencyPerWeek: frequencyPerWeek,
+            level: level,
+            estimatedDurationMinutes: estimatedDurationMinutes,
             firstWorkoutTitle: firstWorkoutTitle,
-            firstWorkoutEstimatedDurationMinutes: firstWorkoutInstanceId == nil ? fallbackDuration : nil,
             firstWorkoutInstanceId: firstWorkoutInstanceId,
             fallbackWorkoutTemplateId: firstWorkoutInstanceId == nil ? fallbackWorkout?.id : nil,
-            fallbackWorkoutTitles: sortedWorkouts.map { workout in
-                workout.title?.trimmedNilIfEmpty ?? "День \(workout.dayOrder)"
-            },
             isPendingEnrollment: isPendingEnrollment,
         )
+    }
+
+    private func onboardingPreview(for workouts: [WorkoutTemplate]) -> (title: String, items: [String]) {
+        guard !workouts.isEmpty else {
+            return ("Ближайшие тренировки", [])
+        }
+
+        let firstWeek = workouts
+            .filter { $0.dayOrder > 0 && $0.dayOrder <= 7 }
+            .sorted(by: { $0.dayOrder < $1.dayOrder })
+
+        if firstWeek.count >= 2 {
+            let items = firstWeek.prefix(7).map { workout in
+                "День \(workout.dayOrder) — \(workout.title?.trimmedNilIfEmpty ?? "Тренировка")"
+            }
+            return ("Первая неделя", items)
+        }
+
+        let nearest = workouts
+            .sorted(by: { $0.dayOrder < $1.dayOrder })
+            .prefix(5)
+            .map { workout in
+                if workout.dayOrder > 0 {
+                    return "День \(workout.dayOrder) — \(workout.title?.trimmedNilIfEmpty ?? "Тренировка")"
+                }
+                return workout.title?.trimmedNilIfEmpty ?? "Тренировка"
+            }
+        return ("Ближайшие тренировки", Array(nearest))
+    }
+
+    private func programSummaryLine(workoutsCount: Int, frequencyPerWeek: Int?) -> String? {
+        var chunks: [String] = []
+
+        if let frequencyPerWeek, frequencyPerWeek > 0 {
+            chunks.append("\(frequencyPerWeek) \(pluralizedWorkoutsPerWeek(frequencyPerWeek))")
+            let weeks = Int(ceil(Double(max(1, workoutsCount)) / Double(frequencyPerWeek)))
+            if weeks > 0 {
+                chunks.insert("\(weeks) \(pluralizedWeeks(weeks))", at: 0)
+            }
+        } else if workoutsCount > 0 {
+            chunks.append("\(workoutsCount) \(pluralizedWorkouts(workoutsCount))")
+        }
+
+        return chunks.isEmpty ? nil : chunks.joined(separator: " • ")
+    }
+
+    private func pluralizedWeeks(_ value: Int) -> String {
+        let remainder10 = value % 10
+        let remainder100 = value % 100
+        if remainder10 == 1, remainder100 != 11 {
+            return "неделя"
+        }
+        if (2 ... 4).contains(remainder10), !(12 ... 14).contains(remainder100) {
+            return "недели"
+        }
+        return "недель"
+    }
+
+    private func pluralizedWorkouts(_ value: Int) -> String {
+        let remainder10 = value % 10
+        let remainder100 = value % 100
+        if remainder10 == 1, remainder100 != 11 {
+            return "тренировка"
+        }
+        if (2 ... 4).contains(remainder10), !(12 ... 14).contains(remainder100) {
+            return "тренировки"
+        }
+        return "тренировок"
+    }
+
+    private func pluralizedWorkoutsPerWeek(_ value: Int) -> String {
+        "\(pluralizedWorkouts(value)) в неделю"
     }
 
     private func prepareRemoteWorkoutIntro(
@@ -584,15 +691,15 @@ final class ProgramDetailsViewModel {
         guard let creatorCard else { return }
         guard !isCreatorFollowLoading else { return }
         guard !userSub.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, userSub.lowercased() != "anonymous" else {
-            creatorInfoMessage = "Войдите, чтобы подписываться на авторов."
+            creatorInfoMessage = "Войдите, чтобы подписываться на атлетов."
             return
         }
         guard networkMonitor.currentStatus else {
-            creatorInfoMessage = "Нет сети. Follow недоступен в оффлайн-режиме."
+            creatorInfoMessage = "Нужен интернет"
             return
         }
         guard let programsClient else {
-            creatorInfoMessage = "Follow сейчас недоступен."
+            creatorInfoMessage = "Подписка сейчас недоступна."
             return
         }
 
@@ -614,9 +721,9 @@ final class ProgramDetailsViewModel {
         switch result {
         case .success:
             if self.creatorCard?.isFollowedByMe == true {
-                ClientAnalytics.track(.creatorFollowed, properties: ["creator_id": creatorCard.id.uuidString])
+                ClientAnalytics.track(.athleteFollowed, properties: ["influencer_id": creatorCard.id.uuidString])
             } else {
-                ClientAnalytics.track(.creatorUnfollowed, properties: ["creator_id": creatorCard.id.uuidString])
+                ClientAnalytics.track(.athleteUnfollowed, properties: ["influencer_id": creatorCard.id.uuidString])
             }
             if let updated = self.creatorCard {
                 creatorProfileRoute = updated
@@ -705,6 +812,7 @@ final class ProgramDetailsViewModel {
 
 struct ProgramDetailsScreen: View {
     @State var viewModel: ProgramDetailsViewModel
+    @State private var isProgramScreenOpenTracked = false
     let apiClient: APIClientProtocol?
     let environment: AppEnvironment?
     let onOpenProgramPlan: (() -> Void)?
@@ -732,7 +840,7 @@ struct ProgramDetailsScreen: View {
             VStack(spacing: FFSpacing.md) {
                 if viewModel.isShowingCachedData {
                     FFCard {
-                        Text("Оффлайн. Показаны сохранённые данные.")
+                        Text("Нет сети — показаны сохранённые данные")
                             .font(FFTypography.caption.weight(.semibold))
                             .foregroundStyle(FFColors.primary)
                     }
@@ -749,13 +857,10 @@ struct ProgramDetailsScreen: View {
                     )
                 } else if let details = viewModel.details {
                     header(details: details)
-                    if let creator = viewModel.creatorCard {
-                        creatorSection(creator: creator)
-                    }
-                    progress(details: details)
-                    about(details: details)
+                    authorCard(details: details)
+                    parametersCard(details: details)
+                    benefitsCard(details: details)
                     workouts(details: details)
-                    startProgramBlock(details: details)
                     if let error = viewModel.error {
                         FFCard {
                             VStack(alignment: .leading, spacing: FFSpacing.xxs) {
@@ -784,7 +889,19 @@ struct ProgramDetailsScreen: View {
             .padding(.vertical, FFSpacing.md)
         }
         .background(FFColors.background)
+        .safeAreaInset(edge: .bottom) {
+            if let details = viewModel.details {
+                stickyPrimaryAction(details: details)
+            }
+        }
         .task {
+            if !isProgramScreenOpenTracked {
+                isProgramScreenOpenTracked = true
+                ClientAnalytics.track(
+                    .programDetailsScreenOpened,
+                    properties: ["program_id": viewModel.programId],
+                )
+            }
             await viewModel.onAppear()
         }
         .navigationDestination(isPresented: $viewModel.isWorkoutsPresented) {
@@ -811,18 +928,22 @@ struct ProgramDetailsScreen: View {
             }
         }
         .navigationDestination(item: $viewModel.enrollmentConfirmation) { route in
-            EnrollmentConfirmationView(
+            ProgramOnboardingView(
                 route: route,
                 isPreparingFirstWorkout: viewModel.isPreparingFirstWorkout,
                 onStartFirstWorkout: {
                     Task { await viewModel.handleEnrollmentPrimaryAction() }
                 },
                 onOpenProgramPlan: {
+                    ClientAnalytics.track(
+                        .programOnboardingOpenPlanTapped,
+                        properties: ["program_id": route.programId],
+                    )
                     viewModel.dismissEnrollmentConfirmation()
                     onOpenProgramPlan?()
                 },
             )
-            .navigationTitle("Program Started")
+            .navigationTitle("Программа активирована")
         }
         .navigationDestination(item: $viewModel.workoutIntro) { route in
             WorkoutIntroView(
@@ -831,7 +952,7 @@ struct ProgramDetailsScreen: View {
                     viewModel.launchWorkoutFromIntro(route)
                 },
             )
-            .navigationTitle("Workout intro")
+            .navigationTitle("Вводная тренировки")
         }
         .navigationDestination(item: $viewModel.creatorProfileRoute) { creator in
             CreatorProfileView(
@@ -851,7 +972,7 @@ struct ProgramDetailsScreen: View {
                     viewModel.applyCreatorUpdate(updated)
                 },
             )
-            .navigationTitle("Creator")
+            .navigationTitle("Атлет")
         }
         .navigationDestination(item: $viewModel.selectedWorkout) { selectedWorkout in
             WorkoutLaunchView(
@@ -871,62 +992,121 @@ struct ProgramDetailsScreen: View {
 
     private var loadingState: some View {
         VStack(spacing: FFSpacing.sm) {
-            FFLoadingState(title: "Загружаем описание программы")
-            FFLoadingState(title: "Подготавливаем структуру тренировок")
-        }
-    }
-
-    private func header(details: ProgramDetails) -> some View {
-        FFCard {
-            VStack(alignment: .leading, spacing: FFSpacing.sm) {
-                if let imageURL = resolveImageURL(details.cover?.url ?? details.media?.first?.url) {
-                    FFRemoteImage(url: imageURL) {
-                        placeholderImage
+            FFCard {
+                VStack(alignment: .leading, spacing: FFSpacing.sm) {
+                    skeletonLine(width: 180)
+                    skeletonLine(width: nil)
+                    skeletonLine(width: 220)
+                }
+            }
+            FFCard {
+                HStack(spacing: FFSpacing.xs) {
+                    ForEach(0 ..< 4, id: \.self) { _ in
+                        RoundedRectangle(cornerRadius: FFTheme.Radius.control)
+                            .fill(FFColors.gray700.opacity(0.65))
+                            .frame(maxWidth: .infinity, minHeight: 44)
                     }
-                    .frame(height: 220)
-                    .frame(maxWidth: .infinity)
-                    .clipped()
-                    .clipShape(RoundedRectangle(cornerRadius: FFTheme.Radius.control))
-                } else {
-                    placeholderImage
-                }
-
-                HStack(alignment: .center) {
-                    Text(details.title)
-                        .font(FFTypography.h1)
-                        .foregroundStyle(FFColors.textPrimary)
-                        .multilineTextAlignment(.leading)
-                    Spacer(minLength: FFSpacing.sm)
-                    FFBadge(status: .published)
-                }
-
-                if let shortDescription = details.description, !shortDescription.isEmpty {
-                    Text(shortDescription)
-                        .font(FFTypography.body)
-                        .foregroundStyle(FFColors.textSecondary)
-                        .multilineTextAlignment(.leading)
                 }
             }
         }
     }
 
-    private func creatorSection(creator: InfluencerPublicCard) -> some View {
-        VStack(spacing: FFSpacing.xs) {
-            CreatorCardView(
-                creator: creator,
-                environment: environment,
-                followButtonState: viewModel.isCreatorFollowLoading ? .loading : (creator.isFollowedByMe ? .following : .follow),
-                isFollowEnabled: viewModel.canToggleCreatorFollow,
-                onTap: {
-                    viewModel.openCreatorProfile()
-                },
-                onFollowTap: {
-                    Task { await viewModel.toggleCreatorFollow() }
-                },
-            )
+    private func skeletonLine(width: CGFloat?) -> some View {
+        RoundedRectangle(cornerRadius: FFTheme.Radius.control)
+            .fill(FFColors.gray700.opacity(0.65))
+            .frame(width: width, height: 14)
+            .frame(maxWidth: .infinity, alignment: .leading)
+    }
 
-            if let infoMessage = viewModel.creatorInfoMessage {
-                FFCard {
+    private func header(details: ProgramDetails) -> some View {
+        FFCard {
+            VStack(alignment: .leading, spacing: FFSpacing.sm) {
+                Text(details.title)
+                    .font(FFTypography.h1)
+                    .foregroundStyle(FFColors.textPrimary)
+                    .multilineTextAlignment(.leading)
+
+                if let shortDescription = details.description?.trimmedNilIfEmpty {
+                    Text(shortDescription)
+                        .font(FFTypography.body)
+                        .foregroundStyle(FFColors.textSecondary)
+                        .multilineTextAlignment(.leading)
+                        .lineLimit(3)
+                }
+
+                if let imageURL = resolveImageURL(details.cover?.url ?? details.media?.first?.url) {
+                    FFRemoteImage(url: imageURL) {
+                        placeholderImage
+                    }
+                    .frame(height: 140)
+                    .frame(maxWidth: .infinity)
+                    .clipped()
+                    .clipShape(RoundedRectangle(cornerRadius: FFTheme.Radius.control))
+                }
+            }
+        }
+    }
+
+    private func authorCard(details: ProgramDetails) -> some View {
+        let creatorName = viewModel.creatorCard?.displayName
+            ?? details.influencer?.displayName.trimmedNilIfEmpty
+            ?? "Атлет не указан"
+        let creatorTag = details.goals?.first?.trimmedNilIfEmpty
+        let trustLine = viewModel.creatorCard?.bio?.trimmedNilIfEmpty
+            ?? details.influencer?.bio?.trimmedNilIfEmpty
+        let canOpenProfile = viewModel.creatorCard != nil
+
+        return FFCard {
+            VStack(alignment: .leading, spacing: FFSpacing.sm) {
+                Text("Атлет программы")
+                    .font(FFTypography.caption.weight(.semibold))
+                    .foregroundStyle(FFColors.textSecondary)
+
+                Button {
+                    if canOpenProfile {
+                        viewModel.openCreatorProfile()
+                    }
+                } label: {
+                    HStack(spacing: FFSpacing.sm) {
+                        authorAvatar(details: details)
+
+                        VStack(alignment: .leading, spacing: FFSpacing.xxs) {
+                            Text(creatorName)
+                                .font(FFTypography.body.weight(.semibold))
+                                .foregroundStyle(FFColors.textPrimary)
+                                .lineLimit(1)
+
+                            if let creatorTag {
+                                Text(creatorTag)
+                                    .font(FFTypography.caption.weight(.semibold))
+                                    .foregroundStyle(FFColors.accent)
+                                    .padding(.horizontal, FFSpacing.xs)
+                                    .padding(.vertical, FFSpacing.xxs)
+                                    .background(FFColors.accent.opacity(0.14))
+                                    .clipShape(Capsule())
+                            }
+
+                            if let trustLine {
+                                Text(trustLine)
+                                    .font(FFTypography.caption)
+                                    .foregroundStyle(FFColors.textSecondary)
+                                    .lineLimit(1)
+                            }
+                        }
+
+                        Spacer(minLength: FFSpacing.sm)
+
+                        if canOpenProfile {
+                            Image(systemName: "chevron.right")
+                                .font(.system(size: 14, weight: .semibold))
+                                .foregroundStyle(FFColors.textSecondary)
+                        }
+                    }
+                }
+                .buttonStyle(.plain)
+                .disabled(!canOpenProfile)
+
+                if let infoMessage = viewModel.creatorInfoMessage {
                     Text(infoMessage)
                         .font(FFTypography.caption)
                         .foregroundStyle(FFColors.textSecondary)
@@ -935,51 +1115,74 @@ struct ProgramDetailsScreen: View {
         }
     }
 
-    private func about(details: ProgramDetails) -> some View {
-        FFCard {
-            VStack(alignment: .leading, spacing: FFSpacing.xs) {
-                Text("О программе")
-                    .font(FFTypography.h2)
-                    .foregroundStyle(FFColors.textPrimary)
-                if let version = details.currentPublishedVersion {
-                    Text("\(version.levelTitle) • \(version.frequencyTitle)")
-                        .font(FFTypography.caption)
-                        .foregroundStyle(FFColors.textSecondary)
-                    Text(version.equipmentTitle)
-                        .font(FFTypography.caption)
-                        .foregroundStyle(FFColors.textSecondary)
+    private func authorAvatar(details: ProgramDetails) -> some View {
+        Group {
+            if let creatorURL = resolvedCreatorAvatarURL(details: details) {
+                FFRemoteImage(url: creatorURL) {
+                    avatarPlaceholder
                 }
-                Text(details.description ?? "Описание программы пока недоступно.")
-                    .font(FFTypography.body)
-                    .foregroundStyle(FFColors.textSecondary)
+            } else {
+                avatarPlaceholder
             }
         }
+        .frame(width: 52, height: 52)
+        .clipShape(Circle())
     }
 
-    private func progress(details _: ProgramDetails) -> some View {
-        FFCard {
+    private var avatarPlaceholder: some View {
+        Circle()
+            .fill(FFColors.gray700)
+            .overlay {
+                Image(systemName: "person.fill")
+                    .font(.system(size: 20, weight: .semibold))
+                    .foregroundStyle(FFColors.gray300)
+            }
+    }
+
+    private func parametersCard(details: ProgramDetails) -> some View {
+        let parameters = parameterItems(details: details)
+
+        guard !parameters.isEmpty else {
+            return AnyView(EmptyView())
+        }
+
+        return AnyView(
+            FFCard {
+                VStack(alignment: .leading, spacing: FFSpacing.sm) {
+                    Text("Параметры программы")
+                        .font(FFTypography.h2)
+                        .foregroundStyle(FFColors.textPrimary)
+
+                    LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: FFSpacing.xs) {
+                        ForEach(parameters, id: \.title) { item in
+                            parameterChip(title: item.title, value: item.value)
+                        }
+                    }
+                }
+            },
+        )
+    }
+
+    private func benefitsCard(details: ProgramDetails) -> some View {
+        let benefits = benefitItems(details: details)
+
+        return FFCard {
             VStack(alignment: .leading, spacing: FFSpacing.xs) {
-                Text("Ваш прогресс")
+                Text("Что вы получите")
                     .font(FFTypography.h2)
                     .foregroundStyle(FFColors.textPrimary)
-                if viewModel.totalWorkoutsCount > 0 {
-                    Text("Пройдено \(viewModel.completedWorkoutsCount) из \(viewModel.totalWorkoutsCount) тренировок")
-                        .font(FFTypography.body)
-                        .foregroundStyle(FFColors.textPrimary)
-                } else {
-                    Text("Прогресс появится после загрузки списка тренировок.")
-                        .font(FFTypography.body)
-                        .foregroundStyle(FFColors.textSecondary)
-                }
-                if let upcomingWorkoutTitle = viewModel.upcomingWorkoutTitle {
-                    Text("Следующая: \(upcomingWorkoutTitle)")
-                        .font(FFTypography.caption)
-                        .foregroundStyle(FFColors.textSecondary)
-                }
-                if let lastCompletionTitle = viewModel.lastCompletionTitle {
-                    Text("Последнее выполнение: \(lastCompletionTitle)")
-                        .font(FFTypography.caption)
-                        .foregroundStyle(FFColors.accent)
+
+                ForEach(Array(benefits.enumerated()), id: \.offset) { _, text in
+                    HStack(alignment: .top, spacing: FFSpacing.xs) {
+                        Circle()
+                            .fill(FFColors.accent)
+                            .frame(width: 6, height: 6)
+                            .padding(.top, 6)
+                        Text(text)
+                            .font(FFTypography.body)
+                            .foregroundStyle(FFColors.textSecondary)
+                            .multilineTextAlignment(.leading)
+                    }
                 }
             }
         }
@@ -988,7 +1191,7 @@ struct ProgramDetailsScreen: View {
     private func workouts(details: ProgramDetails) -> some View {
         FFCard {
             VStack(alignment: .leading, spacing: FFSpacing.sm) {
-                Text("Тренировки")
+                Text("Тренировки программы")
                     .font(FFTypography.h2)
                     .foregroundStyle(FFColors.textPrimary)
 
@@ -1023,7 +1226,7 @@ struct ProgramDetailsScreen: View {
                         .padding(.vertical, FFSpacing.xs)
                     }
                 } else {
-                    Text("Состав тренировок будет доступен после начала программы.")
+                    Text("Пока нет тренировок в программе")
                         .font(FFTypography.body)
                         .foregroundStyle(FFColors.textSecondary)
                 }
@@ -1032,28 +1235,29 @@ struct ProgramDetailsScreen: View {
     }
 
     @ViewBuilder
-    private func startProgramBlock(details: ProgramDetails) -> some View {
+    private func stickyPrimaryAction(details: ProgramDetails) -> some View {
         if details.currentPublishedVersion?.id != nil {
-            FFButton(
-                title: viewModel.primaryProgramActionTitle,
-                variant: viewModel.isPrimaryProgramActionEnabled ? .primary : .disabled,
-                action: { Task { await viewModel.handlePrimaryProgramAction() } },
-            )
-            .accessibilityLabel("Начать программу")
-            .accessibilityHint("Создаст активное прохождение программы для вашего профиля")
-            if viewModel.isProgramAlreadyActive {
-                FFCard {
-                    Text("Активная программа найдена. Продолжайте по серверному расписанию.")
+            VStack(spacing: FFSpacing.xs) {
+                Divider()
+                if viewModel.isProgramAlreadyActive {
+                    Text("Программа уже активна. Можно продолжить с ближайшей тренировки.")
                         .font(FFTypography.caption)
                         .foregroundStyle(FFColors.textSecondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
+                FFButton(
+                    title: viewModel.primaryProgramActionTitle,
+                    variant: viewModel.isPrimaryProgramActionEnabled ? .primary : .disabled,
+                    action: { Task { await viewModel.handlePrimaryProgramAction() } },
+                )
+                .accessibilityLabel(viewModel.primaryProgramActionTitle)
             }
+            .padding(.horizontal, FFSpacing.md)
+            .padding(.top, FFSpacing.xs)
+            .padding(.bottom, FFSpacing.xs)
+            .background(FFColors.background.opacity(0.96))
         } else {
-            FFCard {
-                Text("Скоро можно будет начать программу в приложении.")
-                    .font(FFTypography.body)
-                    .foregroundStyle(FFColors.textSecondary)
-            }
+            EmptyView()
         }
     }
 
@@ -1069,23 +1273,150 @@ struct ProgramDetailsScreen: View {
         .frame(maxWidth: .infinity)
     }
 
-    private func resolveImageURL(_ pathOrURL: String?) -> URL? {
-        guard let pathOrURL, !pathOrURL.isEmpty else { return nil }
+    private func parameterChip(title: String, value: String) -> some View {
+        VStack(alignment: .leading, spacing: FFSpacing.xxs) {
+            Text(title)
+                .font(FFTypography.caption)
+                .foregroundStyle(FFColors.textSecondary)
+            Text(value)
+                .font(FFTypography.caption.weight(.semibold))
+                .foregroundStyle(FFColors.textPrimary)
+                .lineLimit(2)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, FFSpacing.sm)
+        .padding(.vertical, FFSpacing.xs)
+        .background(FFColors.surface)
+        .clipShape(RoundedRectangle(cornerRadius: FFTheme.Radius.control))
+        .overlay {
+            RoundedRectangle(cornerRadius: FFTheme.Radius.control)
+                .stroke(FFColors.gray700, lineWidth: 1)
+        }
+    }
+
+    private func parameterItems(details: ProgramDetails) -> [(title: String, value: String)] {
+        var items: [(String, String)] = []
+
+        if let goal = details.goals?.compactMap(\.trimmedNilIfEmpty).first {
+            items.append(("Цель", goal))
+        }
+
+        if let level = localizedLevel(details.currentPublishedVersion?.level) {
+            items.append(("Уровень", level))
+        }
+
+        if let frequencyPerWeek = details.currentPublishedVersion?.frequencyPerWeek, frequencyPerWeek > 0 {
+            items.append(("Тренировок в неделю", "\(frequencyPerWeek)"))
+            if let workoutsCount = details.workouts?.count, workoutsCount > 0 {
+                let weeks = Int(ceil(Double(workoutsCount) / Double(frequencyPerWeek)))
+                items.append(("Длительность", "\(weeks) \(pluralizedWeeks(weeks))"))
+            }
+        }
+
+        if let equipment = equipmentSummary(details: details) {
+            items.append(("Оборудование", equipment))
+        }
+
+        return items
+    }
+
+    private func benefitItems(details: ProgramDetails) -> [String] {
+        if let description = details.description?.trimmedNilIfEmpty {
+            let separators = CharacterSet(charactersIn: ".!\n•")
+            let lines = description
+                .components(separatedBy: separators)
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }
+            if !lines.isEmpty {
+                return Array(lines.prefix(3))
+            }
+        }
+
+        if let goals = details.goals?.compactMap(\.trimmedNilIfEmpty), !goals.isEmpty {
+            return Array(goals.prefix(3))
+        }
+
+        return ["Структурированная программа тренировок от атлета."]
+    }
+
+    private func equipmentSummary(details: ProgramDetails) -> String? {
+        guard let requirements = details.currentPublishedVersion?.requirements else {
+            return nil
+        }
+
+        if case let .array(values)? = requirements["equipment"] {
+            let equipment = values.compactMap { value -> String? in
+                guard case let .string(text) = value else { return nil }
+                return text.trimmedNilIfEmpty
+            }
+            if !equipment.isEmpty {
+                return equipment.prefix(3).joined(separator: ", ")
+            }
+        }
+
+        if case let .string(value)? = requirements["equipment"] {
+            return value.trimmedNilIfEmpty
+        }
+
+        return nil
+    }
+
+    private func localizedLevel(_ value: String?) -> String? {
+        guard let value = value?.trimmedNilIfEmpty else { return nil }
+        switch value.uppercased() {
+        case "BEGINNER":
+            return "Начинающий"
+        case "INTERMEDIATE":
+            return "Средний"
+        case "ADVANCED":
+            return "Продвинутый"
+        default:
+            return value
+        }
+    }
+
+    private func pluralizedWeeks(_ value: Int) -> String {
+        let remainder10 = value % 10
+        let remainder100 = value % 100
+        if remainder10 == 1, remainder100 != 11 {
+            return "неделя"
+        }
+        if (2 ... 4).contains(remainder10), !(12 ... 14).contains(remainder100) {
+            return "недели"
+        }
+        return "недель"
+    }
+
+    private func resolvedCreatorAvatarURL(details: ProgramDetails) -> URL? {
+        if let avatar = viewModel.creatorCard?.avatar {
+            return resolveURL(avatar.absoluteString)
+        }
+        if let influencerAvatar = details.influencer?.avatar?.url {
+            return resolveURL(influencerAvatar)
+        }
+        return nil
+    }
+
+    private func resolveURL(_ pathOrURL: String) -> URL? {
         if let absolute = URL(string: pathOrURL), absolute.scheme != nil {
             return absolute
         }
-        guard let baseURL = viewModel.details?.media?.first?.url else {
+
+        guard let baseURL = environment?.backendBaseURL else {
             return URL(string: pathOrURL)
         }
-        if let absolute = URL(string: baseURL), absolute.scheme != nil {
-            return absolute.deletingLastPathComponent().appendingPathComponent(pathOrURL)
-        }
-        return URL(string: pathOrURL)
+        let normalizedPath = pathOrURL.hasPrefix("/") ? String(pathOrURL.dropFirst()) : pathOrURL
+        return baseURL.appendingPathComponent(normalizedPath)
+    }
+
+    private func resolveImageURL(_ pathOrURL: String?) -> URL? {
+        guard let pathOrURL, !pathOrURL.isEmpty else { return nil }
+        return resolveURL(pathOrURL)
     }
 }
 
-struct EnrollmentConfirmationView: View {
-    let route: ProgramDetailsViewModel.EnrollmentConfirmationRoute
+struct ProgramOnboardingView: View {
+    let route: ProgramDetailsViewModel.ProgramOnboardingRoute
     let isPreparingFirstWorkout: Bool
     let onStartFirstWorkout: () -> Void
     let onOpenProgramPlan: () -> Void
@@ -1095,91 +1426,106 @@ struct EnrollmentConfirmationView: View {
             VStack(spacing: FFSpacing.md) {
                 FFCard {
                     VStack(alignment: .leading, spacing: FFSpacing.xs) {
-                        Text("Program Started")
+                        Text("Программа активирована")
                             .font(FFTypography.h1)
                             .foregroundStyle(FFColors.textPrimary)
                         Text(route.programTitle)
                             .font(FFTypography.body.weight(.semibold))
                             .foregroundStyle(FFColors.textPrimary)
-                    }
-                }
-
-                FFCard {
-                    VStack(alignment: .leading, spacing: FFSpacing.xs) {
-                        Text("Program overview")
-                            .font(FFTypography.h2)
-                            .foregroundStyle(FFColors.textPrimary)
-                        detailRow(title: "frequencyPerWeek", value: route.frequencyPerWeek.map(String.init) ?? "—")
-                        detailRow(title: "level", value: route.level ?? "—")
-                        detailRow(
-                            title: "estimatedDurationMinutes",
-                            value: route.estimatedDurationMinutes.map { "\($0) мин" } ?? "—",
-                        )
-                    }
-                }
-
-                FFCard {
-                    VStack(alignment: .leading, spacing: FFSpacing.xs) {
-                        Text("First workout")
-                            .font(FFTypography.h2)
-                            .foregroundStyle(FFColors.textPrimary)
-                        Text(route.firstWorkoutTitle ?? "Подберём после синхронизации")
-                            .font(FFTypography.body.weight(.semibold))
-                            .foregroundStyle(FFColors.textPrimary)
-                        if let duration = route.firstWorkoutEstimatedDurationMinutes {
-                            Text("Estimated duration: ~\(duration) мин")
+                        if let summaryLine = route.summaryLine {
+                            Text(summaryLine)
                                 .font(FFTypography.caption)
                                 .foregroundStyle(FFColors.textSecondary)
                         }
+                    }
+                }
+
+                if let authorName = route.authorName?.trimmedNilIfEmpty {
+                    FFCard {
+                        HStack(spacing: FFSpacing.sm) {
+                            if let avatarURL = route.authorAvatarURL {
+                                FFRemoteImage(url: avatarURL) {
+                                    Circle()
+                                        .fill(FFColors.gray700)
+                                }
+                                .frame(width: 44, height: 44)
+                                .clipShape(Circle())
+                            } else {
+                                Circle()
+                                    .fill(FFColors.gray700)
+                                    .frame(width: 44, height: 44)
+                                    .overlay {
+                                        Image(systemName: "person.fill")
+                                            .font(.system(size: 16, weight: .semibold))
+                                            .foregroundStyle(FFColors.gray300)
+                                    }
+                            }
+                            VStack(alignment: .leading, spacing: FFSpacing.xxs) {
+                                Text("Атлет программы")
+                                    .font(FFTypography.caption)
+                                    .foregroundStyle(FFColors.textSecondary)
+                                Text(authorName)
+                                    .font(FFTypography.body.weight(.semibold))
+                                    .foregroundStyle(FFColors.textPrimary)
+                            }
+                            Spacer(minLength: FFSpacing.xs)
+                        }
+                    }
+                }
+
+                FFCard {
+                    VStack(alignment: .leading, spacing: FFSpacing.xs) {
+                        Text(route.previewSectionTitle)
+                            .font(FFTypography.h2)
+                            .foregroundStyle(FFColors.textPrimary)
+                        if route.previewItems.isEmpty {
+                            Text("Список тренировок появится после синхронизации.")
+                                .font(FFTypography.body)
+                                .foregroundStyle(FFColors.textSecondary)
+                        } else {
+                            ForEach(Array(route.previewItems.prefix(5).enumerated()), id: \.offset) { index, item in
+                                Text("\(index + 1). \(item)")
+                                    .font(FFTypography.body)
+                                    .foregroundStyle(FFColors.textSecondary)
+                            }
+                        }
                         if route.isPendingEnrollment {
-                            Text("Оффлайн: enrollment сохранён локально и будет отправлен при появлении сети.")
+                            Text("Оффлайн: запись в программу сохранена локально и отправится при появлении сети.")
                                 .font(FFTypography.caption)
                                 .foregroundStyle(FFColors.primary)
                         }
-                        if route.firstWorkoutInstanceId == nil, !route.fallbackWorkoutTitles.isEmpty {
+                        if let firstWorkoutTitle = route.firstWorkoutTitle?.trimmedNilIfEmpty {
                             Divider()
-                            Text("Workouts from ProgramDetails")
+                            Text("Первая тренировка: \(firstWorkoutTitle)")
                                 .font(FFTypography.caption.weight(.semibold))
                                 .foregroundStyle(FFColors.textSecondary)
-                            ForEach(Array(route.fallbackWorkoutTitles.prefix(3).enumerated()), id: \.offset) { index, title in
-                                Text("\(index + 1). \(title)")
-                                    .font(FFTypography.caption)
-                                    .foregroundStyle(FFColors.textSecondary)
-                            }
                         }
                     }
                 }
 
                 if route.canStartFirstWorkout {
                     FFButton(
-                        title: route.firstWorkoutInstanceId == nil ? "Start first workout" : "Start workout",
+                        title: "Начать первую тренировку",
                         variant: .primary,
                         isLoading: isPreparingFirstWorkout,
                         action: onStartFirstWorkout,
                     )
-                } else {
-                    FFButton(
-                        title: "Open program plan",
-                        variant: .secondary,
-                        action: onOpenProgramPlan,
-                    )
                 }
+                FFButton(
+                    title: "Посмотреть план",
+                    variant: .secondary,
+                    action: onOpenProgramPlan,
+                )
             }
             .padding(.horizontal, FFSpacing.md)
             .padding(.vertical, FFSpacing.md)
         }
         .background(FFColors.background)
-    }
-
-    private func detailRow(title: String, value: String) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: FFSpacing.xs) {
-            Text(title)
-                .font(FFTypography.caption)
-                .foregroundStyle(FFColors.textSecondary)
-            Spacer(minLength: FFSpacing.xs)
-            Text(value)
-                .font(FFTypography.body.weight(.semibold))
-                .foregroundStyle(FFColors.textPrimary)
+        .task {
+            ClientAnalytics.track(
+                .programOnboardingScreenOpened,
+                properties: ["program_id": route.programId],
+            )
         }
     }
 }
@@ -1194,7 +1540,7 @@ struct WorkoutIntroView: View {
             VStack(spacing: FFSpacing.md) {
                 FFCard {
                     VStack(alignment: .leading, spacing: FFSpacing.xs) {
-                        Text("Workout intro")
+                        Text("Вводная тренировки")
                             .font(FFTypography.h1)
                             .foregroundStyle(FFColors.textPrimary)
                         Text(workout.title)
@@ -1213,8 +1559,8 @@ struct WorkoutIntroView: View {
                     }
                 }
 
-                FFButton(title: "Start workout", variant: .primary, action: onStartWorkout)
-                FFButton(title: "View exercises", variant: .secondary) {
+                FFButton(title: "Начать тренировку", variant: .primary, action: onStartWorkout)
+                FFButton(title: "Показать упражнения", variant: .secondary) {
                     isExercisesPresented = true
                 }
             }

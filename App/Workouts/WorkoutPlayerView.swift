@@ -11,11 +11,11 @@ enum SyncStatusKind: String, Codable, Equatable, Sendable {
     var title: String {
         switch self {
         case .synced:
-            "Synced"
+            "Синхронизировано"
         case .savedLocally:
-            "Saved locally"
+            "Сохранено на устройстве"
         case .delayed:
-            "Sync delayed"
+            "Ошибка синхронизации"
         }
     }
 
@@ -26,7 +26,7 @@ enum SyncStatusKind: String, Codable, Equatable, Sendable {
         case .savedLocally:
             "Данные сохранены локально"
         case .delayed:
-            "Синхронизация задерживается"
+            "Попробуйте повторить синхронизацию"
         }
     }
 
@@ -92,7 +92,7 @@ struct SyncStatusIndicator: View {
                 Spacer(minLength: FFSpacing.xs)
 
                 if showsCacheTag {
-                    Text("cache")
+                    Text("кэш")
                         .font(FFTypography.caption.weight(.semibold))
                         .foregroundStyle(FFColors.primary)
                         .padding(.horizontal, FFSpacing.xs)
@@ -178,14 +178,14 @@ struct HistoryBottomSheet: View {
                 } else {
                     List {
                         if let trend = volumeTrendText {
-                            Section("Trend") {
+                            Section("Тренд") {
                                 Text(trend)
                                     .font(FFTypography.caption)
                                     .foregroundStyle(FFColors.textSecondary)
                             }
                         }
 
-                        Section("Last 10") {
+                        Section("Последние 10") {
                             ForEach(entries) { item in
                                 VStack(alignment: .leading, spacing: FFSpacing.xxs) {
                                     Text(entryTitle(item))
@@ -223,8 +223,8 @@ struct HistoryBottomSheet: View {
     }
 
     private func entryTitle(_ entry: AthleteExerciseHistoryEntry) -> String {
-        let reps = entry.reps.map { "\($0) reps" } ?? "— reps"
-        let weight = entry.weight.map { "@ \(formatWeight($0))kg" } ?? "@ —kg"
+        let reps = entry.reps.map { "\($0) повторов" } ?? "— повторов"
+        let weight = entry.weight.map { "@ \(formatWeight($0)) кг" } ?? "@ — кг"
         return "\(reps) \(weight)"
     }
 
@@ -236,7 +236,7 @@ struct HistoryBottomSheet: View {
             dateText = "Дата неизвестна"
         }
 
-        let volumeText = entry.volume.map { " • volume \(Int($0))" } ?? ""
+        let volumeText = entry.volume.map { " • объём \(Int($0)) кг" } ?? ""
         return "\(dateText)\(volumeText)"
     }
 
@@ -272,6 +272,8 @@ struct HistoryBottomSheet: View {
 final class RestTimerModel {
     private var task: Task<Void, Never>?
     private var initialSeconds = 0
+    private var finishDate: Date?
+    private var pausedSeconds: Int?
 
     var isVisible = false
     var isRunning = false
@@ -283,70 +285,113 @@ final class RestTimerModel {
     }
 
     func start(seconds: Int) {
-        guard seconds > 0 else { return }
-        task?.cancel()
-        initialSeconds = seconds
-        remainingSeconds = seconds
-        isVisible = true
-        isRunning = true
-        task = Task { [weak self] in
-            guard let self else { return }
-            while !Task.isCancelled, self.remainingSeconds > 0, self.isRunning {
-                try? await Task.sleep(for: .seconds(1))
-                if Task.isCancelled || !self.isRunning { break }
-                self.remainingSeconds -= 1
-            }
-            if self.remainingSeconds == 0 {
-                self.isVisible = false
-                self.isRunning = false
-                self.onCompleted?()
-            }
-        }
+        start(seconds: seconds, updateInitial: true)
     }
 
     func pauseOrResume() {
         if isRunning {
+            pausedSeconds = max(0, remainingSeconds)
             isRunning = false
+            finishDate = nil
             task?.cancel()
             task = nil
         } else {
-            start(seconds: remainingSeconds)
+            let resumeValue = pausedSeconds ?? remainingSeconds
+            guard resumeValue > 0 else { return }
+            start(seconds: resumeValue, updateInitial: false)
         }
     }
 
     func add(seconds: Int) {
         guard seconds > 0 else { return }
         if !isVisible {
-            start(seconds: seconds)
+            start(seconds: seconds, updateInitial: true)
             return
         }
 
-        task?.cancel()
-        initialSeconds += seconds
-        remainingSeconds += seconds
-        isVisible = true
-        isRunning = true
-        task = Task { [weak self] in
-            guard let self else { return }
-            while !Task.isCancelled, self.remainingSeconds > 0, self.isRunning {
-                try? await Task.sleep(for: .seconds(1))
-                if Task.isCancelled || !self.isRunning { break }
-                self.remainingSeconds -= 1
-            }
-            if self.remainingSeconds == 0 {
-                self.isVisible = false
-                self.isRunning = false
-                self.onCompleted?()
-            }
+        if isRunning {
+            let base = finishDate ?? Date().addingTimeInterval(Double(remainingSeconds))
+            finishDate = base.addingTimeInterval(Double(seconds))
+            recalculateRemaining()
+        } else {
+            let next = max(0, (pausedSeconds ?? remainingSeconds) + seconds)
+            pausedSeconds = next
+            remainingSeconds = next
+            isVisible = true
         }
+    }
+
+    func reset() {
+        guard initialSeconds > 0 else {
+            skip()
+            return
+        }
+        start(seconds: initialSeconds, updateInitial: false)
     }
 
     func skip() {
         task?.cancel()
         task = nil
+        finishDate = nil
+        pausedSeconds = nil
         isVisible = false
         isRunning = false
         remainingSeconds = 0
+    }
+
+    func handleWillEnterForeground() {
+        guard isVisible, isRunning else { return }
+        recalculateRemaining()
+        if remainingSeconds > 0 {
+            scheduleTicker()
+        }
+    }
+
+    private func start(seconds: Int, updateInitial: Bool) {
+        guard seconds > 0 else { return }
+        task?.cancel()
+        if updateInitial {
+            initialSeconds = seconds
+        }
+        pausedSeconds = nil
+        finishDate = Date().addingTimeInterval(Double(seconds))
+        remainingSeconds = seconds
+        isVisible = true
+        isRunning = true
+        scheduleTicker()
+    }
+
+    private func scheduleTicker() {
+        task?.cancel()
+        task = Task { [weak self] in
+            guard let self else { return }
+            while !Task.isCancelled, self.remainingSeconds > 0, self.isRunning, self.isVisible {
+                try? await Task.sleep(for: .seconds(1))
+                if Task.isCancelled || !self.isRunning || !self.isVisible { break }
+                self.recalculateRemaining()
+            }
+        }
+    }
+
+    private func recalculateRemaining() {
+        guard isRunning else { return }
+        guard let finishDate else { return }
+        let seconds = max(0, Int(ceil(finishDate.timeIntervalSinceNow)))
+        remainingSeconds = seconds
+        if seconds == 0 {
+            complete()
+        }
+    }
+
+    private func complete() {
+        task?.cancel()
+        task = nil
+        finishDate = nil
+        pausedSeconds = nil
+        isVisible = false
+        isRunning = false
+        remainingSeconds = 0
+        onCompleted?()
     }
 }
 
@@ -395,6 +440,7 @@ final class WorkoutPlayerViewModel {
     private let networkMonitor: NetworkMonitoring
     private let executionContext: WorkoutExecutionContext?
     private let syncCoordinator: SyncCoordinator
+    private let profileSettingsStore: ProfileSettingsStore
 
     private var autoAdvanceUndoTask: Task<Void, Never>?
     private var networkObserverTask: Task<Void, Never>?
@@ -402,6 +448,9 @@ final class WorkoutPlayerViewModel {
     private var lastPerformanceByExerciseId: [String: AthleteExerciseLastPerformanceResponse] = [:]
     private var personalRecordByExerciseId: [String: AthletePersonalRecord] = [:]
     private var insightsLoadedExerciseIDs: Set<String> = []
+    private var startedExerciseEvents: Set<String> = []
+    private var weightStep: Double = ProfileSettings.default.weightStep
+    private var defaultRestSeconds: Int = ProfileSettings.default.defaultRestSeconds
 
     var restTimer = RestTimerModel()
     var isLoading = false
@@ -419,6 +468,7 @@ final class WorkoutPlayerViewModel {
 
     var autoAdvanceUndoState: AutoAdvanceUndoState?
     var isJumpNavigationActive = false
+    var focusedSetIndex: Int?
 
     init(
         userSub: String,
@@ -431,6 +481,7 @@ final class WorkoutPlayerViewModel {
         networkMonitor: NetworkMonitoring = StaticNetworkMonitor(currentStatus: true),
         executionContext: WorkoutExecutionContext? = nil,
         syncCoordinator: SyncCoordinator = .shared,
+        profileSettingsStore: ProfileSettingsStore = LocalProfileSettingsStore(),
     ) {
         self.userSub = userSub
         self.programId = programId
@@ -442,6 +493,7 @@ final class WorkoutPlayerViewModel {
         self.networkMonitor = networkMonitor
         self.executionContext = executionContext
         self.syncCoordinator = syncCoordinator
+        self.profileSettingsStore = profileSettingsStore
 
         restTimer.onCompleted = { [weak self] in
             self?.toastMessage = "Отдых завершён. Можно начинать следующий подход."
@@ -482,7 +534,7 @@ final class WorkoutPlayerViewModel {
     }
 
     var primaryBottomTitle: String {
-        isLastExercise ? "Complete workout" : "Next"
+        isLastExercise ? "Завершить тренировку" : "Следующее упражнение"
     }
 
     var progressItems: [ExerciseProgressItem] {
@@ -510,6 +562,15 @@ final class WorkoutPlayerViewModel {
         return compactLastTimeLine(from: lastPerformance)
     }
 
+    var currentLastSets: [String] {
+        guard let exerciseId = currentExercise?.id,
+              let lastPerformance = lastPerformanceByExerciseId[exerciseId]
+        else {
+            return []
+        }
+        return lastPerformanceLines(from: lastPerformance)
+    }
+
     var currentPRText: String? {
         guard let exerciseId = currentExercise?.id,
               let record = personalRecordByExerciseId[exerciseId]
@@ -524,8 +585,37 @@ final class WorkoutPlayerViewModel {
         return !(lastPerformanceByExerciseId[exerciseId]?.sets ?? []).isEmpty
     }
 
+    var canRetrySync: Bool {
+        syncStatus == .delayed
+    }
+
+    var quickActionSetIndex: Int? {
+        guard let exerciseState = currentExerciseState else { return nil }
+        if let focusedSetIndex, exerciseState.sets.indices.contains(focusedSetIndex) {
+            return focusedSetIndex
+        }
+        if let next = firstUncompletedSetIndex(in: exerciseState) {
+            return next
+        }
+        return exerciseState.sets.indices.last
+    }
+
+    var quickActionSetTitle: String {
+        if let quickActionSetIndex {
+            return "Подход \(quickActionSetIndex + 1)"
+        }
+        return "Текущий подход"
+    }
+
+    var weightStepLabel: String {
+        formatStep(weightStep, suffix: "кг")
+    }
+
     func onAppear() async {
         isLoading = true
+        let settings = await profileSettingsStore.load(userSub: userSub)
+        weightStep = max(0.5, settings.weightStep)
+        defaultRestSeconds = max(15, settings.defaultRestSeconds)
         session = await sessionManager.loadOrCreateSession(
             userSub: userSub,
             programId: programId,
@@ -533,6 +623,7 @@ final class WorkoutPlayerViewModel {
             source: source,
         )
         isLoading = false
+        focusedSetIndex = firstUncompletedSetIndex(in: currentExerciseState) ?? 0
 
         await syncCoordinator.activate(namespace: userSub)
         await ensureCurrentExerciseContext()
@@ -564,19 +655,24 @@ final class WorkoutPlayerViewModel {
 
         let isNowCompleted = currentExerciseState?.sets[safe: setIndex]?.isCompleted ?? false
         if !wasCompleted, isNowCompleted {
-            if let rest = currentExercise.restSeconds {
-                restTimer.start(seconds: rest)
-            }
+            let rest = currentExercise.restSeconds ?? defaultRestSeconds
+            restTimer.start(seconds: max(15, rest))
+            ClientAnalytics.track(
+                .setCompleted,
+                properties: analyticsExerciseProperties(exerciseId: currentExercise.id),
+            )
             await handleAutoAdvanceIfNeeded(exerciseId: currentExercise.id, completedSetIndex: setIndex)
+        } else if wasCompleted, !isNowCompleted {
+            focusedSetIndex = setIndex
         }
     }
 
     func incrementWeight(setIndex: Int) async {
-        await updateNumericField(setIndex: setIndex, keyPath: \.weightText, step: 2.5)
+        await updateNumericField(setIndex: setIndex, keyPath: \.weightText, step: weightStep)
     }
 
     func decrementWeight(setIndex: Int) async {
-        await updateNumericField(setIndex: setIndex, keyPath: \.weightText, step: -2.5)
+        await updateNumericField(setIndex: setIndex, keyPath: \.weightText, step: -weightStep)
     }
 
     func incrementReps(setIndex: Int) async {
@@ -590,12 +686,14 @@ final class WorkoutPlayerViewModel {
     func nextExercise() async {
         guard let session else { return }
         self.session = await sessionManager.moveExercise(session, to: currentExerciseIndex + 1)
+        focusedSetIndex = firstUncompletedSetIndex(in: currentExerciseState) ?? 0
         await ensureCurrentExerciseContext()
     }
 
     func prevExercise() async {
         guard let session else { return }
         self.session = await sessionManager.moveExercise(session, to: currentExerciseIndex - 1)
+        focusedSetIndex = firstUncompletedSetIndex(in: currentExerciseState) ?? 0
         await ensureCurrentExerciseContext()
     }
 
@@ -603,6 +701,11 @@ final class WorkoutPlayerViewModel {
         guard let currentExercise, let session else { return }
         self.session = await sessionManager.skipExercise(session, exerciseId: currentExercise.id)
         toastMessage = "Упражнение пропущено"
+        focusedSetIndex = firstUncompletedSetIndex(in: currentExerciseState) ?? 0
+        ClientAnalytics.track(
+            .exerciseSkipped,
+            properties: analyticsExerciseProperties(exerciseId: currentExercise.id),
+        )
     }
 
     func undoLastChange() async {
@@ -612,6 +715,7 @@ final class WorkoutPlayerViewModel {
         autoAdvanceUndoTask = nil
         autoAdvanceUndoState = nil
         toastMessage = "Последнее действие отменено"
+        focusedSetIndex = firstUncompletedSetIndex(in: currentExerciseState) ?? focusedSetIndex
         await ensureCurrentExerciseContext()
     }
 
@@ -632,6 +736,7 @@ final class WorkoutPlayerViewModel {
         autoAdvanceUndoTask = nil
         autoAdvanceUndoState = nil
         toastMessage = "Изменение отменено"
+        focusedSetIndex = firstUncompletedSetIndex(in: currentExerciseState) ?? focusedSetIndex
         await ensureCurrentExerciseContext()
     }
 
@@ -642,6 +747,7 @@ final class WorkoutPlayerViewModel {
             return
         }
         self.session = await sessionManager.moveExercise(session, to: targetIndex)
+        focusedSetIndex = firstUncompletedSetIndex(in: currentExerciseState) ?? 0
         await ensureCurrentExerciseContext()
     }
 
@@ -673,6 +779,7 @@ final class WorkoutPlayerViewModel {
                 overwriteExisting: true,
             )
             toastMessage = "Скопированы значения из прошлого подхода"
+            focusedSetIndex = setIndex
             await syncCurrentSetIfNeeded(exerciseId: currentExercise.id, setIndex: setIndex)
             return
         }
@@ -691,7 +798,8 @@ final class WorkoutPlayerViewModel {
                 defaults: defaults,
                 overwriteExisting: true,
             )
-            toastMessage = "Первый подход заполнен из Last time"
+            toastMessage = "Первый подход заполнен из прошлого выполнения"
+            focusedSetIndex = 0
             await syncCurrentSetIfNeeded(exerciseId: currentExercise.id, setIndex: 0)
         }
     }
@@ -725,7 +833,8 @@ final class WorkoutPlayerViewModel {
             await syncCurrentSetIfNeeded(exerciseId: currentExercise.id, setIndex: index)
         }
 
-        toastMessage = "Подходы заполнены из Last time"
+        focusedSetIndex = firstUncompletedSetIndex(in: currentExerciseState) ?? 0
+        toastMessage = "Подходы заполнены из прошлого выполнения"
     }
 
     func openHistory() {
@@ -739,6 +848,20 @@ final class WorkoutPlayerViewModel {
 
     func addRest(seconds: Int) {
         restTimer.add(seconds: seconds)
+    }
+
+    func resetRestTimer() {
+        restTimer.reset()
+    }
+
+    func onAppWillEnterForeground() async {
+        restTimer.handleWillEnterForeground()
+        await flushPendingSyncNow()
+    }
+
+    func copyPreviousSetQuickAction() async {
+        guard let setIndex = quickActionSetIndex else { return }
+        await copyPreviousSet(setIndex: setIndex)
     }
 
     func primaryBottomAction() async {
@@ -777,12 +900,21 @@ final class WorkoutPlayerViewModel {
         )
         await sessionManager.finish(session)
         isFinished = true
+        ClientAnalytics.track(
+            .workoutFinished,
+            properties: [
+                "workout_id": workout.id,
+                "program_id": programId,
+            ],
+        )
     }
 
     private func ensureCurrentExerciseContext() async {
         guard let exercise = currentExercise else { return }
         await ensureInsightsLoaded(for: exercise.id)
         await applySmartDefaultsIfNeeded(for: exercise)
+        focusedSetIndex = firstUncompletedSetIndex(in: currentExerciseState) ?? 0
+        trackExerciseStartedIfNeeded(exerciseId: exercise.id)
     }
 
     private func ensureInsightsLoaded(for exerciseId: String) async {
@@ -937,13 +1069,29 @@ final class WorkoutPlayerViewModel {
                 reps: nextString,
             )
         }
+        focusedSetIndex = setIndex
+
+        if keyPath == \.weightText {
+            ClientAnalytics.track(
+                .weightChanged,
+                properties: analyticsExerciseProperties(exerciseId: currentExercise.id),
+            )
+        } else {
+            ClientAnalytics.track(
+                .repsChanged,
+                properties: analyticsExerciseProperties(exerciseId: currentExercise.id),
+            )
+        }
 
         await syncCurrentSetIfNeeded(exerciseId: currentExercise.id, setIndex: setIndex)
     }
 
     private func handleAutoAdvanceIfNeeded(exerciseId: String, completedSetIndex: Int) async {
         guard !isJumpNavigationActive else {
-            presentAutoAdvanceUndo(message: "Set marked complete", includesExerciseMove: false)
+            if let exerciseState = session?.exercises.first(where: { $0.exerciseId == exerciseId }) {
+                focusedSetIndex = firstUncompletedSetIndex(in: exerciseState)
+            }
+            presentAutoAdvanceUndo(message: "Подход отмечен выполненным", includesExerciseMove: false)
             return
         }
 
@@ -955,22 +1103,24 @@ final class WorkoutPlayerViewModel {
 
         let isLastSet = completedSetIndex >= exerciseState.sets.count - 1
         if !isLastSet {
-            let nextSetNumber = completedSetIndex + 2
+            focusedSetIndex = firstUncompletedSetIndex(in: exerciseState)
             presentAutoAdvanceUndo(
-                message: "Set marked complete · Next set \(nextSetNumber)",
+                message: "Подход выполнен",
                 includesExerciseMove: false,
             )
             return
         }
 
         if isLastExercise {
-            presentAutoAdvanceUndo(message: "Set marked complete", includesExerciseMove: false)
+            focusedSetIndex = firstUncompletedSetIndex(in: exerciseState)
+            presentAutoAdvanceUndo(message: "Упражнение завершено", includesExerciseMove: false)
             return
         }
 
         self.session = await sessionManager.moveExercise(session, to: currentExerciseIndex + 1)
+        focusedSetIndex = firstUncompletedSetIndex(in: currentExerciseState) ?? 0
         await ensureCurrentExerciseContext()
-        presentAutoAdvanceUndo(message: "Set marked complete · Next exercise", includesExerciseMove: true)
+        presentAutoAdvanceUndo(message: "Упражнение завершено", includesExerciseMove: true)
     }
 
     private func presentAutoAdvanceUndo(message: String, includesExerciseMove: Bool) {
@@ -1103,25 +1253,37 @@ final class WorkoutPlayerViewModel {
            let weight = weightValues.first,
            weightValues.allSatisfy({ abs($0 - weight) < 0.01 })
         {
-            return "\(sorted.count)x\(reps) @ \(formatDouble(weight))kg"
+            return "\(sorted.count)×\(reps) @ \(formatDouble(weight)) кг"
         }
 
         if let first = sorted.first {
             let reps = first.reps.map(String.init) ?? "—"
             let weight = first.weight.map(formatDouble) ?? "—"
-            return "\(sorted.count) sets • \(reps) reps @ \(weight)kg"
+            return "\(sorted.count) подходов • \(reps) повторов @ \(weight) кг"
         }
 
         return nil
     }
 
+    private func lastPerformanceLines(from response: AthleteExerciseLastPerformanceResponse) -> [String] {
+        let sorted = response.sets.sorted(by: { $0.setNumber < $1.setNumber })
+        return sorted.compactMap { set in
+            guard let reps = set.reps,
+                  let weight = set.weight
+            else {
+                return nil
+            }
+            return "\(formatDouble(weight)) × \(reps)"
+        }
+    }
+
     private func compactPRLine(from record: AthletePersonalRecord) -> String {
-        let metric = record.metric?.trimmingCharacters(in: .whitespacesAndNewlines).uppercased() ?? "PR"
+        let metric = record.metric?.trimmingCharacters(in: .whitespacesAndNewlines).uppercased() ?? ""
         let valueText = record.value.map(formatDouble) ?? "—"
         let unit = record.unit?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
 
         if metric.contains("E1RM") {
-            return "e1RM: \(valueText)\(unit.isEmpty ? "" : " \(unit)")"
+            return "1ПМ: \(valueText)\(unit.isEmpty ? "" : " \(unit)")"
         }
         return "\(valueText)\(unit.isEmpty ? "" : " \(unit)")"
     }
@@ -1133,6 +1295,27 @@ final class WorkoutPlayerViewModel {
             return nil
         }
         return exerciseState.sets[setIndex]
+    }
+
+    private func firstUncompletedSetIndex(in exerciseState: SessionExerciseState?) -> Int? {
+        exerciseState?.sets.firstIndex(where: { !$0.isCompleted })
+    }
+
+    private func trackExerciseStartedIfNeeded(exerciseId: String) {
+        guard !startedExerciseEvents.contains(exerciseId) else { return }
+        startedExerciseEvents.insert(exerciseId)
+        ClientAnalytics.track(
+            .exerciseStarted,
+            properties: analyticsExerciseProperties(exerciseId: exerciseId),
+        )
+    }
+
+    private func analyticsExerciseProperties(exerciseId: String) -> [String: String] {
+        [
+            "exercise_id": exerciseId,
+            "workout_id": workout.id,
+            "program_id": programId,
+        ]
     }
 
     private func parseInt(_ value: String) -> Int? {
@@ -1155,6 +1338,16 @@ final class WorkoutPlayerViewModel {
             return "\(Int(value))"
         }
         return String(format: "%.1f", value)
+    }
+
+    private func formatStep(_ value: Double, suffix: String) -> String {
+        if value.rounded(.towardZero) == value {
+            return "\(Int(value)) \(suffix)"
+        }
+        if abs(value * 10 - (value * 10).rounded()) < 0.001 {
+            return String(format: "%.1f %@", value, suffix)
+        }
+        return String(format: "%.2f %@", value, suffix)
     }
 
     private var cacheKeys: CacheKeys {
@@ -1207,15 +1400,23 @@ struct WorkoutPlayerViewV2: View {
             if viewModel.isLoading {
                 FFLoadingState(title: "Открываем тренировку")
             } else {
-                ScrollView {
-                    VStack(spacing: FFSpacing.md) {
-                        topPanel
-                        exerciseCard
-                        setsCard
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        VStack(spacing: FFSpacing.md) {
+                            topPanel
+                            exerciseCard
+                            setsCard
+                        }
+                        .padding(.horizontal, FFSpacing.md)
+                        .padding(.top, FFSpacing.md)
+                        .padding(.bottom, FFSpacing.xl)
                     }
-                    .padding(.horizontal, FFSpacing.md)
-                    .padding(.top, FFSpacing.md)
-                    .padding(.bottom, FFSpacing.xl)
+                    .onChange(of: viewModel.focusedSetIndex) { _, index in
+                        guard let index else { return }
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            proxy.scrollTo(setRowID(index), anchor: .center)
+                        }
+                    }
                 }
             }
         }
@@ -1240,11 +1441,11 @@ struct WorkoutPlayerViewV2: View {
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.willEnterForegroundNotification)) { _ in
-            Task { await viewModel.flushPendingSyncNow() }
+            Task { await viewModel.onAppWillEnterForeground() }
         }
         .sheet(isPresented: $viewModel.isHistoryPresented) {
             HistoryBottomSheet(
-                exerciseName: viewModel.currentExercise?.name ?? "History",
+                exerciseName: viewModel.currentExercise?.name ?? "История",
                 entries: viewModel.historyEntries,
                 isLoading: viewModel.isHistoryLoading,
                 errorMessage: viewModel.historyErrorMessage,
@@ -1274,7 +1475,7 @@ struct WorkoutPlayerViewV2: View {
                             if item.isCurrent {
                                 FFBadge(status: .inProgress)
                             } else if item.isSkipped {
-                                Text("Skipped")
+                                Text("Пропущено")
                                     .font(FFTypography.caption.weight(.semibold))
                                     .foregroundStyle(FFColors.textSecondary)
                                     .padding(.horizontal, FFSpacing.xs)
@@ -1286,7 +1487,7 @@ struct WorkoutPlayerViewV2: View {
                     }
                     .buttonStyle(.plain)
                 }
-                .navigationTitle("Jump list")
+                .navigationTitle("Список упражнений")
             }
         }
         .onChange(of: isJumpListPresented) { _, isPresented in
@@ -1314,7 +1515,7 @@ struct WorkoutPlayerViewV2: View {
                         .font(FFTypography.caption.weight(.semibold))
                         .foregroundStyle(FFColors.textPrimary)
                     Spacer(minLength: FFSpacing.xs)
-                    Button("Undo") {
+                    Button("Отменить") {
                         Task { await viewModel.undoAutoAdvance() }
                     }
                     .font(FFTypography.caption.weight(.bold))
@@ -1374,6 +1575,11 @@ struct WorkoutPlayerViewV2: View {
                             .background(FFColors.primary.opacity(0.14))
                             .clipShape(Capsule())
                     }
+                    if viewModel.canRetrySync {
+                        compactActionButton(title: "Повторить", systemImage: "arrow.clockwise") {
+                            Task { await viewModel.flushPendingSyncNow() }
+                        }
+                    }
                 }
             }
         }
@@ -1389,24 +1595,19 @@ struct WorkoutPlayerViewV2: View {
                         .lineLimit(3)
                         .fixedSize(horizontal: false, vertical: true)
 
+                    if !viewModel.currentLastSets.isEmpty {
+                        lastTimeBlock(lines: viewModel.currentLastSets)
+                    }
+
                     Text(prescription(for: exercise))
                         .font(FFTypography.body)
                         .foregroundStyle(FFColors.textSecondary)
 
                     ScrollView(.horizontal, showsIndicators: false) {
                         HStack(spacing: FFSpacing.xs) {
-                            if let lastTime = viewModel.currentLastTimeText {
-                                ExerciseInsightPill(
-                                    title: "Last time",
-                                    value: lastTime,
-                                    systemImage: "clock.arrow.circlepath",
-                                    tint: FFColors.primary,
-                                )
-                            }
-
                             if let prText = viewModel.currentPRText {
                                 ExerciseInsightPill(
-                                    title: "PR",
+                                    title: "Рекорд",
                                     value: prText,
                                     systemImage: "bolt.fill",
                                     tint: FFColors.accent,
@@ -1417,12 +1618,12 @@ struct WorkoutPlayerViewV2: View {
 
                     HStack(spacing: FFSpacing.xs) {
                         if viewModel.canUseLastPerformance {
-                            compactActionButton(title: "Use last", systemImage: "arrow.down.circle.fill") {
+                            compactActionButton(title: "Заполнить как в прошлый раз", systemImage: "arrow.down.circle.fill") {
                                 Task { await viewModel.useLastPerformance() }
                             }
                         }
 
-                        compactActionButton(title: "History", systemImage: "clock") {
+                        compactActionButton(title: "История", systemImage: "clock") {
                             viewModel.openHistory()
                         }
                     }
@@ -1443,61 +1644,19 @@ struct WorkoutPlayerViewV2: View {
 
                 if let exerciseState = viewModel.currentExerciseState {
                     ForEach(Array(exerciseState.sets.enumerated()), id: \.offset) { index, set in
-                        VStack(alignment: .leading, spacing: FFSpacing.sm) {
-                            HStack(spacing: FFSpacing.xs) {
-                                Button {
-                                    Task { await viewModel.toggleSetComplete(setIndex: index) }
-                                } label: {
-                                    Image(systemName: set.isCompleted ? "checkmark.circle.fill" : "circle")
-                                        .font(.system(size: 22, weight: .semibold))
-                                        .foregroundStyle(set.isCompleted ? FFColors.accent : FFColors.textSecondary)
-                                        .frame(width: 44, height: 44)
-                                }
-                                .buttonStyle(.plain)
-                                .accessibilityLabel("Complete set \(index + 1)")
-
-                                Text("Подход \(index + 1)")
-                                    .font(FFTypography.body.weight(.semibold))
-                                    .foregroundStyle(FFColors.textPrimary)
-
-                                Spacer()
-
-                                if set.isCompleted {
-                                    FFBadge(status: .completed)
-                                }
-
-                                Button("Copy") {
-                                    Task { await viewModel.copyPreviousSet(setIndex: index) }
-                                }
-                                .font(FFTypography.caption.weight(.semibold))
-                                .foregroundStyle(FFColors.accent)
-                                .frame(minHeight: 44)
-                            }
-
-                            HStack(spacing: FFSpacing.sm) {
-                                metricStepper(
-                                    title: "Вес",
-                                    value: set.weightText.isEmpty ? "0" : set.weightText,
-                                    stepText: "2.5 кг",
-                                    onMinus: { Task { await viewModel.decrementWeight(setIndex: index) } },
-                                    onPlus: { Task { await viewModel.incrementWeight(setIndex: index) } },
-                                )
-                                metricStepper(
-                                    title: "Повторы",
-                                    value: set.repsText.isEmpty ? "0" : set.repsText,
-                                    stepText: "1",
-                                    onMinus: { Task { await viewModel.decrementReps(setIndex: index) } },
-                                    onPlus: { Task { await viewModel.incrementReps(setIndex: index) } },
-                                )
-                            }
-                        }
-                        .padding(FFSpacing.sm)
-                        .background(FFColors.surface)
-                        .clipShape(RoundedRectangle(cornerRadius: FFTheme.Radius.control))
-                        .overlay {
-                            RoundedRectangle(cornerRadius: FFTheme.Radius.control)
-                                .stroke(FFColors.gray700, lineWidth: 1)
-                        }
+                        SetRowView(
+                            index: index,
+                            set: set,
+                            weightStepLabel: viewModel.weightStepLabel,
+                            isFocused: viewModel.focusedSetIndex == index,
+                            onToggleComplete: { Task { await viewModel.toggleSetComplete(setIndex: index) } },
+                            onCopy: { Task { await viewModel.copyPreviousSet(setIndex: index) } },
+                            onDecreaseWeight: { Task { await viewModel.decrementWeight(setIndex: index) } },
+                            onIncreaseWeight: { Task { await viewModel.incrementWeight(setIndex: index) } },
+                            onDecreaseReps: { Task { await viewModel.decrementReps(setIndex: index) } },
+                            onIncreaseReps: { Task { await viewModel.incrementReps(setIndex: index) } },
+                        )
+                        .id(setRowID(index))
                     }
                 }
             }
@@ -1505,107 +1664,41 @@ struct WorkoutPlayerViewV2: View {
     }
 
     private var restTimerBanner: some View {
-        VStack(spacing: FFSpacing.xs) {
-            FFCard(padding: FFSpacing.sm) {
-                VStack(spacing: FFSpacing.xs) {
-                    HStack(spacing: FFSpacing.xs) {
-                        Label("Rest", systemImage: "timer")
-                            .font(FFTypography.caption.weight(.semibold))
-                            .foregroundStyle(FFColors.textSecondary)
-
-                        Spacer(minLength: FFSpacing.xs)
-
-                        Text(formattedTime(viewModel.restTimer.remainingSeconds))
-                            .font(.system(size: 22, weight: .bold, design: .rounded))
-                            .monospacedDigit()
-                            .foregroundStyle(FFColors.textPrimary)
-
-                        Button {
-                            viewModel.restTimer.pauseOrResume()
-                        } label: {
-                            Text(viewModel.restTimer.isRunning ? "Pause" : "Resume")
-                                .font(FFTypography.caption.weight(.semibold))
-                                .foregroundStyle(FFColors.textPrimary)
-                                .padding(.horizontal, FFSpacing.xs)
-                                .frame(minHeight: 36)
-                                .background(FFColors.gray700)
-                                .clipShape(Capsule())
-                        }
-                        .buttonStyle(.plain)
-
-                        Button {
-                            viewModel.restTimer.skip()
-                        } label: {
-                            Text("Skip")
-                                .font(FFTypography.caption.weight(.semibold))
-                                .foregroundStyle(FFColors.textPrimary)
-                                .padding(.horizontal, FFSpacing.xs)
-                                .frame(minHeight: 36)
-                                .background(FFColors.danger)
-                                .clipShape(Capsule())
-                        }
-                        .buttonStyle(.plain)
-
-                        Button {
-                            withAnimation(.easeInOut(duration: 0.2)) {
-                                isRestTimerExpanded.toggle()
-                            }
-                        } label: {
-                            Image(systemName: isRestTimerExpanded ? "chevron.up" : "chevron.down")
-                                .font(.system(size: 12, weight: .bold))
-                                .foregroundStyle(FFColors.textSecondary)
-                                .frame(width: 30, height: 30)
-                                .background(FFColors.surface)
-                                .clipShape(Circle())
-                                .overlay {
-                                    Circle()
-                                        .stroke(FFColors.gray700, lineWidth: 1)
-                                }
-                        }
-                        .buttonStyle(.plain)
-                    }
-
-                    if isRestTimerExpanded {
-                        HStack(spacing: FFSpacing.xs) {
-                            numericChip(title: "+15") { viewModel.addRest(seconds: 15) }
-                            numericChip(title: "+30") { viewModel.addRest(seconds: 30) }
-                            numericChip(title: "+60") { viewModel.addRest(seconds: 60) }
-                            Spacer(minLength: 0)
-                        }
-                        .transition(.move(edge: .top).combined(with: .opacity))
-                    }
-                }
-            }
-        }
-        .padding(.horizontal, FFSpacing.md)
-        .padding(.top, FFSpacing.xs)
-        .background(FFColors.background.opacity(0.96))
+        RestTimerBanner(
+            remainingSeconds: viewModel.restTimer.remainingSeconds,
+            isRunning: viewModel.restTimer.isRunning,
+            isExpanded: $isRestTimerExpanded,
+            onPauseResume: { viewModel.restTimer.pauseOrResume() },
+            onSkip: { viewModel.restTimer.skip() },
+            onAddTime: { viewModel.addRest(seconds: $0) },
+            onReset: { viewModel.resetRestTimer() },
+        )
     }
 
     private var bottomBar: some View {
         FFCard(padding: FFSpacing.sm) {
             VStack(spacing: FFSpacing.xs) {
-                HStack(spacing: FFSpacing.xs) {
-                    compactBottomButton(title: "Undo", systemImage: "arrow.uturn.backward") {
-                        Task { await viewModel.undoLastChange() }
-                    }
+                QuickActionsBar(
+                    copyTitle: "Скопировать прошлый",
+                    copySubtitle: viewModel.quickActionSetTitle,
+                    onCopy: { Task { await viewModel.copyPreviousSetQuickAction() } },
+                    onSkipExercise: { Task { await viewModel.skipExercise() } },
+                    onUndo: { Task { await viewModel.undoLastChange() } },
+                )
 
-                    compactBottomButton(title: "Jump list", systemImage: "list.bullet") {
+                HStack(spacing: FFSpacing.xs) {
+                    compactBottomButton(title: "Список упражнений", systemImage: "list.bullet") {
                         isJumpListPresented = true
                     }
 
                     Menu {
-                        Button("Skip exercise", systemImage: "forward.fill") {
-                            Task { await viewModel.skipExercise() }
-                        }
-
-                        Button("Finish early", systemImage: "flag.checkered", role: .destructive) {
+                        Button("Завершить раньше", systemImage: "flag.checkered", role: .destructive) {
                             viewModel.isFinishEarlyConfirmationPresented = true
                         }
                     } label: {
                         HStack(spacing: FFSpacing.xxs) {
                             Image(systemName: "ellipsis.circle")
-                            Text("More")
+                            Text("Ещё")
                         }
                         .font(FFTypography.caption.weight(.semibold))
                         .foregroundStyle(FFColors.textPrimary)
@@ -1628,6 +1721,32 @@ struct WorkoutPlayerViewV2: View {
         .padding(.top, FFSpacing.xs)
         .padding(.bottom, FFSpacing.sm)
         .background(FFColors.background.opacity(0.96))
+    }
+
+    private func setRowID(_ index: Int) -> String {
+        "set-row-\(index)"
+    }
+
+    private func lastTimeBlock(lines: [String]) -> some View {
+        VStack(alignment: .leading, spacing: FFSpacing.xxs) {
+            Text("В прошлый раз")
+                .font(FFTypography.caption.weight(.semibold))
+                .foregroundStyle(FFColors.textSecondary)
+            ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
+                Text(line)
+                    .font(FFTypography.body.weight(.semibold))
+                    .foregroundStyle(FFColors.textPrimary)
+                    .lineLimit(1)
+            }
+        }
+        .padding(FFSpacing.sm)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(FFColors.surface)
+        .clipShape(RoundedRectangle(cornerRadius: FFTheme.Radius.control))
+        .overlay {
+            RoundedRectangle(cornerRadius: FFTheme.Radius.control)
+                .stroke(FFColors.gray700, lineWidth: 1)
+        }
     }
 
     private func compactActionButton(title: String, systemImage: String, action: @escaping () -> Void) -> some View {
@@ -1692,6 +1811,87 @@ struct WorkoutPlayerViewV2: View {
         .buttonStyle(.plain)
     }
 
+    private func prescription(for exercise: WorkoutExercise) -> String {
+        let reps = if let min = exercise.repsMin, let max = exercise.repsMax {
+            "\(min)-\(max)"
+        } else if let min = exercise.repsMin {
+            "\(min)"
+        } else {
+            "по самочувствию"
+        }
+        let rest = exercise.restSeconds.map { "\($0) сек" } ?? "без таймера"
+        return "\(exercise.sets) подходов • \(reps) повторов • отдых \(rest)"
+    }
+}
+
+private struct SetRowView: View {
+    let index: Int
+    let set: SessionSetState
+    let weightStepLabel: String
+    let isFocused: Bool
+    let onToggleComplete: () -> Void
+    let onCopy: () -> Void
+    let onDecreaseWeight: () -> Void
+    let onIncreaseWeight: () -> Void
+    let onDecreaseReps: () -> Void
+    let onIncreaseReps: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: FFSpacing.sm) {
+            HStack(spacing: FFSpacing.xs) {
+                Button(action: onToggleComplete) {
+                    Image(systemName: set.isCompleted ? "checkmark.circle.fill" : "circle")
+                        .font(.system(size: 22, weight: .semibold))
+                        .foregroundStyle(set.isCompleted ? FFColors.accent : FFColors.textSecondary)
+                        .frame(width: 44, height: 44)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Отметить подход \(index + 1) выполненным")
+
+                Text("Подход \(index + 1)")
+                    .font(FFTypography.body.weight(.semibold))
+                    .foregroundStyle(FFColors.textPrimary)
+
+                Spacer(minLength: FFSpacing.xs)
+
+                if set.isCompleted {
+                    FFBadge(status: .completed)
+                }
+
+                Button("Копировать") {
+                    onCopy()
+                }
+                .font(FFTypography.caption.weight(.semibold))
+                .foregroundStyle(FFColors.accent)
+                .frame(minHeight: 44)
+            }
+
+            HStack(spacing: FFSpacing.sm) {
+                metricStepper(
+                    title: "Вес",
+                    value: set.weightText.isEmpty ? "0" : set.weightText,
+                    stepText: weightStepLabel,
+                    onMinus: onDecreaseWeight,
+                    onPlus: onIncreaseWeight,
+                )
+                metricStepper(
+                    title: "Повторы",
+                    value: set.repsText.isEmpty ? "0" : set.repsText,
+                    stepText: "1",
+                    onMinus: onDecreaseReps,
+                    onPlus: onIncreaseReps,
+                )
+            }
+        }
+        .padding(FFSpacing.sm)
+        .background(FFColors.surface)
+        .clipShape(RoundedRectangle(cornerRadius: FFTheme.Radius.control))
+        .overlay {
+            RoundedRectangle(cornerRadius: FFTheme.Radius.control)
+                .stroke(isFocused ? FFColors.primary : FFColors.gray700, lineWidth: isFocused ? 1.6 : 1)
+        }
+    }
+
     private func metricStepper(
         title: String,
         value: String,
@@ -1735,24 +1935,151 @@ struct WorkoutPlayerViewV2: View {
         }
         .buttonStyle(.plain)
     }
+}
 
-    private func prescription(for exercise: WorkoutExercise) -> String {
-        let reps = if let min = exercise.repsMin, let max = exercise.repsMax {
-            "\(min)-\(max)"
-        } else if let min = exercise.repsMin {
-            "\(min)"
-        } else {
-            "по самочувствию"
+private struct QuickActionsBar: View {
+    let copyTitle: String
+    let copySubtitle: String
+    let onCopy: () -> Void
+    let onSkipExercise: () -> Void
+    let onUndo: () -> Void
+
+    var body: some View {
+        HStack(spacing: FFSpacing.xs) {
+            compactButton(
+                title: copyTitle,
+                subtitle: copySubtitle,
+                systemImage: "doc.on.doc",
+                action: onCopy,
+            )
+            compactButton(
+                title: "Пропустить упражнение",
+                subtitle: nil,
+                systemImage: "forward.fill",
+                action: onSkipExercise,
+            )
+            compactButton(
+                title: "Отменить",
+                subtitle: nil,
+                systemImage: "arrow.uturn.backward",
+                action: onUndo,
+            )
         }
-        let rest = exercise.restSeconds.map { "\($0) сек" } ?? "без таймера"
-        return "\(exercise.sets) подходов • \(reps) повторов • отдых \(rest)"
     }
 
-    private func formattedTime(_ totalSeconds: Int) -> String {
-        String(format: "%02d:%02d", totalSeconds / 60, totalSeconds % 60)
+    private func compactButton(
+        title: String,
+        subtitle: String?,
+        systemImage: String,
+        action: @escaping () -> Void,
+    ) -> some View {
+        Button(action: action) {
+            VStack(spacing: 2) {
+                Label(title, systemImage: systemImage)
+                    .font(FFTypography.caption.weight(.semibold))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.72)
+                if let subtitle {
+                    Text(subtitle)
+                        .font(.system(size: 11, weight: .regular, design: .rounded))
+                        .foregroundStyle(FFColors.textSecondary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.72)
+                }
+            }
+            .foregroundStyle(FFColors.textPrimary)
+            .frame(maxWidth: .infinity, minHeight: 48)
+            .padding(.horizontal, FFSpacing.xxs)
+            .background(FFColors.surface)
+            .clipShape(RoundedRectangle(cornerRadius: FFTheme.Radius.control))
+            .overlay {
+                RoundedRectangle(cornerRadius: FFTheme.Radius.control)
+                    .stroke(FFColors.gray700, lineWidth: 1)
+            }
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+private struct RestTimerBanner: View {
+    let remainingSeconds: Int
+    let isRunning: Bool
+    @Binding var isExpanded: Bool
+    let onPauseResume: () -> Void
+    let onSkip: () -> Void
+    let onAddTime: (Int) -> Void
+    let onReset: () -> Void
+
+    var body: some View {
+        VStack(spacing: FFSpacing.xs) {
+            FFCard(padding: FFSpacing.sm) {
+                VStack(spacing: FFSpacing.xs) {
+                    HStack(spacing: FFSpacing.xs) {
+                        Label("Отдых", systemImage: "timer")
+                            .font(FFTypography.caption.weight(.semibold))
+                            .foregroundStyle(FFColors.textSecondary)
+
+                        Spacer(minLength: FFSpacing.xs)
+
+                        Text(formattedTime(remainingSeconds))
+                            .font(.system(size: 22, weight: .bold, design: .rounded))
+                            .monospacedDigit()
+                            .foregroundStyle(FFColors.textPrimary)
+
+                        capsuleButton(title: isRunning ? "Пауза" : "Продолжить", tint: FFColors.gray700, action: onPauseResume)
+                        capsuleButton(title: "Пропустить", tint: FFColors.danger, action: onSkip)
+
+                        Button {
+                            withAnimation(.easeInOut(duration: 0.2)) {
+                                isExpanded.toggle()
+                            }
+                        } label: {
+                            Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
+                                .font(.system(size: 12, weight: .bold))
+                                .foregroundStyle(FFColors.textSecondary)
+                                .frame(width: 30, height: 30)
+                                .background(FFColors.surface)
+                                .clipShape(Circle())
+                                .overlay {
+                                    Circle()
+                                        .stroke(FFColors.gray700, lineWidth: 1)
+                                }
+                        }
+                        .buttonStyle(.plain)
+                    }
+
+                    if isExpanded {
+                        HStack(spacing: FFSpacing.xs) {
+                            timerChip(title: "+15") { onAddTime(15) }
+                            timerChip(title: "+30") { onAddTime(30) }
+                            timerChip(title: "+60") { onAddTime(60) }
+                            timerChip(title: "Сброс", action: onReset)
+                            Spacer(minLength: 0)
+                        }
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                    }
+                }
+            }
+        }
+        .padding(.horizontal, FFSpacing.md)
+        .padding(.top, FFSpacing.xs)
+        .background(FFColors.background.opacity(0.96))
     }
 
-    private func numericChip(title: String, action: @escaping () -> Void) -> some View {
+    private func capsuleButton(title: String, tint: Color, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(title)
+                .font(FFTypography.caption.weight(.semibold))
+                .foregroundStyle(FFColors.textPrimary)
+                .padding(.horizontal, FFSpacing.xs)
+                .frame(minHeight: 36)
+                .background(tint)
+                .clipShape(Capsule())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func timerChip(title: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Text(title)
                 .font(FFTypography.caption.weight(.semibold))
@@ -1763,6 +2090,10 @@ struct WorkoutPlayerViewV2: View {
                 .clipShape(RoundedRectangle(cornerRadius: FFTheme.Radius.control))
         }
         .buttonStyle(.plain)
+    }
+
+    private func formattedTime(_ totalSeconds: Int) -> String {
+        String(format: "%02d:%02d", totalSeconds / 60, totalSeconds % 60)
     }
 }
 
@@ -1812,7 +2143,7 @@ struct WorkoutCompletionViewV2: View {
     }
 }
 
-#Preview("Workout Player V2") {
+#Preview("Плеер тренировки 2") {
     NavigationStack {
         WorkoutPlayerViewV2(
             viewModel: WorkoutPlayerViewModel(
