@@ -138,6 +138,7 @@ private struct AthleteShellView: View {
     @State private var resumeSession: ActiveWorkoutSession?
     @State private var resumeSessionTitle: String?
     @State private var pendingResumeRequest: ActiveWorkoutSession?
+    @State private var isTrainingFlowPresented = false
 
     enum ShellTab: Hashable {
         case training
@@ -149,7 +150,7 @@ private struct AthleteShellView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            if let session = resumeSession {
+            if let session = resumeSession, shouldShowResumeBanner {
                 WorkoutInProgressBanner(
                     workoutName: resumeSessionTitle,
                     detailsText: nil,
@@ -183,6 +184,9 @@ private struct AthleteShellView: View {
                             Task {
                                 await refreshResumeSession()
                             }
+                        },
+                        onRoutePresentationChanged: { isPresented in
+                            isTrainingFlowPresented = isPresented
                         },
                     )
                     .navigationTitle("Тренировка")
@@ -275,6 +279,13 @@ private struct AthleteShellView: View {
                 await refreshResumeSession()
             }
         }
+    }
+
+    private var shouldShowResumeBanner: Bool {
+        if selectedTab != .training {
+            return true
+        }
+        return !isTrainingFlowPresented
     }
 
     private func refreshResumeSession() async {
@@ -1502,6 +1513,7 @@ private struct TrainingTabContent: View {
     let onOpenCatalog: () -> Void
     @Binding var resumeSessionRequest: ActiveWorkoutSession?
     let onResumeHandled: () -> Void
+    let onRoutePresentationChanged: (Bool) -> Void
 
     @State private var sessionRoute: ActiveWorkoutSession?
     @State private var programWorkoutRoute: ProgramWorkoutRoute?
@@ -1510,6 +1522,7 @@ private struct TrainingTabContent: View {
     @State private var recentWorkoutDetailsRoute: RecentWorkoutDetailsRoute?
     @State private var isQuickBuilderPresented = false
     @State private var isTemplateLibraryPresented = false
+    @State private var activePresentationMarkers: Set<String> = []
 
     private struct ProgramHistoryRoute: Identifiable, Hashable {
         let programId: String
@@ -1561,6 +1574,12 @@ private struct TrainingTabContent: View {
                 onOpenPlan: onOpenPlan,
             )
             .navigationBarBackButtonHidden(false)
+            .onAppear {
+                updatePresentationMarker("session:\(session.programId)::\(session.workoutId)", isPresented: true)
+            }
+            .onDisappear {
+                updatePresentationMarker("session:\(session.programId)::\(session.workoutId)", isPresented: false)
+            }
         }
         .navigationDestination(item: $programWorkoutRoute) { route in
             WorkoutLaunchView(
@@ -1571,6 +1590,12 @@ private struct TrainingTabContent: View {
                 onOpenPlan: onOpenPlan,
             )
             .navigationBarBackButtonHidden(false)
+            .onAppear {
+                updatePresentationMarker("program:\(route.id)", isPresented: true)
+            }
+            .onDisappear {
+                updatePresentationMarker("program:\(route.id)", isPresented: false)
+            }
         }
         .navigationDestination(item: $presetWorkoutRoute) { route in
             WorkoutLaunchView(
@@ -1583,6 +1608,12 @@ private struct TrainingTabContent: View {
                 onOpenPlan: onOpenPlan,
             )
             .navigationBarBackButtonHidden(false)
+            .onAppear {
+                updatePresentationMarker("preset:\(route.id)", isPresented: true)
+            }
+            .onDisappear {
+                updatePresentationMarker("preset:\(route.id)", isPresented: false)
+            }
         }
         .navigationDestination(item: $programHistoryRoute) { route in
             ProgramWorkoutHistoryScreen(
@@ -1600,6 +1631,12 @@ private struct TrainingTabContent: View {
                 },
             )
             .navigationBarBackButtonHidden(false)
+            .onAppear {
+                updatePresentationMarker("history:\(route.id)", isPresented: true)
+            }
+            .onDisappear {
+                updatePresentationMarker("history:\(route.id)", isPresented: false)
+            }
         }
         .navigationDestination(item: $recentWorkoutDetailsRoute) { route in
             RecentWorkoutDetailsView(
@@ -1609,12 +1646,24 @@ private struct TrainingTabContent: View {
                 },
             )
             .navigationBarBackButtonHidden(false)
+            .onAppear {
+                updatePresentationMarker("recent:\(route.id)", isPresented: true)
+            }
+            .onDisappear {
+                updatePresentationMarker("recent:\(route.id)", isPresented: false)
+            }
         }
         .fullScreenCover(isPresented: $isQuickBuilderPresented) {
             NavigationStack {
                 QuickWorkoutBuilderView { workout in
                     presetWorkoutRoute = PresetWorkoutRoute(workout: workout, source: .freestyle)
                 }
+            }
+            .onAppear {
+                updatePresentationMarker("quick_builder", isPresented: true)
+            }
+            .onDisappear {
+                updatePresentationMarker("quick_builder", isPresented: false)
             }
         }
         .fullScreenCover(isPresented: $isTemplateLibraryPresented) {
@@ -1626,13 +1675,48 @@ private struct TrainingTabContent: View {
                     },
                 )
             }
+            .onAppear {
+                updatePresentationMarker("template_library", isPresented: true)
+            }
+            .onDisappear {
+                updatePresentationMarker("template_library", isPresented: false)
+            }
         }
         .task {
             handleExternalResumeRequest()
+            onRoutePresentationChanged(isRoutePresentationActive)
         }
         .onChange(of: resumeSessionRequest?.workoutId) { _, _ in
             handleExternalResumeRequest()
         }
+        .onChange(of: hasActivePresentation) { _, _ in
+            onRoutePresentationChanged(isRoutePresentationActive)
+        }
+        .onChange(of: activePresentationMarkers.count) { _, _ in
+            onRoutePresentationChanged(isRoutePresentationActive)
+        }
+    }
+
+    private var isRoutePresentationActive: Bool {
+        hasActivePresentation || !activePresentationMarkers.isEmpty
+    }
+
+    private var hasActivePresentation: Bool {
+        sessionRoute != nil
+            || programWorkoutRoute != nil
+            || programHistoryRoute != nil
+            || presetWorkoutRoute != nil
+            || recentWorkoutDetailsRoute != nil
+            || isQuickBuilderPresented
+            || isTemplateLibraryPresented
+    }
+
+    private func updatePresentationMarker(_ marker: String, isPresented: Bool) {
+        if isPresented {
+            activePresentationMarkers.insert(marker)
+            return
+        }
+        activePresentationMarkers.remove(marker)
     }
 
     private func handleExternalResumeRequest() {
