@@ -172,6 +172,7 @@ private struct AthleteShellView: View {
                         userSub: me.subject ?? "anonymous",
                         apiClient: apiClient,
                         onOpenPlan: { selectedTab = .plan },
+                        onOpenCatalog: { selectedTab = .catalog },
                         resumeSessionRequest: $pendingResumeRequest,
                         onResumeHandled: {
                             pendingResumeRequest = nil
@@ -1372,12 +1373,14 @@ private struct TrainingTabContent: View {
     let userSub: String
     let apiClient: APIClientProtocol?
     let onOpenPlan: () -> Void
+    let onOpenCatalog: () -> Void
     @Binding var resumeSessionRequest: ActiveWorkoutSession?
     let onResumeHandled: () -> Void
 
     @State private var sessionRoute: ActiveWorkoutSession?
     @State private var programWorkoutRoute: ProgramWorkoutRoute?
     @State private var presetWorkoutRoute: PresetWorkoutRoute?
+    @State private var recentWorkoutDetailsRoute: RecentWorkoutDetailsRoute?
     @State private var isQuickBuilderPresented = false
     @State private var isTemplateLibraryPresented = false
 
@@ -1394,6 +1397,22 @@ private struct TrainingTabContent: View {
         let source: WorkoutSource
         var id: String {
             "\(source.rawValue)::\(workout.id)"
+        }
+    }
+
+    private struct RecentWorkoutDetailsRoute: Identifiable, Hashable {
+        let record: CompletedWorkoutRecord
+
+        var id: String {
+            record.id
+        }
+
+        static func == (lhs: RecentWorkoutDetailsRoute, rhs: RecentWorkoutDetailsRoute) -> Bool {
+            lhs.id == rhs.id
+        }
+
+        func hash(into hasher: inout Hasher) {
+            hasher.combine(id)
         }
     }
 
@@ -1416,18 +1435,13 @@ private struct TrainingTabContent: View {
                 isTemplateLibraryPresented = true
             },
             onRepeatWorkout: { record in
-                switch record.source {
-                case .program:
-                    guard UUID(uuidString: record.programId) != nil else {
-                        isQuickBuilderPresented = true
-                        return
-                    }
-                    programWorkoutRoute = ProgramWorkoutRoute(programId: record.programId, workoutId: record.workoutId)
-                case .template:
-                    isTemplateLibraryPresented = true
-                case .freestyle:
-                    isQuickBuilderPresented = true
-                }
+                openRepeatWorkout(record)
+            },
+            onOpenRecentWorkout: { record in
+                recentWorkoutDetailsRoute = RecentWorkoutDetailsRoute(record: record)
+            },
+            onOpenCatalog: {
+                onOpenCatalog()
             },
         )
         .navigationDestination(item: $sessionRoute) { session in
@@ -1460,6 +1474,14 @@ private struct TrainingTabContent: View {
                 onOpenPlan: onOpenPlan,
             )
         }
+        .navigationDestination(item: $recentWorkoutDetailsRoute) { route in
+            RecentWorkoutDetailsView(
+                record: route.record,
+                onRepeat: {
+                    openRepeatWorkout(route.record)
+                },
+            )
+        }
         .fullScreenCover(isPresented: $isQuickBuilderPresented) {
             NavigationStack {
                 QuickWorkoutBuilderView { workout in
@@ -1490,6 +1512,21 @@ private struct TrainingTabContent: View {
         sessionRoute = requested
         resumeSessionRequest = nil
         onResumeHandled()
+    }
+
+    private func openRepeatWorkout(_ record: CompletedWorkoutRecord) {
+        switch record.source {
+        case .program:
+            guard UUID(uuidString: record.programId) != nil else {
+                isQuickBuilderPresented = true
+                return
+            }
+            programWorkoutRoute = ProgramWorkoutRoute(programId: record.programId, workoutId: record.workoutId)
+        case .template:
+            isTemplateLibraryPresented = true
+        case .freestyle:
+            isQuickBuilderPresented = true
+        }
     }
 }
 
