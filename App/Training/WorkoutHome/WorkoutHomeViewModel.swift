@@ -325,62 +325,48 @@ final class WorkoutHomeViewModel {
     }
 
     private func apply(progress: ActiveEnrollmentProgressResponse) async {
-        let programId = progress.programId?.trimmedNilIfEmpty
-        let nextWorkoutId = progress.nextWorkoutId?.trimmedNilIfEmpty
-        let nextWorkoutTitle = progress.nextWorkoutTitle?.trimmedNilIfEmpty ?? "Следующая тренировка"
+        guard let enrollment = WorkoutDomainRules.resolveActiveEnrollment(progress) else {
+            serverInProgressWorkout = nil
+            startWorkoutTarget = nil
+            programProgress = nil
+            await updateRemoteResumeCandidate()
+            return
+        }
 
-        if let currentWorkoutId = progress.currentWorkoutId?.trimmedNilIfEmpty,
-           progress.currentWorkoutStatus == .inProgress,
-           let resolvedProgramId = programId
-        {
+        if let resumeTarget = enrollment.resumeWorkout {
             serverInProgressWorkout = RemoteWorkoutTarget(
-                programId: resolvedProgramId,
-                workoutId: currentWorkoutId,
-                title: progress.currentWorkoutTitle?.trimmedNilIfEmpty ?? "Текущая тренировка",
-            )
-        } else if let nextWorkoutId,
-                  progress.nextWorkoutStatus == .inProgress,
-                  let resolvedProgramId = programId
-        {
-            serverInProgressWorkout = RemoteWorkoutTarget(
-                programId: resolvedProgramId,
-                workoutId: nextWorkoutId,
-                title: nextWorkoutTitle,
+                programId: resumeTarget.programId,
+                workoutId: resumeTarget.workoutId,
+                title: resumeTarget.title,
             )
         } else {
             serverInProgressWorkout = nil
         }
 
-        if let nextWorkoutId,
-           let resolvedProgramId = programId,
-           serverInProgressWorkout?.workoutId != nextWorkoutId
-        {
+        if let nextWorkoutTarget = enrollment.nextWorkoutToStart {
             startWorkoutTarget = RemoteWorkoutTarget(
-                programId: resolvedProgramId,
-                workoutId: nextWorkoutId,
-                title: nextWorkoutTitle,
+                programId: nextWorkoutTarget.programId,
+                workoutId: nextWorkoutTarget.workoutId,
+                title: nextWorkoutTarget.title,
             )
         } else {
             startWorkoutTarget = nil
         }
 
-        if let resolvedProgramId = programId {
-            let completed = max(0, progress.completedSessions ?? 0)
-            let total = max(1, progress.totalSessions ?? completed)
-            let lastCompletedAt = parseISODate(progress.lastCompletedAt)
-                ?? recentWorkouts.first(where: { $0.programId == resolvedProgramId })?.finishedAt
-            programProgress = ProgramProgress(
-                programId: resolvedProgramId,
-                title: progress.programTitle?.trimmedNilIfEmpty ?? "Активная программа",
-                detailsLine: "20–30 минут • Без оборудования",
-                completedWorkouts: min(completed, total),
-                totalWorkouts: total,
-                lastCompletedAt: lastCompletedAt,
-                updatedAt: parseISODate(progress.updatedAt),
-            )
-        } else {
-            programProgress = nil
-        }
+        let completed = enrollment.completedSessions
+        let total = enrollment.totalSessionsForProgress
+        let resolvedProgramId = enrollment.programId
+        let lastCompletedAt = parseISODate(progress.lastCompletedAt)
+            ?? recentWorkouts.first(where: { $0.programId == resolvedProgramId })?.finishedAt
+        programProgress = ProgramProgress(
+            programId: resolvedProgramId,
+            title: enrollment.programTitle,
+            detailsLine: "20–30 минут • Без оборудования",
+            completedWorkouts: min(completed, total),
+            totalWorkouts: total,
+            lastCompletedAt: lastCompletedAt,
+            updatedAt: parseISODate(progress.updatedAt),
+        )
 
         await updateRemoteResumeCandidate()
     }

@@ -778,27 +778,34 @@ final class ProgramDetailsViewModel {
         let result = await athleteTrainingClient.activeEnrollmentProgress()
         switch result {
         case let .success(progress):
-            let isCurrentProgram = progress.programId == programId
+            guard let enrollment = WorkoutDomainRules.resolveActiveEnrollment(progress) else {
+                isProgramAlreadyActive = false
+                nextWorkoutInstanceId = nil
+                nextWorkoutInstanceTitle = nil
+                upcomingWorkoutTitle = nil
+                completedWorkoutsCount = 0
+                totalWorkoutsCount = 0
+                return
+            }
+
+            let isCurrentProgram = enrollment.programId == programId
             isProgramAlreadyActive = isCurrentProgram
 
             guard isCurrentProgram else {
                 nextWorkoutInstanceId = nil
                 nextWorkoutInstanceTitle = nil
+                upcomingWorkoutTitle = nil
+                completedWorkoutsCount = 0
+                totalWorkoutsCount = 0
                 return
             }
 
-            nextWorkoutInstanceId = progress.nextWorkoutId
-            nextWorkoutInstanceTitle = progress.nextWorkoutTitle
-
-            if let completed = progress.completedSessions {
-                completedWorkoutsCount = completed
-            }
-            if let total = progress.totalSessions {
-                totalWorkoutsCount = total
-            }
-            if let nextWorkoutTitle = progress.nextWorkoutTitle?.trimmedNilIfEmpty {
-                upcomingWorkoutTitle = nextWorkoutTitle
-            }
+            let launchTarget = enrollment.preferredLaunchWorkout
+            nextWorkoutInstanceId = launchTarget?.workoutId
+            nextWorkoutInstanceTitle = launchTarget?.title
+            upcomingWorkoutTitle = enrollment.nextWorkoutToStart?.title ?? launchTarget?.title
+            completedWorkoutsCount = enrollment.completedSessions
+            totalWorkoutsCount = max(enrollment.totalSessions, completedWorkoutsCount)
 
         case let .failure(apiError):
             if apiError == .offline {

@@ -977,13 +977,11 @@ final class TrainingInsightsViewModel {
             return
         }
 
-        let nextWorkoutId = progress.nextWorkoutId?.trimmedNilIfEmpty
-        let nextWorkoutTitle = progress.nextWorkoutTitle?.trimmedNilIfEmpty
-        let hasNext = nextWorkoutId != nil
+        let nextTarget = WorkoutDomainRules.resolveActiveEnrollment(progress)?.nextWorkoutToStart
         nextAction = ProgressNextActionSnapshot(
-            hasNextWorkout: hasNext,
-            nextWorkoutId: nextWorkoutId,
-            nextWorkoutTitle: nextWorkoutTitle,
+            hasNextWorkout: nextTarget != nil,
+            nextWorkoutId: nextTarget?.workoutId,
+            nextWorkoutTitle: nextTarget?.title,
         )
     }
 

@@ -8,7 +8,7 @@ struct StartWorkoutCard: View {
         WorkoutCardContainer(cornerRadius: 24, padding: 16) {
             VStack(alignment: .leading, spacing: 10) {
                 Text("Начать тренировку")
-                    .font(.title2.weight(.semibold))
+                    .font(FFTypography.h2)
                     .foregroundStyle(FFColors.textPrimary)
 
                 Text("Выберите формат и начните тренировку")

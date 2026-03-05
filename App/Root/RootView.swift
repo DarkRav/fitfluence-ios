@@ -278,43 +278,10 @@ private struct AthleteShellView: View {
         {
             let result = await athleteTrainingClient.activeEnrollmentProgress()
             if case let .success(progress) = result {
-                let programId = progress.programId?.trimmingCharacters(in: .whitespacesAndNewlines)
-                let currentInProgress = progress.currentWorkoutStatus == .inProgress
-                let nextInProgress = progress.nextWorkoutStatus == .inProgress
-
-                if currentInProgress,
-                   let workoutId = progress.currentWorkoutId?.trimmingCharacters(in: .whitespacesAndNewlines),
-                   let programId,
-                   !workoutId.isEmpty,
-                   !programId.isEmpty
-                {
-                    remoteWorkoutTitle = normalizedWorkoutTitle(progress.currentWorkoutTitle)
-                    latest = ActiveWorkoutSession(
-                        userSub: userSub,
-                        programId: programId,
-                        workoutId: workoutId,
-                        source: .program,
-                        status: .inProgress,
-                        currentExerciseIndex: nil,
-                        lastUpdated: Date(),
-                    )
-                } else if nextInProgress,
-                          let workoutId = progress.nextWorkoutId?.trimmingCharacters(in: .whitespacesAndNewlines),
-                          let programId,
-                          !workoutId.isEmpty,
-                          !programId.isEmpty
-                {
-                    remoteWorkoutTitle = normalizedWorkoutTitle(progress.nextWorkoutTitle)
-                    latest = ActiveWorkoutSession(
-                        userSub: userSub,
-                        programId: programId,
-                        workoutId: workoutId,
-                        source: .program,
-                        status: .inProgress,
-                        currentExerciseIndex: nil,
-                        lastUpdated: Date(),
-                    )
+                if let enrollment = WorkoutDomainRules.resolveActiveEnrollment(progress) {
+                    remoteWorkoutTitle = enrollment.resumeWorkout?.title
                 }
+                latest = WorkoutDomainRules.remoteInProgressSession(userSub: userSub, progress: progress)
             }
         }
 
@@ -1010,16 +977,16 @@ struct WorkoutLaunchView: View {
 
             let activeEnrollmentResult = await athleteTrainingClient.activeEnrollmentProgress()
             if case let .success(progress) = activeEnrollmentResult,
-               let nextWorkoutIdRaw = progress.nextWorkoutId?.trimmingCharacters(in: .whitespacesAndNewlines),
-               !nextWorkoutIdRaw.isEmpty,
-               nextWorkoutIdRaw != workoutId
+               let target = WorkoutDomainRules.nextWorkoutTarget(
+                   from: progress,
+                   fallbackProgramId: programId,
+                   excludingWorkoutId: workoutId,
+               )
             {
-                let nextProgramId = progress.programId?.trimmingCharacters(in: .whitespacesAndNewlines)
                 nextWorkout = WorkoutSummaryState.NextWorkout(
-                    programId: (nextProgramId?.isEmpty == false ? nextProgramId! : programId),
-                    workoutId: nextWorkoutIdRaw,
-                    title: progress.nextWorkoutTitle?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
-                        ? progress.nextWorkoutTitle! : "Следующая тренировка",
+                    programId: target.programId,
+                    workoutId: target.workoutId,
+                    title: target.title,
                 )
             }
         }
@@ -1151,16 +1118,16 @@ struct WorkoutLaunchView: View {
 
             let activeEnrollmentResult = await athleteTrainingClient.activeEnrollmentProgress()
             if case let .success(progress) = activeEnrollmentResult,
-               let nextWorkoutIdRaw = progress.nextWorkoutId?.trimmingCharacters(in: .whitespacesAndNewlines),
-               !nextWorkoutIdRaw.isEmpty,
-               nextWorkoutIdRaw != workoutDetails.workout.id
+               let target = WorkoutDomainRules.nextWorkoutTarget(
+                   from: progress,
+                   fallbackProgramId: programId,
+                   excludingWorkoutId: workoutDetails.workout.id,
+               )
             {
-                let nextProgramId = progress.programId?.trimmingCharacters(in: .whitespacesAndNewlines)
                 nextWorkout = WorkoutSummaryState.NextWorkout(
-                    programId: (nextProgramId?.isEmpty == false ? nextProgramId! : programId),
-                    workoutId: nextWorkoutIdRaw,
-                    title: progress.nextWorkoutTitle?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
-                        ? progress.nextWorkoutTitle! : "Следующая тренировка",
+                    programId: target.programId,
+                    workoutId: target.workoutId,
+                    title: target.title,
                 )
             }
         }

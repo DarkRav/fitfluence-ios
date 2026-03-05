@@ -15,14 +15,14 @@ struct QuickActionCard: View {
                     .foregroundStyle(isEnabled ? FFColors.textSecondary : FFColors.gray500)
 
                 Text(title)
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(FFTypography.caption.weight(.semibold))
                     .foregroundStyle(isEnabled ? FFColors.textPrimary : FFColors.textSecondary)
                     .lineLimit(2)
                     .minimumScaleFactor(0.88)
                     .multilineTextAlignment(.leading)
 
                 Text(subtitle)
-                    .font(.system(size: 11, weight: .regular))
+                    .font(FFTypography.caption)
                     .foregroundStyle(FFColors.textSecondary)
                     .lineLimit(2)
                     .minimumScaleFactor(0.9)

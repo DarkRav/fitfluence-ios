@@ -184,29 +184,39 @@ final class HomeViewModel {
         let result = await athleteTrainingClient.activeEnrollmentProgress()
         switch result {
         case let .success(progress):
-            guard let programId = progress.programId?.trimmedNilIfEmpty else { return }
+            guard let enrollment = WorkoutDomainRules.resolveActiveEnrollment(progress) else {
+                activeProgramId = nil
+                activeProgramTitle = nil
+                plannedWorkoutToday = nil
+                lastWorkoutSummary = nil
+                return
+            }
 
-            activeProgramId = programId
-            activeProgramTitle = progress.programTitle?.trimmedNilIfEmpty
+            activeProgramId = enrollment.programId
+            activeProgramTitle = enrollment.programTitle
 
-            if let nextWorkoutId = progress.nextWorkoutId?.trimmedNilIfEmpty {
+            if let launchTarget = enrollment.preferredLaunchWorkout {
+                let workoutStatus: TrainingDayStatus = enrollment.resumeWorkout?.workoutId == launchTarget.workoutId
+                    ? .inProgress : .planned
                 plannedWorkoutToday = HomePlannedWorkoutSnapshot(
-                    title: progress.nextWorkoutTitle?.trimmedNilIfEmpty ?? "Следующая тренировка",
-                    status: .planned,
-                    statusText: "Запланирована",
+                    title: launchTarget.title,
+                    status: workoutStatus,
+                    statusText: workoutStatus == .inProgress ? "В процессе" : "Запланирована",
                     subtitle: "Активная программа",
                     source: .program,
-                    programId: programId,
-                    workoutId: nextWorkoutId,
+                    programId: launchTarget.programId,
+                    workoutId: launchTarget.workoutId,
                 )
 
-                await loadWorkoutSnapshotFromInstance(workoutInstanceId: nextWorkoutId)
+                await loadWorkoutSnapshotFromInstance(workoutInstanceId: launchTarget.workoutId)
             } else {
                 plannedWorkoutToday = nil
             }
 
-            if let completed = progress.completedSessions, let total = progress.totalSessions, total > 0 {
-                lastWorkoutSummary = "Прогресс программы: \(completed)/\(total)"
+            if enrollment.totalSessions > 0 {
+                lastWorkoutSummary = "Прогресс программы: \(enrollment.completedSessions)/\(enrollment.totalSessions)"
+            } else {
+                lastWorkoutSummary = nil
             }
 
         case .failure:
@@ -388,15 +398,11 @@ final class HomeViewModel {
             workoutIds: workouts.map(\.id),
         )
 
-        if let inProgress = activeSession,
-           let inProgressWorkout = workouts.first(where: { $0.id == inProgress.workoutId })
-        {
-            nextWorkout = inProgressWorkout
-        } else if let planned = workouts.first(where: { (statuses[$0.id] ?? .notStarted) != .completed }) {
-            nextWorkout = planned
-        } else {
-            nextWorkout = workouts.first
-        }
+        nextWorkout = WorkoutDomainRules.resolveNextWorkout(
+            workouts: workouts,
+            statuses: statuses,
+            activeSessionWorkoutId: activeSession?.workoutId,
+        )
 
         if let recent = await sessionManager.lastCompletedWorkout(userSub: userSub),
            let workout = workouts.first(where: { $0.id == recent.workoutId })

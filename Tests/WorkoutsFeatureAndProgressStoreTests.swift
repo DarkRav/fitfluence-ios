@@ -365,6 +365,95 @@ final class WorkoutsFeatureAndProgressStoreTests: XCTestCase {
         XCTAssertEqual(completed, .completed)
     }
 
+    func testActiveEnrollmentResolutionPrefersCurrentInProgressInvariant() {
+        let progress = ActiveEnrollmentProgressResponse(
+            enrollmentId: "enr-1",
+            status: "ACTIVE",
+            programId: "program-1",
+            programTitle: "Сила 8 недель",
+            programVersionId: "version-1",
+            currentWorkoutId: "workout-current",
+            currentWorkoutTitle: "День 3",
+            currentWorkoutStatus: .inProgress,
+            nextWorkoutId: "workout-next",
+            nextWorkoutTitle: "День 4",
+            nextWorkoutStatus: .planned,
+            completedSessions: 2,
+            totalSessions: 8,
+            completionPercent: 25,
+            lastCompletedAt: nil,
+            updatedAt: nil,
+        )
+
+        let resolved = WorkoutDomainRules.resolveActiveEnrollment(progress)
+        XCTAssertEqual(resolved?.programId, "program-1")
+        XCTAssertEqual(resolved?.programTitle, "Сила 8 недель")
+        XCTAssertEqual(resolved?.resumeWorkout?.workoutId, "workout-current")
+        XCTAssertEqual(resolved?.resumeWorkout?.title, "День 3")
+        XCTAssertEqual(resolved?.nextWorkoutToStart?.workoutId, "workout-next")
+        XCTAssertEqual(resolved?.preferredLaunchWorkout?.workoutId, "workout-current")
+        XCTAssertEqual(resolved?.completedSessions, 2)
+        XCTAssertEqual(resolved?.totalSessions, 8)
+    }
+
+    func testActiveEnrollmentResolutionBuildsStartTargetWithoutResumeInvariant() {
+        let progress = ActiveEnrollmentProgressResponse(
+            enrollmentId: "enr-2",
+            status: "ACTIVE",
+            programId: "program-2",
+            programTitle: nil,
+            programVersionId: nil,
+            currentWorkoutId: nil,
+            currentWorkoutTitle: nil,
+            currentWorkoutStatus: nil,
+            nextWorkoutId: "workout-next",
+            nextWorkoutTitle: nil,
+            nextWorkoutStatus: .planned,
+            completedSessions: 5,
+            totalSessions: 0,
+            completionPercent: nil,
+            lastCompletedAt: nil,
+            updatedAt: nil,
+        )
+
+        let resolved = WorkoutDomainRules.resolveActiveEnrollment(progress)
+        XCTAssertEqual(resolved?.programId, "program-2")
+        XCTAssertEqual(resolved?.programTitle, "Активная программа")
+        XCTAssertNil(resolved?.resumeWorkout)
+        XCTAssertEqual(resolved?.nextWorkoutToStart?.workoutId, "workout-next")
+        XCTAssertEqual(resolved?.nextWorkoutToStart?.title, "Следующая тренировка")
+        XCTAssertEqual(resolved?.completedSessions, 5)
+        XCTAssertEqual(resolved?.totalSessions, 5)
+        XCTAssertEqual(resolved?.totalSessionsForProgress, 5)
+    }
+
+    func testResolveNextWorkoutInvariant() {
+        let workouts = [
+            WorkoutSummary(id: "w1", title: "День 1", dayOrder: 1, exerciseCount: 4, estimatedDurationMinutes: 35),
+            WorkoutSummary(id: "w2", title: "День 2", dayOrder: 2, exerciseCount: 5, estimatedDurationMinutes: 40),
+            WorkoutSummary(id: "w3", title: "День 3", dayOrder: 3, exerciseCount: 6, estimatedDurationMinutes: 45),
+        ]
+        let statuses: [String: WorkoutProgressStatus] = [
+            "w1": .completed,
+            "w2": .notStarted,
+            "w3": .completed,
+        ]
+
+        let firstPick = WorkoutDomainRules.resolveNextWorkout(
+            workouts: workouts,
+            statuses: statuses,
+            activeSessionWorkoutId: nil,
+        )
+        XCTAssertEqual(firstPick?.id, "w2")
+
+        let resumedPick = WorkoutDomainRules.resolveNextWorkout(
+            workouts: workouts,
+            statuses: statuses,
+            activeSessionWorkoutId: "w3",
+        )
+        XCTAssertEqual(resumedPick?.id, "w3")
+    }
+
     func testUserFacingUILiteralsAreRussianOnly() throws {
         let projectRoot = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()

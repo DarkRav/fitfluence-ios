@@ -16,7 +16,7 @@ struct ProgramProgressCard: View {
                 Button(action: onOpenHistory) {
                     VStack(alignment: .leading, spacing: 8) {
                         Text("Прогресс программы")
-                            .font(.headline.weight(.semibold))
+                            .font(FFTypography.body.weight(.semibold))
                             .foregroundStyle(FFColors.textPrimary)
 
                         Text(programTitle)
@@ -56,7 +56,6 @@ struct ProgramProgressCard: View {
                     variant: isActionEnabled ? .secondary : .disabled,
                     action: onAction,
                 )
-                .frame(height: 48)
             }
         }
     }

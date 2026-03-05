@@ -7,6 +7,33 @@ enum WorkoutLifecycleState: String, Equatable, Sendable {
     case cancelled
 }
 
+struct WorkoutRouteTarget: Equatable, Sendable {
+    let programId: String
+    let workoutId: String
+    let title: String
+}
+
+struct ActiveEnrollmentState: Equatable, Sendable {
+    let programId: String
+    let programTitle: String
+    let completedSessions: Int
+    let totalSessions: Int
+    let resumeWorkout: WorkoutRouteTarget?
+    let nextWorkoutToStart: WorkoutRouteTarget?
+
+    var preferredLaunchWorkout: WorkoutRouteTarget? {
+        resumeWorkout ?? nextWorkoutToStart
+    }
+
+    var isCompleted: Bool {
+        totalSessions > 0 && completedSessions >= totalSessions
+    }
+
+    var totalSessionsForProgress: Int {
+        max(totalSessions, completedSessions, 1)
+    }
+}
+
 enum WorkoutDomainRules {
     static func progressStatus(
         isFinished: Bool,
@@ -63,6 +90,129 @@ enum WorkoutDomainRules {
         }
 
         return false
+    }
+
+    static func resolveActiveEnrollment(
+        _ progress: ActiveEnrollmentProgressResponse,
+        fallbackProgramId: String? = nil,
+        fallbackProgramTitle: String? = nil,
+    ) -> ActiveEnrollmentState? {
+        guard let programId = normalized(progress.programId) ?? normalized(fallbackProgramId) else {
+            return nil
+        }
+
+        let currentTarget = makeTarget(
+            programId: programId,
+            workoutId: progress.currentWorkoutId,
+            title: progress.currentWorkoutTitle,
+            fallbackTitle: "Текущая тренировка",
+        )
+        let nextTarget = makeTarget(
+            programId: programId,
+            workoutId: progress.nextWorkoutId,
+            title: progress.nextWorkoutTitle,
+            fallbackTitle: "Следующая тренировка",
+        )
+
+        let resumeTarget: WorkoutRouteTarget? = {
+            if progress.currentWorkoutStatus == .inProgress, let currentTarget {
+                return currentTarget
+            }
+            if progress.nextWorkoutStatus == .inProgress, let nextTarget {
+                return nextTarget
+            }
+            return nil
+        }()
+
+        let nextToStart: WorkoutRouteTarget? = {
+            guard let nextTarget else { return nil }
+            guard nextTarget.workoutId != resumeTarget?.workoutId else { return nil }
+            return nextTarget
+        }()
+
+        let completedSessions = max(0, progress.completedSessions ?? 0)
+        let totalSessions = max(completedSessions, max(0, progress.totalSessions ?? 0))
+        return ActiveEnrollmentState(
+            programId: programId,
+            programTitle: normalized(progress.programTitle) ?? normalized(fallbackProgramTitle) ?? "Активная программа",
+            completedSessions: completedSessions,
+            totalSessions: totalSessions,
+            resumeWorkout: resumeTarget,
+            nextWorkoutToStart: nextToStart,
+        )
+    }
+
+    static func remoteInProgressSession(
+        userSub: String,
+        progress: ActiveEnrollmentProgressResponse,
+        updatedAt: Date = Date(),
+    ) -> ActiveWorkoutSession? {
+        guard let resumeTarget = resolveActiveEnrollment(progress)?.resumeWorkout else {
+            return nil
+        }
+        return ActiveWorkoutSession(
+            userSub: userSub,
+            programId: resumeTarget.programId,
+            workoutId: resumeTarget.workoutId,
+            source: .program,
+            status: .inProgress,
+            currentExerciseIndex: nil,
+            lastUpdated: updatedAt,
+        )
+    }
+
+    static func nextWorkoutTarget(
+        from progress: ActiveEnrollmentProgressResponse,
+        fallbackProgramId: String? = nil,
+        excludingWorkoutId: String? = nil,
+    ) -> WorkoutRouteTarget? {
+        guard let target = resolveActiveEnrollment(progress, fallbackProgramId: fallbackProgramId)?.nextWorkoutToStart else {
+            return nil
+        }
+        guard target.workoutId != normalized(excludingWorkoutId) else {
+            return nil
+        }
+        return target
+    }
+
+    static func resolveNextWorkout(
+        workouts: [WorkoutSummary],
+        statuses: [String: WorkoutProgressStatus],
+        activeSessionWorkoutId: String?,
+    ) -> WorkoutSummary? {
+        guard !workouts.isEmpty else { return nil }
+
+        if let activeSessionWorkoutId,
+           let inProgress = workouts.first(where: { $0.id == activeSessionWorkoutId })
+        {
+            return inProgress
+        }
+
+        if let planned = workouts.first(where: { (statuses[$0.id] ?? .notStarted) != .completed }) {
+            return planned
+        }
+
+        return workouts.first
+    }
+
+    private static func makeTarget(
+        programId: String,
+        workoutId: String?,
+        title: String?,
+        fallbackTitle: String,
+    ) -> WorkoutRouteTarget? {
+        guard let workoutId = normalized(workoutId) else { return nil }
+        return WorkoutRouteTarget(
+            programId: programId,
+            workoutId: workoutId,
+            title: normalized(title) ?? fallbackTitle,
+        )
+    }
+
+    private static func normalized(_ value: String?) -> String? {
+        guard let value else { return nil }
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
     }
 }
 

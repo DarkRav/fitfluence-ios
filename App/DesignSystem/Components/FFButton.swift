@@ -23,10 +23,11 @@ struct FFButton: View {
                 }
                 Text(title)
                     .font(FFTypography.body.weight(.semibold))
-                    .lineLimit(1)
+                    .lineLimit(2)
+                    .multilineTextAlignment(.center)
             }
             .frame(maxWidth: .infinity)
-            .frame(minHeight: 44)
+            .frame(minHeight: 52)
             .contentShape(Rectangle())
         }
         .buttonStyle(FFButtonStyle(variant: effectiveVariant, isLoading: isLoading))
@@ -60,6 +61,7 @@ private struct FFButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .padding(.horizontal, FFSpacing.md)
+            .padding(.vertical, FFSpacing.xxs)
             .background(backgroundColor(configuration: configuration))
             .foregroundStyle(foregroundColor)
             .overlay {

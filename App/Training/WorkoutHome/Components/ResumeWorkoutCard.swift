@@ -9,13 +9,13 @@ struct ResumeWorkoutCard: View {
         WorkoutCardContainer(cornerRadius: 20, padding: 16, minHeight: 110) {
             VStack(alignment: .leading, spacing: 8) {
                 Text("Продолжить тренировку")
-                    .font(.headline.weight(.semibold))
+                    .font(FFTypography.body.weight(.semibold))
                     .foregroundStyle(FFColors.textPrimary)
 
                 Text(workoutName)
                     .font(FFTypography.body)
                     .foregroundStyle(FFColors.textSecondary)
-                    .lineLimit(1)
+                    .lineLimit(2)
 
                 Text(metricsText)
                     .font(FFTypography.caption)

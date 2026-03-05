@@ -6,27 +6,12 @@ struct WorkoutPrimaryButton: View {
     var action: () -> Void
 
     var body: some View {
-        Button(action: action) {
-            HStack(spacing: FFSpacing.xs) {
-                if isLoading {
-                    ProgressView()
-                        .tint(FFColors.background)
-                        .controlSize(.small)
-                }
-
-                Text(title)
-                    .font(.headline)
-                    .lineLimit(1)
-            }
-            .foregroundStyle(FFColors.background)
-            .frame(maxWidth: .infinity)
-            .frame(height: 52)
-            .padding(.horizontal, 16)
-            .background(FFColors.primary)
-            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-        }
-        .buttonStyle(.plain)
-        .disabled(isLoading)
+        FFButton(
+            title: title,
+            variant: .primary,
+            isLoading: isLoading,
+            action: action,
+        )
     }
 }
 
@@ -38,24 +23,13 @@ struct WorkoutSecondaryButton: View {
     var action: () -> Void
 
     var body: some View {
-        Button(action: action) {
-            Text(title)
-                .font(.headline)
-                .foregroundStyle(FFColors.textPrimary)
-                .frame(maxWidth: .infinity)
-                .frame(height: height)
-                .padding(.horizontal, 16)
-                .background(
-                    RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                        .fill(FFColors.gray700)
-                )
-                .overlay {
-                    RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                        .stroke(FFColors.gray500.opacity(0.45), lineWidth: 1)
-                }
-        }
-        .buttonStyle(.plain)
-        .disabled(!isEnabled)
+        FFButton(
+            title: title,
+            variant: isEnabled ? .secondary : .disabled,
+            action: action,
+        )
+        .frame(minHeight: max(height, 52))
+        .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
         .opacity(isEnabled ? 1 : 0.55)
     }
 }
