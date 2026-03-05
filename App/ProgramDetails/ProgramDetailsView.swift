@@ -86,6 +86,10 @@ final class ProgramDetailsViewModel {
     var creatorInfoMessage: String?
     var creatorProfileRoute: InfluencerPublicCard?
 
+    var canAccessProgramWorkouts: Bool {
+        isProgramAlreadyActive
+    }
+
     var canToggleCreatorFollow: Bool {
         !isCreatorFollowLoading
             && networkMonitor.currentStatus
@@ -247,10 +251,12 @@ final class ProgramDetailsViewModel {
     }
 
     func openWorkouts() {
+        guard canAccessProgramWorkouts else { return }
         isWorkoutsPresented = true
     }
 
     func workoutPicked(_ workoutID: String) {
+        guard canAccessProgramWorkouts else { return }
         selectedWorkout = SelectedWorkout(
             userSub: userSub,
             programId: programId,
@@ -799,6 +805,10 @@ final class ProgramDetailsViewModel {
             if apiError == .offline {
                 return
             }
+            // If enrollment context cannot be confirmed, block workout execution paths.
+            isProgramAlreadyActive = false
+            nextWorkoutInstanceId = nil
+            nextWorkoutInstanceTitle = nil
         }
     }
 
@@ -1196,11 +1206,17 @@ struct ProgramDetailsScreen: View {
                     .foregroundStyle(FFColors.textPrimary)
 
                 if let workouts = details.workouts, !workouts.isEmpty {
-                    FFButton(
-                        title: "Открыть тренировки",
-                        variant: .secondary,
-                        action: { viewModel.openWorkouts() },
-                    )
+                    if viewModel.canAccessProgramWorkouts {
+                        FFButton(
+                            title: "Открыть тренировки",
+                            variant: .secondary,
+                            action: { viewModel.openWorkouts() },
+                        )
+                    } else {
+                        Text("Детали и запуск тренировок доступны после подключения программы.")
+                            .font(FFTypography.caption)
+                            .foregroundStyle(FFColors.textSecondary)
+                    }
 
                     ForEach(workouts.sorted(by: { $0.dayOrder < $1.dayOrder })) { workout in
                         VStack(alignment: .leading, spacing: FFSpacing.xs) {

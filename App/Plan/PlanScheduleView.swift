@@ -4,12 +4,23 @@ import SwiftUI
 @Observable
 @MainActor
 final class PlanScheduleViewModel {
+    enum SourceKind: String {
+        case program = "PROGRAM"
+        case manual = "MANUAL"
+    }
+
     struct DayScheduleItem: Identifiable, Equatable {
         let id: String
+        let planId: String
+        let day: Date
         let title: String
-        let subtitle: String
+        let sourceTitle: String
         let source: WorkoutSource
+        let sourceKind: SourceKind
         let status: TrainingDayStatus
+        let programId: String?
+        let workoutId: String?
+        let workoutDetails: WorkoutDetailsModel?
     }
 
     struct UpcomingDayItem: Identifiable, Equatable {
@@ -45,6 +56,9 @@ final class PlanScheduleViewModel {
     var contextPlans: [TrainingDayPlan] = []
     var upcomingPlans: [TrainingDayPlan] = []
     var weekCounts: WeekCounts = .empty
+    var lastCompletedRecord: CompletedWorkoutRecord?
+    var lastRepeatableRecord: CompletedWorkoutRecord?
+    private var suppressedPlanSignatures: Set<String> = []
 
     init(
         userSub: String,
@@ -86,6 +100,9 @@ final class PlanScheduleViewModel {
         let nextMonthPlans = await nextPlans
         contextPlans = prevMonthPlans + monthPlans + nextMonthPlans
         upcomingPlans = contextPlans
+        let history = await trainingStore.history(userSub: userSub, source: nil, limit: 180)
+        lastCompletedRecord = history.first
+        lastRepeatableRecord = history.first(where: { $0.source != .program })
         recalculateWeekCounts()
     }
 
@@ -156,23 +173,47 @@ final class PlanScheduleViewModel {
         calendar.isDate(day, equalTo: selectedMonth, toGranularity: .month)
     }
 
+    func isToday(_ day: Date) -> Bool {
+        calendar.isDateInToday(day)
+    }
+
+    func isFutureDay(_ day: Date) -> Bool {
+        calendar.startOfDay(for: day) > calendar.startOfDay(for: Date())
+    }
+
+    func canSchedule(on day: Date) -> Bool {
+        calendar.startOfDay(for: day) >= calendar.startOfDay(for: Date())
+    }
+
     func dayStatus(_ day: Date) -> TrainingDayStatus? {
-        let plans = plansForDay(in: monthPlans, day: day)
+        let plans = plansForDay(in: contextPlans, day: day)
         return dayStatus(for: plans)
     }
 
     func dayItems(for day: Date) -> [DayScheduleItem] {
-        let plans = plansForDay(in: monthPlans, day: day)
+        let plans = plansForDay(in: contextPlans, day: day)
         let items = plans.map { plan in
-            DayScheduleItem(
-                id: "plan-\(plan.id)",
+            let kind: SourceKind = plan.source == .program ? .program : .manual
+            return DayScheduleItem(
+                id: "\(calendar.startOfDay(for: plan.day).timeIntervalSince1970)::\(plan.id)",
+                planId: plan.id,
+                day: calendar.startOfDay(for: plan.day),
                 title: plan.title,
-                subtitle: sourceTitle(plan.source),
+                sourceTitle: sourceTitle(for: plan, kind: kind),
                 source: plan.source,
+                sourceKind: kind,
                 status: plan.status,
+                programId: plan.programId,
+                workoutId: plan.workoutId,
+                workoutDetails: plan.workoutDetails,
             )
         }
-        return items.sorted { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }
+        return items.sorted { lhs, rhs in
+            if lhs.day != rhs.day {
+                return lhs.day < rhs.day
+            }
+            return lhs.title.localizedCaseInsensitiveCompare(rhs.title) == .orderedAscending
+        }
     }
 
     var upcomingDays: [UpcomingDayItem] {
@@ -195,10 +236,14 @@ final class PlanScheduleViewModel {
         switch status {
         case .planned:
             "Запланирована"
+        case .inProgress:
+            "В процессе"
         case .completed:
             "Выполнена"
         case .missed:
             "Пропущена"
+        case .skipped:
+            "Пропущена намеренно"
         case nil:
             "Нет статуса"
         }
@@ -209,10 +254,411 @@ final class PlanScheduleViewModel {
         case .program:
             "Программа"
         case .freestyle:
-            "Своя тренировка"
+            "Ручная"
         case .template:
             "Шаблон"
         }
+    }
+
+    private func sourceTitle(for plan: TrainingDayPlan, kind: SourceKind) -> String {
+        switch kind {
+        case .program:
+            return "Программа: активная"
+        case .manual:
+            switch plan.source {
+            case .template:
+                return "Ручная: шаблон"
+            case .freestyle:
+                return "Ручная: одноразовая"
+            case .program:
+                return "Ручная"
+            }
+        }
+    }
+
+    func scheduleQuickWorkout(on day: Date) async {
+        await schedulePlan(
+            day: day,
+            title: "Быстрая тренировка",
+            source: .freestyle,
+            programId: nil,
+            workoutId: "quick-\(UUID().uuidString)",
+            status: .planned,
+            workoutDetails: nil,
+        )
+    }
+
+    func scheduleConfiguredQuickWorkout(_ workout: WorkoutDetailsModel, on day: Date) async {
+        await schedulePlan(
+            day: day,
+            title: workout.title,
+            source: .freestyle,
+            programId: nil,
+            workoutId: workout.id,
+            status: .planned,
+            workoutDetails: workout,
+        )
+    }
+
+    func scheduleTemplate(_ template: WorkoutTemplateDraft, on day: Date) async {
+        let mappedWorkout = template.asWorkoutDetailsModel()
+        await schedulePlan(
+            day: day,
+            title: template.name,
+            source: .template,
+            programId: nil,
+            workoutId: template.id,
+            status: .planned,
+            workoutDetails: mappedWorkout,
+        )
+    }
+
+    func scheduleRepeatLastWorkout(on day: Date) async {
+        let resolvedRecord: CompletedWorkoutRecord?
+        if let lastRepeatableRecord {
+            resolvedRecord = lastRepeatableRecord
+        } else {
+            let history = await trainingStore.history(userSub: userSub, source: nil, limit: 180)
+            lastCompletedRecord = history.first
+            lastRepeatableRecord = history.first(where: { $0.source != .program })
+            resolvedRecord = lastRepeatableRecord
+        }
+        guard let resolvedRecord else { return }
+        guard resolvedRecord.source != .program else { return }
+        let cachedDetails = await cacheStore.get(
+            workoutCacheKey(
+                programId: resolvedRecord.programId.trimmedNilIfEmpty,
+                source: resolvedRecord.source,
+                workoutId: resolvedRecord.workoutId.trimmedNilIfEmpty,
+            ),
+            as: WorkoutDetailsModel.self,
+            namespace: userSub,
+        )
+        await schedulePlan(
+            day: day,
+            title: resolvedRecord.workoutTitle,
+            source: resolvedRecord.source,
+            programId: resolvedRecord.programId,
+            workoutId: resolvedRecord.workoutId,
+            status: .planned,
+            workoutDetails: cachedDetails,
+        )
+    }
+
+    func ensureLastCompletedRecordLoaded() async {
+        guard lastCompletedRecord == nil || lastRepeatableRecord == nil else { return }
+        let history = await trainingStore.history(userSub: userSub, source: nil, limit: 180)
+        if lastCompletedRecord == nil {
+            lastCompletedRecord = history.first
+        }
+        if lastRepeatableRecord == nil {
+            lastRepeatableRecord = history.first(where: { $0.source != .program })
+        }
+    }
+
+    func templates() async -> [WorkoutTemplateDraft] {
+        let local = await trainingStore.templates(userSub: userSub)
+        let builtIn = builtInTemplates()
+        let remote = await remoteTemplateCandidates()
+
+        var seen = Set<String>()
+        var merged: [WorkoutTemplateDraft] = []
+
+        for template in (local + remote + builtIn) {
+            guard seen.insert(template.id).inserted else { continue }
+            merged.append(template)
+        }
+
+        return merged.sorted { lhs, rhs in
+            lhs.updatedAt > rhs.updatedAt
+        }
+    }
+
+    func templateWorkoutDetails(templateID: String) async -> WorkoutDetailsModel? {
+        let allTemplates = await templates()
+        guard let template = allTemplates.first(where: { $0.id == templateID }) else { return nil }
+        return template.asWorkoutDetailsModel()
+    }
+
+    func completedRecord(for item: DayScheduleItem) async -> CompletedWorkoutRecord? {
+        let history = await trainingStore.history(userSub: userSub, source: nil, limit: 720)
+        guard !history.isEmpty else { return nil }
+
+        let normalizedDay = calendar.startOfDay(for: item.day)
+        let normalizedTitle = item.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalizedWorkoutId = item.workoutId?.trimmedNilIfEmpty
+        let normalizedProgramId = item.programId?.trimmedNilIfEmpty
+
+        var bestMatch: CompletedWorkoutRecord?
+        var bestScore = Int.min
+
+        for record in history {
+            guard record.source == item.source else { continue }
+
+            var score = 0
+            if let normalizedWorkoutId, record.workoutId == normalizedWorkoutId {
+                score += 100
+            }
+            if let normalizedProgramId, record.programId == normalizedProgramId {
+                score += 40
+            }
+            if calendar.isDate(record.finishedAt, inSameDayAs: normalizedDay) {
+                score += 25
+            }
+            if !normalizedTitle.isEmpty,
+               record.workoutTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+                   .caseInsensitiveCompare(normalizedTitle) == .orderedSame
+            {
+                score += 20
+            }
+
+            guard score > bestScore else { continue }
+            bestScore = score
+            bestMatch = record
+
+            if score >= 165 {
+                break
+            }
+        }
+
+        return bestScore > 0 ? bestMatch : nil
+    }
+
+    func conflictCount(on day: Date, excluding item: DayScheduleItem?) -> Int {
+        let normalized = calendar.startOfDay(for: day)
+        return dayItems(for: normalized).count { candidate in
+            guard let item else { return true }
+            return candidate.id != item.id
+        }
+    }
+
+    func markSkipped(_ item: DayScheduleItem) async {
+        await updateStatus(item, to: .skipped)
+    }
+
+    func cancelInProgress(_ item: DayScheduleItem) async {
+        await updateStatus(item, to: .skipped)
+    }
+
+    func repeatCompleted(_ item: DayScheduleItem, on targetDay: Date) async {
+        guard canRepeat(item) else { return }
+        await schedulePlan(
+            day: targetDay,
+            title: item.title,
+            source: item.source,
+            programId: item.programId,
+            workoutId: item.workoutId,
+            status: .planned,
+            workoutDetails: item.workoutDetails,
+        )
+    }
+
+    func replanMissed(_ item: DayScheduleItem, on targetDay: Date) async {
+        await schedulePlan(
+            day: targetDay,
+            title: item.title,
+            source: item.source,
+            programId: item.programId,
+            workoutId: item.workoutId,
+            status: .planned,
+            workoutDetails: item.workoutDetails,
+        )
+    }
+
+    func movePlan(_ item: DayScheduleItem, to targetDay: Date) async {
+        let normalizedCurrent = calendar.startOfDay(for: item.day)
+        let normalizedTarget = calendar.startOfDay(for: targetDay)
+        guard normalizedCurrent != normalizedTarget else { return }
+        guard canSchedule(on: normalizedTarget) else { return }
+        if let suppression = suppressionSignature(day: item.day, workoutId: item.workoutId, planId: item.planId) {
+            suppressedPlanSignatures.insert(suppression)
+        }
+        await trainingStore.movePlan(
+            userSub: userSub,
+            from: item.day,
+            to: targetDay,
+            planId: item.planId,
+            workoutId: item.workoutId,
+            title: item.title,
+            source: item.source,
+            status: item.status,
+            programId: item.programId,
+            workoutDetails: item.workoutDetails,
+        )
+        await reload()
+    }
+
+    func deletePlan(_ item: DayScheduleItem) async {
+        if let suppression = suppressionSignature(day: item.day, workoutId: item.workoutId, planId: item.planId) {
+            suppressedPlanSignatures.insert(suppression)
+        }
+        await trainingStore.deletePlan(
+            userSub: userSub,
+            day: item.day,
+            planId: item.planId,
+            workoutId: item.workoutId,
+            title: item.title,
+            source: item.source,
+        )
+        await reload()
+    }
+
+    private func schedulePlan(
+        day: Date,
+        title: String,
+        source: WorkoutSource,
+        programId: String?,
+        workoutId: String?,
+        status: TrainingDayStatus,
+        workoutDetails: WorkoutDetailsModel?,
+        planId: String? = nil,
+    ) async {
+        let normalizedDay = calendar.startOfDay(for: day)
+        guard canSchedule(on: normalizedDay) else { return }
+        let resolvedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let plan = TrainingDayPlan(
+            id: planId ?? UUID().uuidString,
+            userSub: userSub,
+            day: normalizedDay,
+            status: status,
+            programId: programId,
+            workoutId: workoutId,
+            title: resolvedTitle.isEmpty ? "Тренировка" : resolvedTitle,
+            source: source,
+            workoutDetails: workoutDetails,
+        )
+        await trainingStore.schedule(plan)
+        await reload()
+    }
+
+    private func updateStatus(_ item: DayScheduleItem, to status: TrainingDayStatus) async {
+        let updated = TrainingDayPlan(
+            id: item.planId,
+            userSub: userSub,
+            day: calendar.startOfDay(for: item.day),
+            status: status,
+            programId: item.programId,
+            workoutId: item.workoutId,
+            title: item.title,
+            source: item.source,
+            workoutDetails: item.workoutDetails,
+        )
+        await trainingStore.schedule(updated)
+        await reload()
+    }
+
+    func resolveWorkoutDetails(for item: DayScheduleItem) async -> WorkoutDetailsModel? {
+        if let workoutDetails = item.workoutDetails {
+            await cacheStore.set(
+                workoutCacheKey(programId: item.programId, source: item.source, workoutId: item.workoutId),
+                value: workoutDetails,
+                namespace: userSub,
+                ttl: 60 * 60 * 24,
+            )
+            return workoutDetails
+        }
+
+        if item.source == .template, let templateID = item.workoutId?.trimmedNilIfEmpty {
+            if let templateDetails = await templateWorkoutDetails(templateID: templateID) {
+                await cacheStore.set(
+                    workoutCacheKey(programId: item.programId, source: item.source, workoutId: item.workoutId),
+                    value: templateDetails,
+                    namespace: userSub,
+                    ttl: 60 * 60 * 24,
+                )
+                return templateDetails
+            }
+        }
+
+        if let cached = await cacheStore.get(
+            workoutCacheKey(programId: item.programId, source: item.source, workoutId: item.workoutId),
+            as: WorkoutDetailsModel.self,
+            namespace: userSub,
+        ) {
+            return cached
+        }
+
+        if item.source == .program,
+           let workoutInstanceId = item.workoutId?.trimmedNilIfEmpty,
+           let athleteTrainingClient
+        {
+            if case let .success(detailsResponse) = await athleteTrainingClient.getWorkoutDetails(workoutInstanceId: workoutInstanceId) {
+                let details = detailsResponse.asWorkoutDetailsModel()
+                await cacheStore.set(
+                    workoutCacheKey(programId: item.programId, source: item.source, workoutId: item.workoutId),
+                    value: details,
+                    namespace: userSub,
+                    ttl: 60 * 60 * 24,
+                )
+                return details
+            }
+        }
+
+        if item.source == .freestyle {
+            return WorkoutDetailsModel(
+                id: item.workoutId?.trimmedNilIfEmpty ?? "quick-\(UUID().uuidString)",
+                title: item.title,
+                dayOrder: 0,
+                coachNote: "Быстрая тренировка",
+                exercises: [],
+            )
+        }
+
+        return nil
+    }
+
+    func canEditPlannedWorkout(_ item: DayScheduleItem, details _: WorkoutDetailsModel?) -> Bool {
+        guard item.status == .planned else { return false }
+        guard item.sourceKind == .manual else { return false }
+        return true
+    }
+
+    func canRepeat(_ item: DayScheduleItem) -> Bool {
+        item.status == .completed && item.sourceKind == .manual
+    }
+
+    func editableDraft(for item: DayScheduleItem) -> WorkoutDetailsModel {
+        if let workoutDetails = item.workoutDetails {
+            return workoutDetails
+        }
+
+        return WorkoutDetailsModel(
+            id: item.workoutId?.trimmedNilIfEmpty ?? "manual-\(item.planId)",
+            title: item.title,
+            dayOrder: 0,
+            coachNote: "Ручная тренировка",
+            exercises: [],
+        )
+    }
+
+    func updatePlannedManualWorkout(_ item: DayScheduleItem, with workout: WorkoutDetailsModel) async {
+        guard canEditPlannedWorkout(item, details: workout) else { return }
+        let resolvedTitle = workout.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let updated = TrainingDayPlan(
+            id: item.planId,
+            userSub: userSub,
+            day: calendar.startOfDay(for: item.day),
+            status: item.status,
+            programId: item.programId,
+            workoutId: item.workoutId ?? workout.id,
+            title: resolvedTitle.isEmpty ? item.title : resolvedTitle,
+            source: item.source,
+            workoutDetails: workout,
+        )
+        await trainingStore.schedule(updated)
+        await cacheStore.set(
+            workoutCacheKey(programId: item.programId, source: item.source, workoutId: item.workoutId ?? workout.id),
+            value: workout,
+            namespace: userSub,
+            ttl: 60 * 60 * 24,
+        )
+        await reload()
+    }
+
+    private func suppressionSignature(day: Date, workoutId: String?, planId: String) -> String? {
+        guard planId.hasPrefix("remote-"), let workoutId else { return nil }
+        let normalizedDay = calendar.startOfDay(for: day)
+        return "\(normalizedDay.timeIntervalSince1970)::\(workoutId)"
     }
 
     private func weekStart(for date: Date) -> Date {
@@ -226,10 +672,13 @@ final class PlanScheduleViewModel {
     }
 
     private func dayStatus(for plans: [TrainingDayPlan]) -> TrainingDayStatus? {
+        if plans.contains(where: { $0.status == .inProgress }) {
+            return .inProgress
+        }
         if plans.contains(where: { $0.status == .completed }) {
             return .completed
         }
-        if plans.contains(where: { $0.status == .missed }) {
+        if plans.contains(where: { $0.status.isMissedLike }) {
             return .missed
         }
         if plans.contains(where: { $0.status == .planned }) {
@@ -247,9 +696,9 @@ final class PlanScheduleViewModel {
         }
 
         weekCounts = WeekCounts(
-            planned: items.count(where: { $0.status == .planned }),
+            planned: items.count(where: { $0.status == .planned || $0.status == .inProgress }),
             completed: items.count(where: { $0.status == .completed }),
-            missed: items.count(where: { $0.status == .missed }),
+            missed: items.count(where: { $0.status.isMissedLike }),
         )
     }
 
@@ -346,6 +795,7 @@ final class PlanScheduleViewModel {
                 workoutId: workout.id,
                 title: workout.title?.trimmedNilIfEmpty ?? "Тренировка",
                 source: mapSource(workout.source),
+                workoutDetails: nil,
             )
         }
     }
@@ -355,8 +805,12 @@ final class PlanScheduleViewModel {
             return local
         }
 
-        var merged = remote
-        var existing = Set(remote.map(planSignature))
+        let filteredRemote = remote.filter { plan in
+            guard let signature = remoteSuppressionSignature(plan) else { return true }
+            return !suppressedPlanSignatures.contains(signature)
+        }
+        var merged = filteredRemote
+        var existing = Set(filteredRemote.map(planSignature))
 
         for item in local {
             let key = planSignature(item)
@@ -382,8 +836,147 @@ final class PlanScheduleViewModel {
 
     private func planSignature(_ plan: TrainingDayPlan) -> String {
         let date = calendar.startOfDay(for: plan.day)
-        let workoutID = plan.workoutId ?? plan.id
-        return "\(date.timeIntervalSince1970)::\(workoutID)"
+        return "\(date.timeIntervalSince1970)::\(plan.id)"
+    }
+
+    private func remoteSuppressionSignature(_ plan: TrainingDayPlan) -> String? {
+        guard plan.id.hasPrefix("remote-"), let workoutId = plan.workoutId else { return nil }
+        let date = calendar.startOfDay(for: plan.day)
+        return "\(date.timeIntervalSince1970)::\(workoutId)"
+    }
+
+    private func workoutCacheKey(programId: String?, source: WorkoutSource, workoutId: String?) -> String {
+        let resolvedProgramID = programId?.trimmedNilIfEmpty ?? source.rawValue
+        let resolvedWorkoutID = workoutId?.trimmedNilIfEmpty ?? "unknown"
+        return "workout.details:\(resolvedProgramID):\(resolvedWorkoutID)"
+    }
+
+    private func builtInTemplates() -> [WorkoutTemplateDraft] {
+        [
+            WorkoutTemplateDraft(
+                id: "preset-upper-lower",
+                userSub: "preset",
+                name: "Upper / Lower",
+                exercises: [
+                    .init(id: "bp", name: "Жим лёжа", sets: 4, repsMin: 5, repsMax: 8, restSeconds: 120),
+                    .init(id: "row", name: "Тяга в наклоне", sets: 4, repsMin: 8, repsMax: 12, restSeconds: 90),
+                    .init(id: "sq", name: "Присед со штангой", sets: 4, repsMin: 5, repsMax: 8, restSeconds: 120),
+                    .init(id: "dl", name: "Становая тяга", sets: 3, repsMin: 4, repsMax: 6, restSeconds: 150),
+                ],
+                updatedAt: Date.distantPast,
+            ),
+            WorkoutTemplateDraft(
+                id: "preset-ppl",
+                userSub: "preset",
+                name: "Push / Pull / Legs",
+                exercises: [
+                    .init(id: "ohp", name: "Жим стоя", sets: 4, repsMin: 6, repsMax: 10, restSeconds: 90),
+                    .init(id: "pull", name: "Подтягивания", sets: 4, repsMin: 6, repsMax: 12, restSeconds: 90),
+                    .init(id: "legpress", name: "Жим ногами", sets: 4, repsMin: 10, repsMax: 15, restSeconds: 75),
+                ],
+                updatedAt: Date.distantPast,
+            ),
+        ]
+    }
+
+    private func remoteTemplateCandidates() async -> [WorkoutTemplateDraft] {
+        let cacheKey = "plan.templates.remote"
+        if let cached = await cacheStore.get(cacheKey, as: [WorkoutTemplateDraft].self, namespace: userSub) {
+            return cached
+        }
+        guard networkMonitor.currentStatus, let athleteTrainingClient else { return [] }
+
+        var monthCandidates: [Date] = [selectedMonth]
+        if let next = calendar.date(byAdding: .month, value: 1, to: selectedMonth) {
+            monthCandidates.append(next)
+        }
+
+        var workoutCandidates: [(id: String, programId: String?)] = []
+        var seenWorkoutIDs = Set<String>()
+
+        let localCandidatePlans = deduplicate(contextPlans + monthPlans)
+        for plan in localCandidatePlans {
+            guard plan.source == .program,
+                  let workoutID = plan.workoutId?.trimmedNilIfEmpty
+            else { continue }
+            guard seenWorkoutIDs.insert(workoutID).inserted else { continue }
+            workoutCandidates.append((id: workoutID, programId: plan.programId?.trimmedNilIfEmpty))
+        }
+
+        for month in monthCandidates {
+            let monthToken = monthKey(for: month)
+            if case let .success(calendarResponse) = await athleteTrainingClient.calendar(month: monthToken) {
+                for workout in calendarResponse.workouts {
+                    guard let normalized = workout.id.trimmedNilIfEmpty else { continue }
+                    guard seenWorkoutIDs.insert(normalized).inserted else { continue }
+                    workoutCandidates.append((id: normalized, programId: workout.programId?.trimmedNilIfEmpty))
+                }
+            }
+        }
+
+        if let enrollmentId = await resolveActiveEnrollmentId(),
+           case let .success(scheduleResponse) = await athleteTrainingClient.enrollmentSchedule(enrollmentId: enrollmentId)
+        {
+            for workout in scheduleResponse.workouts {
+                guard let normalized = workout.id.trimmedNilIfEmpty else { continue }
+                guard seenWorkoutIDs.insert(normalized).inserted else { continue }
+                workoutCandidates.append((id: normalized, programId: workout.programId?.trimmedNilIfEmpty))
+            }
+        }
+
+        guard !workoutCandidates.isEmpty else { return [] }
+        let candidateWorkouts = Array(workoutCandidates.prefix(12))
+        var templates: [WorkoutTemplateDraft] = []
+        templates.reserveCapacity(candidateWorkouts.count)
+
+        for candidate in candidateWorkouts {
+            let resolvedWorkout: WorkoutDetailsModel?
+
+            if let cachedDetails = await cacheStore.get(
+                workoutCacheKey(programId: candidate.programId, source: .program, workoutId: candidate.id),
+                as: WorkoutDetailsModel.self,
+                namespace: userSub,
+            ) {
+                resolvedWorkout = cachedDetails
+            } else if case let .success(detailsResponse) = await athleteTrainingClient.getWorkoutDetails(workoutInstanceId: candidate.id) {
+                let mapped = detailsResponse.asWorkoutDetailsModel()
+                await cacheStore.set(
+                    workoutCacheKey(programId: candidate.programId, source: .program, workoutId: candidate.id),
+                    value: mapped,
+                    namespace: userSub,
+                    ttl: 60 * 60 * 24,
+                )
+                resolvedWorkout = mapped
+            } else {
+                resolvedWorkout = nil
+            }
+
+            guard let workout = resolvedWorkout, !workout.exercises.isEmpty else { continue }
+            let exercises = workout.exercises.map { exercise in
+                TemplateExerciseDraft(
+                    id: exercise.id,
+                    name: exercise.name,
+                    sets: max(1, exercise.sets),
+                    repsMin: exercise.repsMin,
+                    repsMax: exercise.repsMax,
+                    restSeconds: exercise.restSeconds,
+                )
+            }
+            templates.append(
+                WorkoutTemplateDraft(
+                    id: "remote-\(workout.id)",
+                    userSub: "remote",
+                    name: workout.title,
+                    exercises: exercises,
+                    updatedAt: Date(),
+                ),
+            )
+        }
+
+        if !templates.isEmpty {
+            await cacheStore.set(cacheKey, value: templates, namespace: userSub, ttl: 60 * 10)
+        }
+        return templates
     }
 
     private func mapStatus(_ status: AthleteWorkoutInstanceStatus?) -> TrainingDayStatus {
@@ -393,8 +986,10 @@ final class PlanScheduleViewModel {
         case .missed:
             return .missed
         case .abandoned:
-            return .missed
-        case .planned, .inProgress, .none:
+            return .skipped
+        case .inProgress:
+            return .inProgress
+        case .planned, .none:
             return .planned
         }
     }
@@ -464,7 +1059,56 @@ final class PlanScheduleViewModel {
 }
 
 struct PlanScheduleScreen: View {
+    private struct DateActionFlow: Identifiable {
+        let id: String
+        let item: PlanScheduleViewModel.DayScheduleItem
+        let mode: PlanDateActionMode
+    }
+
+    private struct WorkoutDetailsFlow: Identifiable {
+        let id: String
+        let item: PlanScheduleViewModel.DayScheduleItem
+        let workoutDetails: WorkoutDetailsModel?
+    }
+
+    private struct EditManualWorkoutFlow: Identifiable {
+        let id: String
+        let item: PlanScheduleViewModel.DayScheduleItem
+        let workoutDetails: WorkoutDetailsModel
+    }
+
     @State var viewModel: PlanScheduleViewModel
+    let onOpenProgramWorkout: (_ programId: String, _ workoutId: String) -> Void
+    let onOpenPresetWorkout: (_ workout: WorkoutDetailsModel, _ source: WorkoutSource) -> Void
+    let onOpenQuickWorkoutBuilder: () -> Void
+    let onOpenCompletedWorkout: (_ record: CompletedWorkoutRecord) -> Void
+
+    @State private var expandedUpcomingDay: Date?
+    @State private var scheduleTargetDay: Date?
+    @State private var isScheduleDialogPresented = false
+    @State private var isTemplatePickerPresented = false
+    @State private var scheduleTemplates: [WorkoutTemplateDraft] = []
+    @State private var dateActionFlow: DateActionFlow?
+    @State private var workoutDetailsFlow: WorkoutDetailsFlow?
+    @State private var editManualWorkoutFlow: EditManualWorkoutFlow?
+    @State private var deleteItem: PlanScheduleViewModel.DayScheduleItem?
+    @State private var skipItem: PlanScheduleViewModel.DayScheduleItem?
+    @State private var isQuickScheduleBuilderPresented = false
+    @State private var isPastScheduleAlertPresented = false
+
+    init(
+        viewModel: PlanScheduleViewModel,
+        onOpenProgramWorkout: @escaping (_ programId: String, _ workoutId: String) -> Void = { _, _ in },
+        onOpenPresetWorkout: @escaping (_ workout: WorkoutDetailsModel, _ source: WorkoutSource) -> Void = { _, _ in },
+        onOpenQuickWorkoutBuilder: @escaping () -> Void = {},
+        onOpenCompletedWorkout: @escaping (_ record: CompletedWorkoutRecord) -> Void = { _ in },
+    ) {
+        _viewModel = State(initialValue: viewModel)
+        self.onOpenProgramWorkout = onOpenProgramWorkout
+        self.onOpenPresetWorkout = onOpenPresetWorkout
+        self.onOpenQuickWorkoutBuilder = onOpenQuickWorkoutBuilder
+        self.onOpenCompletedWorkout = onOpenCompletedWorkout
+    }
 
     var body: some View {
         ScrollView {
@@ -485,6 +1129,136 @@ struct PlanScheduleScreen: View {
         }
         .task {
             await viewModel.onAppear()
+        }
+        .sheet(isPresented: $isScheduleDialogPresented) {
+            PlanScheduleConfigurationSheet(
+                day: scheduleTargetDay ?? viewModel.selectedDay,
+                hasLastWorkout: viewModel.lastRepeatableRecord != nil,
+                onClose: {
+                    isScheduleDialogPresented = false
+                },
+                onQuickWorkout: {
+                    isScheduleDialogPresented = false
+                    isQuickScheduleBuilderPresented = true
+                },
+                onTemplate: {
+                    isScheduleDialogPresented = false
+                    Task {
+                        scheduleTemplates = await viewModel.templates()
+                        isTemplatePickerPresented = true
+                    }
+                },
+                onRepeatLast: {
+                    guard let day = scheduleTargetDay else { return }
+                    isScheduleDialogPresented = false
+                    Task { await viewModel.scheduleRepeatLastWorkout(on: day) }
+                },
+            )
+        }
+        .fullScreenCover(isPresented: $isQuickScheduleBuilderPresented) {
+            NavigationStack {
+                QuickWorkoutBuilderView(submitTitle: "Создать") { workout in
+                    guard let day = scheduleTargetDay else { return }
+                    Task {
+                        await viewModel.scheduleConfiguredQuickWorkout(workout, on: day)
+                    }
+                }
+            }
+        }
+        .sheet(isPresented: $isTemplatePickerPresented) {
+            PlanTemplatePickerSheet(
+                templates: scheduleTemplates,
+                onPick: { template in
+                    guard let day = scheduleTargetDay else { return }
+                    isTemplatePickerPresented = false
+                    Task { await viewModel.scheduleTemplate(template, on: day) }
+                },
+            )
+        }
+        .sheet(item: $dateActionFlow) { flow in
+            PlanMoveWorkoutSheet(
+                item: flow.item,
+                mode: flow.mode,
+                conflictsCount: { day in
+                    viewModel.conflictCount(on: day, excluding: flow.mode == .move ? flow.item : nil)
+                },
+                onCancel: {
+                    dateActionFlow = nil
+                },
+                onApply: { targetDay in
+                    dateActionFlow = nil
+                    Task {
+                        switch flow.mode {
+                        case .move:
+                            await viewModel.movePlan(flow.item, to: targetDay)
+                        case .repeatWorkout:
+                            await viewModel.repeatCompleted(flow.item, on: targetDay)
+                        case .replan:
+                            await viewModel.replanMissed(flow.item, on: targetDay)
+                        }
+                    }
+                },
+            )
+        }
+        .sheet(item: $workoutDetailsFlow) { flow in
+            PlanWorkoutDetailsSheet(
+                item: flow.item,
+                statusTitle: viewModel.statusTitle(flow.item.status),
+                workoutDetails: flow.workoutDetails,
+                canEdit: viewModel.canEditPlannedWorkout(flow.item, details: flow.workoutDetails),
+                onEdit: {
+                    let workoutDetails = flow.workoutDetails ?? viewModel.editableDraft(for: flow.item)
+                    workoutDetailsFlow = nil
+                    editManualWorkoutFlow = EditManualWorkoutFlow(
+                        id: flow.id,
+                        item: flow.item,
+                        workoutDetails: workoutDetails,
+                    )
+                },
+            )
+        }
+        .fullScreenCover(item: $editManualWorkoutFlow) { flow in
+            NavigationStack {
+                QuickWorkoutBuilderView(
+                    initialWorkout: flow.workoutDetails,
+                    submitTitle: "Сохранить изменения",
+                ) { updatedWorkout in
+                    Task {
+                        await viewModel.updatePlannedManualWorkout(flow.item, with: updatedWorkout)
+                    }
+                }
+            }
+        }
+        .alert(item: $deleteItem) { item in
+            Alert(
+                title: Text("Удалить тренировку?"),
+                message: Text("Тренировка «\(item.title)» будет удалена из плана."),
+                primaryButton: .destructive(Text("Удалить")) {
+                    Task { await viewModel.deletePlan(item) }
+                },
+                secondaryButton: .cancel(),
+            )
+        }
+        .alert(item: $skipItem) { item in
+            Alert(
+                title: Text("Отметить как пропущенную?"),
+                message: Text("Тренировка «\(item.title)» останется в истории как пропущенная."),
+                primaryButton: .destructive(Text("Пропустить")) {
+                    Task {
+                        if item.status == .inProgress {
+                            await viewModel.cancelInProgress(item)
+                        } else {
+                            await viewModel.markSkipped(item)
+                        }
+                    }
+                },
+                secondaryButton: .cancel(),
+            )
+        }
+        .alert("Нельзя запланировать тренировку", isPresented: $isPastScheduleAlertPresented) {
+            Button("Понятно", role: .cancel) {}
+        } message: {
+            Text("Планирование доступно только на сегодня и будущие даты.")
         }
     }
 
@@ -538,6 +1312,7 @@ struct PlanScheduleScreen: View {
 
     private func dayCell(_ day: Date) -> some View {
         let isSelected = Calendar.current.isDate(day, inSameDayAs: viewModel.selectedDay)
+        let isToday = viewModel.isToday(day)
         let status = viewModel.dayStatus(day)
 
         return Button {
@@ -554,80 +1329,168 @@ struct PlanScheduleScreen: View {
                     .font(FFTypography.caption.weight(.semibold))
                     .foregroundStyle(viewModel.isInCurrentMonth(day) ? FFColors.textPrimary : FFColors.gray500)
                 Circle()
-                    .fill(statusColor(status))
+                    .fill(calendarStatusColor(status))
                     .frame(width: 6, height: 6)
+                    .opacity(status == nil ? 0 : 1)
             }
             .frame(maxWidth: .infinity, minHeight: 44)
             .padding(.vertical, 4)
-            .background(isSelected ? FFColors.surface : .clear)
+            .background(cellBackgroundColor(isSelected: isSelected, isToday: isToday))
             .clipShape(RoundedRectangle(cornerRadius: FFTheme.Radius.control))
             .overlay {
                 RoundedRectangle(cornerRadius: FFTheme.Radius.control)
-                    .stroke(isSelected ? FFColors.accent : FFColors.gray700.opacity(0.2), lineWidth: 1)
+                    .stroke(cellBorderColor(isSelected: isSelected, isToday: isToday), lineWidth: isSelected ? 1.5 : 1)
             }
             .opacity(viewModel.isInCurrentMonth(day) ? 1 : 0.45)
         }
         .buttonStyle(.plain)
+        .contextMenu {
+            if viewModel.canSchedule(on: day) {
+                Button("Запланировать тренировку") {
+                    Task {
+                        if viewModel.isInCurrentMonth(day) {
+                            await viewModel.selectDay(day)
+                        } else {
+                            await viewModel.selectDayFromAdjacentMonth(day)
+                        }
+                        openScheduleDialog(for: day)
+                    }
+                }
+            }
+        }
         .accessibilityLabel(day.formatted(date: .abbreviated, time: .omitted))
         .accessibilityHint(viewModel.statusTitle(status))
     }
 
-    private func statusColor(_ status: TrainingDayStatus?) -> Color {
+    private func calendarStatusColor(_ status: TrainingDayStatus?) -> Color {
         switch status {
         case .planned:
+            FFColors.gray500
+        case .inProgress:
             FFColors.primary
         case .completed:
             FFColors.accent
-        case .missed:
+        case .missed, .skipped:
             FFColors.danger
         case nil:
-            FFColors.gray700
+            .clear
         }
     }
 
     private var dayScheduleCard: some View {
         FFCard {
             VStack(alignment: .leading, spacing: FFSpacing.sm) {
-                Text("Расписание на \(viewModel.selectedDay.formatted(date: .abbreviated, time: .omitted))")
+                Text(selectedDayTitle)
                     .font(FFTypography.h2)
                     .foregroundStyle(FFColors.textPrimary)
 
                 let items = viewModel.dayItems(for: viewModel.selectedDay)
                 if items.isEmpty {
-                    FFEmptyState(
-                        title: "На этот день тренировок нет",
-                        message: "Запустите тренировку во вкладке «Тренировка» или проверьте календарь позже.",
-                    )
-                } else {
-                    ForEach(items) { item in
-                        infoRowContainer {
-                            HStack(alignment: .top, spacing: FFSpacing.sm) {
-                                VStack(alignment: .leading, spacing: FFSpacing.xxs) {
-                                    Text(item.title)
-                                        .font(FFTypography.body.weight(.semibold))
-                                        .foregroundStyle(FFColors.textPrimary)
-                                    Text("\(item.subtitle) • \(viewModel.sourceTitle(item.source))")
-                                        .font(FFTypography.caption)
-                                        .foregroundStyle(FFColors.textSecondary)
+                    infoRowContainer {
+                        VStack(alignment: .leading, spacing: FFSpacing.sm) {
+                            Text("Нет тренировок на этот день")
+                                .font(FFTypography.body.weight(.semibold))
+                                .foregroundStyle(FFColors.textPrimary)
+                            if viewModel.canSchedule(on: viewModel.selectedDay) {
+                                FFButton(title: "+ Запланировать тренировку", variant: .secondary) {
+                                    openScheduleDialog(for: viewModel.selectedDay)
                                 }
-                                Spacer(minLength: FFSpacing.xs)
-                                statusPill(item.status)
+                            } else {
+                                Text("Нельзя планировать на прошедшую дату")
+                                    .font(FFTypography.caption)
+                                    .foregroundStyle(FFColors.textSecondary)
                             }
                         }
+                    }
+                } else {
+                    ForEach(items) { item in
+                        workoutDayCard(item)
                     }
                 }
             }
         }
     }
 
-    private func statusPill(_ status: TrainingDayStatus) -> some View {
-        Text(viewModel.statusTitle(status))
-            .font(FFTypography.caption.weight(.semibold))
-            .foregroundStyle(status == .completed ? FFColors.background : FFColors.textPrimary)
-            .padding(.horizontal, FFSpacing.sm)
-            .padding(.vertical, FFSpacing.xs)
-            .background(statusColor(status).opacity(status == .completed ? 1 : 0.2))
-            .clipShape(Capsule())
+    private func workoutDayCard(_ item: PlanScheduleViewModel.DayScheduleItem) -> some View {
+        infoRowContainer {
+            VStack(alignment: .leading, spacing: FFSpacing.xs) {
+                HStack(alignment: .top, spacing: FFSpacing.xs) {
+                    VStack(alignment: .leading, spacing: FFSpacing.xxs) {
+                        Text(item.title)
+                            .font(FFTypography.body.weight(.semibold))
+                            .foregroundStyle(FFColors.textPrimary)
+                            .lineLimit(1)
+                        Text(item.sourceTitle)
+                            .font(FFTypography.caption)
+                            .foregroundStyle(FFColors.textSecondary)
+                            .lineLimit(1)
+                    }
+                    Spacer(minLength: FFSpacing.xs)
+                    if hasSecondaryActions(for: item) {
+                        secondaryMenu(for: item)
+                    }
+                }
+                statusBadge(for: item)
+                primaryActionButton(for: item)
+            }
+            .frame(minHeight: 88, alignment: .top)
+        }
+        .contentShape(Rectangle())
+        .onTapGesture {
+            openCard(item)
+        }
+    }
+
+    private func statusBadge(for item: PlanScheduleViewModel.DayScheduleItem) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: statusIcon(for: item.status))
+                .font(.system(size: 11, weight: .semibold))
+            Text(statusBadgeTitle(for: item))
+                .font(FFTypography.caption.weight(.semibold))
+        }
+        .foregroundStyle(pillColor(item.status))
+        .padding(.horizontal, FFSpacing.xs)
+        .padding(.vertical, FFSpacing.xxs)
+        .background(pillColor(item.status).opacity(0.16))
+        .clipShape(Capsule())
+    }
+
+    private var selectedDayTitle: String {
+        relativeDayTitle(viewModel.selectedDay)
+    }
+
+    private func statusIcon(for status: TrainingDayStatus) -> String {
+        switch status {
+        case .completed:
+            "checkmark.circle.fill"
+        case .inProgress:
+            "play.circle.fill"
+        case .missed, .skipped:
+            "xmark.circle.fill"
+        case .planned:
+            "calendar"
+        }
+    }
+
+    private func statusBadgeTitle(for item: PlanScheduleViewModel.DayScheduleItem) -> String {
+        switch item.status {
+        case .planned:
+            if Calendar.current.isDateInToday(item.day) {
+                return "Сегодня"
+            }
+            if Calendar.current.isDateInTomorrow(item.day) {
+                return "Завтра"
+            }
+            return "Запланирована"
+        case .inProgress:
+            return "В процессе"
+        case .completed:
+            return "Выполнена"
+        case .missed:
+            return "Пропущена"
+        case .skipped:
+            return "Пропущена намеренно"
+        }
     }
 
     private var weekSummaryCard: some View {
@@ -689,28 +1552,167 @@ struct PlanScheduleScreen: View {
 
                 ForEach(viewModel.upcomingDays) { item in
                     infoRowContainer {
-                        HStack(spacing: FFSpacing.sm) {
-                            Text(item.day.formatted(.dateTime.weekday(.abbreviated).day()))
-                                .font(FFTypography.caption.weight(.semibold))
-                                .foregroundStyle(FFColors.textSecondary)
-                                .frame(width: 64, alignment: .leading)
-                            VStack(alignment: .leading, spacing: FFSpacing.xxs) {
-                                Text(item.title)
-                                    .font(FFTypography.body)
-                                    .foregroundStyle(FFColors.textPrimary)
-                                    .lineLimit(1)
-                                Text(viewModel.statusTitle(item.status))
-                                    .font(FFTypography.caption)
-                                    .foregroundStyle(FFColors.textSecondary)
+                        VStack(alignment: .leading, spacing: FFSpacing.xs) {
+                            Button {
+                                toggleUpcomingDay(item.day)
+                            } label: {
+                                HStack(spacing: FFSpacing.sm) {
+                                    VStack(alignment: .leading, spacing: FFSpacing.xxs) {
+                                        Text(relativeDayTitle(item.day))
+                                            .font(FFTypography.caption.weight(.semibold))
+                                            .foregroundStyle(FFColors.textSecondary)
+                                        Text(item.title)
+                                            .font(FFTypography.body.weight(.semibold))
+                                            .foregroundStyle(FFColors.textPrimary)
+                                            .lineLimit(1)
+                                        Text(viewModel.statusTitle(item.status))
+                                            .font(FFTypography.caption)
+                                            .foregroundStyle(FFColors.textSecondary)
+                                    }
+                                    Spacer()
+                                    Circle()
+                                        .fill(upcomingStatusColor(item.status))
+                                        .frame(width: 8, height: 8)
+                                    Image(systemName: expandedUpcomingDay == item.day ? "chevron.up" : "chevron.down")
+                                        .font(.system(size: 12, weight: .semibold))
+                                        .foregroundStyle(FFColors.textSecondary)
+                                }
+                                .contentShape(Rectangle())
                             }
-                            Spacer()
-                            Circle()
-                                .fill(statusColor(item.status))
-                                .frame(width: 8, height: 8)
+                            .buttonStyle(.plain)
+
+                            if expandedUpcomingDay == item.day {
+                                let dayItems = viewModel.dayItems(for: item.day)
+                                ForEach(dayItems) { dayItem in
+                                    Button {
+                                        openFromList(dayItem)
+                                    } label: {
+                                        HStack(alignment: .top, spacing: FFSpacing.sm) {
+                                            VStack(alignment: .leading, spacing: FFSpacing.xxs) {
+                                                Text(dayItem.title)
+                                                    .font(FFTypography.caption.weight(.semibold))
+                                                    .foregroundStyle(FFColors.textPrimary)
+                                                Text(dayItem.sourceTitle)
+                                                    .font(FFTypography.caption)
+                                                    .foregroundStyle(FFColors.textSecondary)
+                                                Text("Статус: \(viewModel.statusTitle(dayItem.status).lowercased())")
+                                                    .font(FFTypography.caption)
+                                                    .foregroundStyle(FFColors.textSecondary)
+                                            }
+                                            Spacer()
+                                            Circle()
+                                                .fill(upcomingStatusColor(dayItem.status))
+                                                .frame(width: 6, height: 6)
+                                        }
+                                        .padding(.horizontal, FFSpacing.xs)
+                                        .padding(.vertical, FFSpacing.xs)
+                                        .background(FFColors.background.opacity(0.24))
+                                        .clipShape(RoundedRectangle(cornerRadius: FFTheme.Radius.control))
+                                    }
+                                    .buttonStyle(.plain)
+                                }
+                            }
                         }
                     }
                 }
             }
+        }
+    }
+
+    @ViewBuilder
+    private func primaryActionButton(for item: PlanScheduleViewModel.DayScheduleItem) -> some View {
+        switch item.status {
+        case .planned:
+            if viewModel.isToday(item.day) {
+                FFButton(title: "Начать тренировку", variant: .primary) {
+                    handleOpenWorkout(item, preferDetailsForFutureDate: false)
+                }
+            } else {
+                EmptyView()
+            }
+        case .inProgress:
+            FFButton(title: "Продолжить тренировку", variant: .primary) {
+                handleOpenWorkout(item, preferDetailsForFutureDate: false)
+            }
+        case .completed:
+            EmptyView()
+        case .missed, .skipped:
+            FFButton(title: "Перепланировать", variant: .primary) {
+                dateActionFlow = DateActionFlow(
+                    id: "replan-\(item.id)",
+                    item: item,
+                    mode: .replan,
+                )
+            }
+        }
+    }
+
+    private func hasSecondaryActions(for item: PlanScheduleViewModel.DayScheduleItem) -> Bool {
+        switch item.status {
+        case .planned, .inProgress:
+            true
+        case .completed:
+            viewModel.canRepeat(item)
+        case .missed, .skipped:
+            false
+        }
+    }
+
+    @ViewBuilder
+    private func secondaryMenu(for item: PlanScheduleViewModel.DayScheduleItem) -> some View {
+        Menu {
+            secondaryMenuContent(for: item)
+        } label: {
+            Image(systemName: "ellipsis")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(FFColors.textSecondary)
+                .frame(width: 32, height: 32)
+                .background(FFColors.background.opacity(0.35))
+                .clipShape(RoundedRectangle(cornerRadius: FFTheme.Radius.control))
+        }
+    }
+
+    @ViewBuilder
+    private func secondaryMenuContent(for item: PlanScheduleViewModel.DayScheduleItem) -> some View {
+        switch item.status {
+        case .planned:
+            if viewModel.canEditPlannedWorkout(item, details: item.workoutDetails) {
+                Button("Редактировать") {
+                    openEdit(item)
+                }
+            }
+            Button("Перенести") {
+                dateActionFlow = DateActionFlow(
+                    id: "move-\(item.id)",
+                    item: item,
+                    mode: .move,
+                )
+            }
+            if item.sourceKind == .program {
+                Button("Пропустить", role: .destructive) {
+                    skipItem = item
+                }
+            } else {
+                Button("Удалить", role: .destructive) {
+                    deleteItem = item
+                }
+            }
+        case .inProgress:
+            Button("Отменить", role: .destructive) {
+                skipItem = item
+            }
+        case .completed:
+            if viewModel.canRepeat(item) {
+                Button("Повторить") {
+                    dateActionFlow = DateActionFlow(
+                        id: "repeat-\(item.id)",
+                        item: item,
+                        mode: .repeatWorkout,
+                    )
+                }
+            }
+        case .missed, .skipped:
+            EmptyView()
         }
     }
 
@@ -759,6 +1761,631 @@ struct PlanScheduleScreen: View {
                     .stroke(FFColors.gray700, lineWidth: 1)
             }
     }
+
+    private func openScheduleDialog(for day: Date) {
+        let normalized = Calendar.current.startOfDay(for: day)
+        guard viewModel.canSchedule(on: normalized) else {
+            isPastScheduleAlertPresented = true
+            return
+        }
+        scheduleTargetDay = normalized
+        Task { @MainActor in
+            await viewModel.ensureLastCompletedRecordLoaded()
+            isScheduleDialogPresented = true
+        }
+    }
+
+    private func relativeDayTitle(_ day: Date) -> String {
+        let calendar = Calendar.current
+        let normalized = calendar.startOfDay(for: day)
+        if calendar.isDateInToday(normalized) {
+            return "Сегодня"
+        }
+        if calendar.isDateInTomorrow(normalized) {
+            return "Завтра"
+        }
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "ru_RU")
+        formatter.dateFormat = "d MMMM"
+        return formatter.string(from: normalized)
+    }
+
+    private func cellBackgroundColor(isSelected: Bool, isToday: Bool) -> Color {
+        if isSelected {
+            return FFColors.surface
+        }
+        if isToday {
+            return FFColors.surface.opacity(0.55)
+        }
+        return .clear
+    }
+
+    private func cellBorderColor(isSelected: Bool, isToday: Bool) -> Color {
+        if isSelected {
+            return FFColors.accent
+        }
+        if isToday {
+            return FFColors.gray500
+        }
+        return FFColors.gray700.opacity(0.2)
+    }
+
+    private func pillColor(_ status: TrainingDayStatus) -> Color {
+        switch status {
+        case .planned:
+            FFColors.gray500
+        case .inProgress:
+            FFColors.primary
+        case .completed:
+            FFColors.accent
+        case .missed, .skipped:
+            FFColors.danger
+        }
+    }
+
+    private func upcomingStatusColor(_ status: TrainingDayStatus?) -> Color {
+        switch status {
+        case .planned:
+            FFColors.gray500
+        case .inProgress:
+            FFColors.primary
+        case .completed:
+            FFColors.accent
+        case .missed, .skipped:
+            FFColors.danger
+        case nil:
+            FFColors.gray700
+        }
+    }
+
+    private func toggleUpcomingDay(_ day: Date) {
+        if expandedUpcomingDay == day {
+            expandedUpcomingDay = nil
+        } else {
+            expandedUpcomingDay = day
+        }
+    }
+
+    private func handleOpenWorkout(
+        _ item: PlanScheduleViewModel.DayScheduleItem,
+        preferDetailsForFutureDate: Bool,
+    ) {
+        if preferDetailsForFutureDate, viewModel.isFutureDay(item.day) {
+            presentDetails(item)
+            return
+        }
+
+        switch item.source {
+        case .program:
+            guard let programId = item.programId?.trimmedNilIfEmpty,
+                  let workoutId = item.workoutId?.trimmedNilIfEmpty
+            else {
+                presentDetails(item)
+                return
+            }
+            onOpenProgramWorkout(programId, workoutId)
+
+        case .freestyle:
+            Task {
+                if let details = await viewModel.resolveWorkoutDetails(for: item) {
+                    await MainActor.run {
+                        onOpenPresetWorkout(details, .freestyle)
+                    }
+                } else {
+                    await MainActor.run {
+                        onOpenQuickWorkoutBuilder()
+                    }
+                }
+            }
+
+        case .template:
+            Task {
+                if let templateWorkout = await viewModel.resolveWorkoutDetails(for: item) {
+                    await MainActor.run {
+                        onOpenPresetWorkout(templateWorkout, .template)
+                    }
+                } else {
+                    await MainActor.run {
+                        presentDetails(item)
+                    }
+                }
+            }
+        }
+    }
+
+    private func handleOpenResult(_ item: PlanScheduleViewModel.DayScheduleItem) {
+        switch item.source {
+        case .program:
+            guard let programId = item.programId?.trimmedNilIfEmpty,
+                  let workoutId = item.workoutId?.trimmedNilIfEmpty
+            else {
+                presentDetails(item)
+                return
+            }
+            onOpenProgramWorkout(programId, workoutId)
+        case .freestyle, .template:
+            presentDetails(item)
+        }
+    }
+
+    private func openCompletedItem(_ item: PlanScheduleViewModel.DayScheduleItem) {
+        Task {
+            if let record = await viewModel.completedRecord(for: item) {
+                await MainActor.run {
+                    onOpenCompletedWorkout(record)
+                }
+                return
+            }
+            await MainActor.run {
+                handleOpenResult(item)
+            }
+        }
+    }
+
+    private func openPlannedItemFromList(_ item: PlanScheduleViewModel.DayScheduleItem) {
+        presentDetails(item)
+    }
+
+    private func openInProgressItemFromList(_ item: PlanScheduleViewModel.DayScheduleItem) {
+        switch item.source {
+        case .program:
+            handleOpenWorkout(item, preferDetailsForFutureDate: false)
+        case .template:
+            handleOpenWorkout(item, preferDetailsForFutureDate: false)
+        case .freestyle:
+            Task {
+                if let details = await viewModel.resolveWorkoutDetails(for: item) {
+                    await MainActor.run {
+                        onOpenPresetWorkout(details, .freestyle)
+                    }
+                } else {
+                    await MainActor.run {
+                        onOpenQuickWorkoutBuilder()
+                    }
+                }
+            }
+        }
+    }
+
+    private func openFromList(_ item: PlanScheduleViewModel.DayScheduleItem) {
+        switch item.status {
+        case .completed:
+            openCompletedItem(item)
+        case .missed, .skipped:
+            presentDetails(item)
+        case .planned:
+            openPlannedItemFromList(item)
+        case .inProgress:
+            openInProgressItemFromList(item)
+        }
+    }
+
+    private func openCard(_ item: PlanScheduleViewModel.DayScheduleItem) {
+        switch item.status {
+        case .completed:
+            openCompletedItem(item)
+        case .planned:
+            presentDetails(item)
+        case .inProgress:
+            openInProgressItemFromList(item)
+        case .missed, .skipped:
+            presentDetails(item)
+        }
+    }
+
+    private func presentDetails(_ item: PlanScheduleViewModel.DayScheduleItem) {
+        Task {
+            let workoutDetails = await viewModel.resolveWorkoutDetails(for: item)
+            await MainActor.run {
+                workoutDetailsFlow = WorkoutDetailsFlow(
+                    id: item.id,
+                    item: item,
+                    workoutDetails: workoutDetails,
+                )
+            }
+        }
+    }
+
+    private func openEdit(_ item: PlanScheduleViewModel.DayScheduleItem) {
+        guard viewModel.canEditPlannedWorkout(item, details: item.workoutDetails) else { return }
+        Task {
+            let resolvedDetails = await viewModel.resolveWorkoutDetails(for: item)
+            let editableWorkout = resolvedDetails ?? viewModel.editableDraft(for: item)
+            await MainActor.run {
+                editManualWorkoutFlow = EditManualWorkoutFlow(
+                    id: "menu-edit-\(item.id)",
+                    item: item,
+                    workoutDetails: editableWorkout,
+                )
+            }
+        }
+    }
+}
+
+private enum PlanDateActionMode {
+    case move
+    case repeatWorkout
+    case replan
+
+    var title: String {
+        switch self {
+        case .move:
+            "Перенести тренировку"
+        case .repeatWorkout:
+            "Запланировать повтор"
+        case .replan:
+            "Перепланировать тренировку"
+        }
+    }
+
+    var actionTitle: String {
+        switch self {
+        case .move:
+            "Перенести"
+        case .repeatWorkout, .replan:
+            "Запланировать"
+        }
+    }
+
+    var dateLabel: String {
+        switch self {
+        case .move:
+            "Новая дата"
+        case .repeatWorkout:
+            "Дата повтора"
+        case .replan:
+            "Новая дата плана"
+        }
+    }
+}
+
+private struct PlanScheduleConfigurationSheet: View {
+    let day: Date
+    let hasLastWorkout: Bool
+    let onClose: () -> Void
+    let onQuickWorkout: () -> Void
+    let onTemplate: () -> Void
+    let onRepeatLast: () -> Void
+
+    var body: some View {
+        NavigationStack {
+            ZStack {
+                FFColors.background.ignoresSafeArea()
+                VStack(spacing: FFSpacing.md) {
+                    FFCard {
+                        VStack(alignment: .leading, spacing: FFSpacing.xs) {
+                            Text("Запланировать тренировку")
+                                .font(FFTypography.h2)
+                                .foregroundStyle(FFColors.textPrimary)
+                            Text("Дата: \(formattedDay)")
+                                .font(FFTypography.caption)
+                                .foregroundStyle(FFColors.textSecondary)
+                            Text("Выберите, как добавить тренировку в план.")
+                                .font(FFTypography.caption)
+                                .foregroundStyle(FFColors.textSecondary)
+                        }
+                    }
+
+                    FFCard {
+                        VStack(spacing: FFSpacing.sm) {
+                            FFButton(title: "Быстрая тренировка", variant: .primary, action: onQuickWorkout)
+                            FFButton(title: "Выбрать из шаблона", variant: .secondary, action: onTemplate)
+                            if hasLastWorkout {
+                                FFButton(title: "Повторить последнюю", variant: .secondary, action: onRepeatLast)
+                            }
+                        }
+                    }
+                }
+                .padding(.horizontal, FFSpacing.md)
+                .padding(.vertical, FFSpacing.md)
+            }
+            .navigationTitle("Конфигурация")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button(action: onClose) {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 14, weight: .semibold))
+                    }
+                    .accessibilityLabel("Закрыть")
+                }
+            }
+        }
+        .presentationDetents([.medium])
+    }
+
+    private var formattedDay: String {
+        day.formatted(date: .abbreviated, time: .omitted)
+    }
+}
+
+private struct PlanTemplatePickerSheet: View {
+    let templates: [WorkoutTemplateDraft]
+    let onPick: (WorkoutTemplateDraft) -> Void
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            ZStack {
+                FFColors.background.ignoresSafeArea()
+                if templates.isEmpty {
+                    FFEmptyState(
+                        title: "Шаблонов пока нет",
+                        message: "Создайте шаблон во вкладке «Тренировка», затем он появится здесь.",
+                    )
+                    .padding(.horizontal, FFSpacing.md)
+                } else {
+                    ScrollView {
+                        VStack(spacing: FFSpacing.sm) {
+                            ForEach(templates) { template in
+                                Button {
+                                    onPick(template)
+                                } label: {
+                                    infoRow(template: template)
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                        .padding(.horizontal, FFSpacing.md)
+                        .padding(.vertical, FFSpacing.md)
+                    }
+                }
+            }
+            .navigationTitle("Выберите шаблон")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        dismiss()
+                    } label: {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 14, weight: .semibold))
+                    }
+                    .accessibilityLabel("Закрыть")
+                }
+            }
+        }
+        .presentationDetents([.medium, .large])
+    }
+
+    private func infoRow(template: WorkoutTemplateDraft) -> some View {
+        HStack(spacing: FFSpacing.sm) {
+            VStack(alignment: .leading, spacing: FFSpacing.xxs) {
+                Text(template.name)
+                    .font(FFTypography.body.weight(.semibold))
+                    .foregroundStyle(FFColors.textPrimary)
+                Text("Упражнений: \(template.exercises.count)")
+                    .font(FFTypography.caption)
+                    .foregroundStyle(FFColors.textSecondary)
+            }
+            Spacer()
+            Image(systemName: "chevron.right")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(FFColors.textSecondary)
+        }
+        .padding(FFSpacing.sm)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(FFColors.surface)
+        .clipShape(RoundedRectangle(cornerRadius: FFTheme.Radius.control))
+        .overlay {
+            RoundedRectangle(cornerRadius: FFTheme.Radius.control)
+                .stroke(FFColors.gray700, lineWidth: 1)
+        }
+    }
+}
+
+private struct PlanMoveWorkoutSheet: View {
+    let item: PlanScheduleViewModel.DayScheduleItem
+    let mode: PlanDateActionMode
+    let conflictsCount: (Date) -> Int
+    let onCancel: () -> Void
+    let onApply: (Date) -> Void
+
+    @State private var targetDay: Date
+    @State private var isConflictAlertPresented = false
+    @State private var pendingTargetDay: Date?
+
+    init(
+        item: PlanScheduleViewModel.DayScheduleItem,
+        mode: PlanDateActionMode,
+        conflictsCount: @escaping (Date) -> Int,
+        onCancel: @escaping () -> Void,
+        onApply: @escaping (Date) -> Void,
+    ) {
+        self.item = item
+        self.mode = mode
+        self.conflictsCount = conflictsCount
+        self.onCancel = onCancel
+        self.onApply = onApply
+        let baseDay = mode == .move ? item.day : Calendar.current.date(byAdding: .day, value: 1, to: item.day) ?? item.day
+        let minimumDay = Calendar.current.startOfDay(for: Date())
+        _targetDay = State(initialValue: max(baseDay, minimumDay))
+    }
+
+    var body: some View {
+        NavigationStack {
+            ZStack {
+                FFColors.background.ignoresSafeArea()
+                VStack(spacing: FFSpacing.md) {
+                    FFCard {
+                        VStack(alignment: .leading, spacing: FFSpacing.xs) {
+                            Text(item.title)
+                                .font(FFTypography.body.weight(.semibold))
+                                .foregroundStyle(FFColors.textPrimary)
+                            Text(descriptionText)
+                                .font(FFTypography.caption)
+                                .foregroundStyle(FFColors.textSecondary)
+                            if item.sourceKind == .program, mode == .move {
+                                Text("Режим: перенести только эту тренировку")
+                                    .font(FFTypography.caption)
+                                    .foregroundStyle(FFColors.textSecondary)
+                            }
+                        }
+                    }
+
+                    FFCard {
+                        DatePicker(
+                            mode.dateLabel,
+                            selection: $targetDay,
+                            in: minimumSelectableDay...,
+                            displayedComponents: .date,
+                        )
+                        .datePickerStyle(.graphical)
+                        .tint(FFColors.accent)
+
+                        let conflicts = conflictsCount(targetDay)
+                        if conflicts > 0 {
+                            Text("На выбранную дату уже есть \(conflicts) тренировок.")
+                                .font(FFTypography.caption)
+                                .foregroundStyle(FFColors.danger)
+                                .padding(.top, FFSpacing.xs)
+                        }
+                    }
+
+                    HStack(spacing: FFSpacing.sm) {
+                        FFButton(title: "Отмена", variant: .secondary, action: onCancel)
+                        FFButton(title: mode.actionTitle, variant: .primary) {
+                            let conflicts = conflictsCount(targetDay)
+                            if conflicts > 0 {
+                                pendingTargetDay = targetDay
+                                isConflictAlertPresented = true
+                            } else {
+                                onApply(targetDay)
+                            }
+                        }
+                    }
+                }
+                .padding(.horizontal, FFSpacing.md)
+                .padding(.vertical, FFSpacing.md)
+            }
+            .navigationTitle(mode.title)
+            .navigationBarTitleDisplayMode(.inline)
+            .alert("Конфликт по дате", isPresented: $isConflictAlertPresented) {
+                Button("Отмена", role: .cancel) {}
+                Button("Продолжить") {
+                    guard let pendingTargetDay else { return }
+                    onApply(pendingTargetDay)
+                }
+            } message: {
+                let conflicts = conflictsCount(pendingTargetDay ?? targetDay)
+                Text("На выбранную дату уже есть \(conflicts) тренировок. Продолжить?")
+            }
+        }
+    }
+
+    private var descriptionText: String {
+        switch mode {
+        case .move:
+            "Выберите новую дату тренировки"
+        case .repeatWorkout:
+            "Создайте повтор тренировки на удобную дату"
+        case .replan:
+            "Создайте новую запланированную тренировку для этого дня"
+        }
+    }
+
+    private var minimumSelectableDay: Date {
+        Calendar.current.startOfDay(for: Date())
+    }
+}
+
+private struct PlanWorkoutDetailsSheet: View {
+    let item: PlanScheduleViewModel.DayScheduleItem
+    let statusTitle: String
+    let workoutDetails: WorkoutDetailsModel?
+    let canEdit: Bool
+    let onEdit: () -> Void
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            ZStack {
+                FFColors.background.ignoresSafeArea()
+                ScrollView {
+                    VStack(spacing: FFSpacing.md) {
+                        FFCard {
+                            VStack(alignment: .leading, spacing: FFSpacing.xs) {
+                                Text(item.title)
+                                    .font(FFTypography.h2)
+                                    .foregroundStyle(FFColors.textPrimary)
+                                Text(item.day.formatted(date: .abbreviated, time: .omitted))
+                                    .font(FFTypography.caption)
+                                    .foregroundStyle(FFColors.textSecondary)
+                            }
+                        }
+
+                        FFCard {
+                            VStack(alignment: .leading, spacing: FFSpacing.xs) {
+                                Text(item.sourceTitle)
+                                    .font(FFTypography.body)
+                                    .foregroundStyle(FFColors.textSecondary)
+                                Text("Статус: \(statusTitle.lowercased())")
+                                    .font(FFTypography.body.weight(.semibold))
+                                    .foregroundStyle(FFColors.textPrimary)
+                            }
+                        }
+
+                        FFCard {
+                            VStack(alignment: .leading, spacing: FFSpacing.sm) {
+                                Text("Упражнения")
+                                    .font(FFTypography.body.weight(.semibold))
+                                    .foregroundStyle(FFColors.textPrimary)
+                                if let workoutDetails, !workoutDetails.exercises.isEmpty {
+                                    ForEach(workoutDetails.exercises.sorted(by: { $0.orderIndex < $1.orderIndex })) { exercise in
+                                        VStack(alignment: .leading, spacing: FFSpacing.xxs) {
+                                            Text(exercise.name)
+                                                .font(FFTypography.body.weight(.semibold))
+                                                .foregroundStyle(FFColors.textPrimary)
+                                                .lineLimit(2)
+                                            Text("\(max(1, exercise.sets)) подхода • \(repsLabel(for: exercise)) повторов")
+                                                .font(FFTypography.caption)
+                                                .foregroundStyle(FFColors.textSecondary)
+                                        }
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                        .padding(.bottom, FFSpacing.xxs)
+                                    }
+                                } else {
+                                    Text("Список упражнений пока недоступен для этой тренировки.")
+                                        .font(FFTypography.caption)
+                                        .foregroundStyle(FFColors.textSecondary)
+                                }
+                            }
+                        }
+
+                        if canEdit {
+                            FFButton(title: "Редактировать тренировку", variant: .primary, action: onEdit)
+                        }
+                    }
+                    .padding(.horizontal, FFSpacing.md)
+                    .padding(.vertical, FFSpacing.md)
+                }
+            }
+            .navigationTitle("Детали тренировки")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        dismiss()
+                    } label: {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 14, weight: .semibold))
+                    }
+                    .accessibilityLabel("Закрыть")
+                }
+            }
+        }
+        .presentationDetents([.medium, .large])
+    }
+
+    private func repsLabel(for exercise: WorkoutExercise) -> String {
+        if let repsMin = exercise.repsMin, let repsMax = exercise.repsMax {
+            return "\(repsMin)-\(repsMax)"
+        }
+        if let repsMin = exercise.repsMin {
+            return "\(repsMin)"
+        }
+        return "по самочувствию"
+    }
 }
 
 #Preview("План") {
@@ -774,5 +2401,31 @@ private extension String {
     var trimmedNilIfEmpty: String? {
         let trimmed = trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? nil : trimmed
+    }
+}
+
+private extension WorkoutTemplateDraft {
+    func asWorkoutDetailsModel() -> WorkoutDetailsModel {
+        let exercises = exercises.enumerated().map { index, item in
+            WorkoutExercise(
+                id: "template-\(id)-\(item.id)-\(index)",
+                name: item.name,
+                sets: max(1, item.sets),
+                repsMin: item.repsMin,
+                repsMax: item.repsMax,
+                targetRpe: nil,
+                restSeconds: item.restSeconds,
+                notes: nil,
+                orderIndex: index,
+            )
+        }
+
+        return WorkoutDetailsModel(
+            id: id,
+            title: name,
+            dayOrder: 0,
+            coachNote: "Тренировка из шаблона",
+            exercises: exercises,
+        )
     }
 }

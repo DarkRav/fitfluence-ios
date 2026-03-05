@@ -187,6 +187,87 @@ final class CatalogAndProgramDetailsFeatureTests: XCTestCase {
         XCTAssertFalse(viewModel.isLoading)
     }
 
+    func testProgramDetailsNonParticipantCannotOpenOrLaunchProgramWorkout() async {
+        let mockClient = MockProgramsClient(
+            listResults: [],
+            detailsResults: [.success(sampleDetails)],
+            startResults: [],
+        )
+        let trainingClient = MockProgramDetailsAthleteTrainingClient(
+            progressResult: .failure(.unknown),
+        )
+
+        let viewModel = ProgramDetailsViewModel(
+            programId: "program-1",
+            userSub: "u1",
+            programsClient: mockClient,
+            athleteTrainingClient: trainingClient,
+            cacheStore: MemoryCacheStore(),
+            networkMonitor: StaticNetworkMonitor(currentStatus: true),
+        )
+
+        await viewModel.onAppear()
+
+        XCTAssertFalse(viewModel.canAccessProgramWorkouts)
+        XCTAssertEqual(viewModel.primaryProgramActionTitle, "Начать программу")
+
+        viewModel.openWorkouts()
+        viewModel.workoutPicked("workout-1")
+
+        XCTAssertFalse(viewModel.isWorkoutsPresented)
+        XCTAssertNil(viewModel.selectedWorkout)
+    }
+
+    func testProgramDetailsParticipantCanOpenAndLaunchProgramWorkout() async {
+        let mockClient = MockProgramsClient(
+            listResults: [],
+            detailsResults: [.success(sampleDetails)],
+            startResults: [],
+        )
+        let trainingClient = MockProgramDetailsAthleteTrainingClient(
+            progressResult: .success(
+                ActiveEnrollmentProgressResponse(
+                    enrollmentId: "enr-1",
+                    status: "ACTIVE",
+                    programId: "program-1",
+                    programTitle: "Программа",
+                    programVersionId: "ver-1",
+                    currentWorkoutId: nil,
+                    currentWorkoutTitle: nil,
+                    currentWorkoutStatus: nil,
+                    nextWorkoutId: "workout-2",
+                    nextWorkoutTitle: "День 2",
+                    nextWorkoutStatus: .planned,
+                    completedSessions: 1,
+                    totalSessions: 4,
+                    completionPercent: 25,
+                    lastCompletedAt: nil,
+                    updatedAt: nil,
+                ),
+            ),
+        )
+
+        let viewModel = ProgramDetailsViewModel(
+            programId: "program-1",
+            userSub: "u1",
+            programsClient: mockClient,
+            athleteTrainingClient: trainingClient,
+            cacheStore: MemoryCacheStore(),
+            networkMonitor: StaticNetworkMonitor(currentStatus: true),
+        )
+
+        await viewModel.onAppear()
+
+        XCTAssertTrue(viewModel.canAccessProgramWorkouts)
+        XCTAssertEqual(viewModel.primaryProgramActionTitle, "Продолжить программу")
+
+        viewModel.openWorkouts()
+        viewModel.workoutPicked("workout-2")
+
+        XCTAssertTrue(viewModel.isWorkoutsPresented)
+        XCTAssertEqual(viewModel.selectedWorkout?.workoutId, "workout-2")
+    }
+
     private func samplePage(title: String) -> PagedProgramResponse {
         PagedProgramResponse(
             content: [
@@ -348,5 +429,40 @@ private actor MockProgramsClient: ProgramsClientProtocol {
 
     func lastQuery() async -> String? {
         receivedQueries.last
+    }
+}
+
+private actor MockProgramDetailsAthleteTrainingClient: AthleteTrainingClientProtocol {
+    private let progressResult: Result<ActiveEnrollmentProgressResponse, APIError>
+
+    init(progressResult: Result<ActiveEnrollmentProgressResponse, APIError>) {
+        self.progressResult = progressResult
+    }
+
+    func activeEnrollmentProgress() async -> Result<ActiveEnrollmentProgressResponse, APIError> {
+        progressResult
+    }
+
+    func getWorkoutDetails(workoutInstanceId _: String) async -> Result<AthleteWorkoutDetailsResponse, APIError> {
+        .failure(.unknown)
+    }
+
+    func startWorkout(workoutInstanceId: String, startedAt _: Date?) async -> Result<AthleteWorkoutInstance, APIError> {
+        .success(
+            AthleteWorkoutInstance(
+                id: workoutInstanceId,
+                enrollmentId: "enr-1",
+                workoutTemplateId: nil,
+                title: "Тренировка",
+                status: .inProgress,
+                source: .program,
+                scheduledDate: nil,
+                startedAt: nil,
+                completedAt: nil,
+                durationSeconds: nil,
+                notes: nil,
+                programId: "program-1",
+            ),
+        )
     }
 }

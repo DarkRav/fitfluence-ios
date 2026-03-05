@@ -699,12 +699,19 @@ final class WorkoutPlayerViewModel {
 
     func skipExercise() async {
         guard let currentExercise, let session else { return }
-        self.session = await sessionManager.skipExercise(session, exerciseId: currentExercise.id)
-        toastMessage = "Упражнение пропущено"
+        let skippedExerciseID = currentExercise.id
+        let shouldAdvance = !isLastExercise
+        var updatedSession = await sessionManager.skipExercise(session, exerciseId: skippedExerciseID)
+        if shouldAdvance {
+            updatedSession = await sessionManager.moveExercise(updatedSession, to: currentExerciseIndex + 1)
+        }
+        self.session = updatedSession
+        toastMessage = shouldAdvance ? "Упражнение пропущено, открыто следующее" : "Упражнение пропущено"
         focusedSetIndex = firstUncompletedSetIndex(in: currentExerciseState) ?? 0
+        await ensureCurrentExerciseContext()
         ClientAnalytics.track(
             .exerciseSkipped,
-            properties: analyticsExerciseProperties(exerciseId: currentExercise.id),
+            properties: analyticsExerciseProperties(exerciseId: skippedExerciseID),
         )
     }
 
@@ -1456,39 +1463,13 @@ struct WorkoutPlayerViewV2: View {
             .presentationDetents([.medium, .large])
         }
         .sheet(isPresented: $isJumpListPresented) {
-            NavigationStack {
-                List(viewModel.progressItems) { item in
-                    Button {
-                        Task { await viewModel.jumpToExercise(item.id) }
-                        isJumpListPresented = false
-                    } label: {
-                        HStack(spacing: FFSpacing.sm) {
-                            VStack(alignment: .leading, spacing: FFSpacing.xxs) {
-                                Text(item.title)
-                                    .font(FFTypography.body.weight(.semibold))
-                                    .foregroundStyle(FFColors.textPrimary)
-                                Text("\(item.completedSets)/\(item.totalSets)")
-                                    .font(FFTypography.caption)
-                                    .foregroundStyle(FFColors.textSecondary)
-                            }
-                            Spacer(minLength: FFSpacing.sm)
-                            if item.isCurrent {
-                                FFBadge(status: .inProgress)
-                            } else if item.isSkipped {
-                                Text("Пропущено")
-                                    .font(FFTypography.caption.weight(.semibold))
-                                    .foregroundStyle(FFColors.textSecondary)
-                                    .padding(.horizontal, FFSpacing.xs)
-                                    .padding(.vertical, FFSpacing.xxs)
-                                    .background(FFColors.gray700)
-                                    .clipShape(Capsule())
-                            }
-                        }
-                    }
-                    .buttonStyle(.plain)
-                }
-                .navigationTitle("Список упражнений")
-            }
+            WorkoutExerciseJumpListSheet(
+                items: viewModel.progressItems,
+                onSelect: { item in
+                    Task { await viewModel.jumpToExercise(item.id) }
+                    isJumpListPresented = false
+                },
+            )
         }
         .onChange(of: isJumpListPresented) { _, isPresented in
             viewModel.setJumpNavigationActive(isPresented)
@@ -1679,7 +1660,7 @@ struct WorkoutPlayerViewV2: View {
         FFCard(padding: FFSpacing.sm) {
             VStack(spacing: FFSpacing.xs) {
                 QuickActionsBar(
-                    copyTitle: "Скопировать прошлый",
+                    copyTitle: "Скопировать",
                     copySubtitle: viewModel.quickActionSetTitle,
                     onCopy: { Task { await viewModel.copyPreviousSetQuickAction() } },
                     onSkipExercise: { Task { await viewModel.skipExercise() } },
@@ -1824,6 +1805,74 @@ struct WorkoutPlayerViewV2: View {
     }
 }
 
+private struct WorkoutExerciseJumpListSheet: View {
+    let items: [WorkoutPlayerViewModel.ExerciseProgressItem]
+    let onSelect: (WorkoutPlayerViewModel.ExerciseProgressItem) -> Void
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            ZStack {
+                FFColors.background.ignoresSafeArea()
+                ScrollView {
+                    VStack(spacing: FFSpacing.sm) {
+                        ForEach(items) { item in
+                            Button {
+                                onSelect(item)
+                            } label: {
+                                HStack(spacing: FFSpacing.sm) {
+                                    VStack(alignment: .leading, spacing: FFSpacing.xxs) {
+                                        Text(item.title)
+                                            .font(FFTypography.body.weight(.semibold))
+                                            .foregroundStyle(FFColors.textPrimary)
+                                            .lineLimit(2)
+                                        Text("Подходы: \(item.completedSets)/\(item.totalSets)")
+                                            .font(FFTypography.caption)
+                                            .foregroundStyle(FFColors.textSecondary)
+                                    }
+                                    Spacer(minLength: FFSpacing.sm)
+                                    if item.isCurrent {
+                                        FFBadge(status: .inProgress)
+                                    } else if item.isSkipped {
+                                        Text("Пропущено")
+                                            .font(FFTypography.caption.weight(.semibold))
+                                            .foregroundStyle(FFColors.textSecondary)
+                                            .padding(.horizontal, FFSpacing.xs)
+                                            .padding(.vertical, FFSpacing.xxs)
+                                            .background(FFColors.gray700)
+                                            .clipShape(Capsule())
+                                    }
+                                }
+                                .padding(FFSpacing.sm)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .background(FFColors.surface)
+                                .clipShape(RoundedRectangle(cornerRadius: FFTheme.Radius.control))
+                                .overlay {
+                                    RoundedRectangle(cornerRadius: FFTheme.Radius.control)
+                                        .stroke(item.isCurrent ? FFColors.primary : FFColors.gray700, lineWidth: item.isCurrent ? 1.4 : 1)
+                                }
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .padding(.horizontal, FFSpacing.md)
+                    .padding(.vertical, FFSpacing.md)
+                }
+            }
+            .navigationTitle("Список упражнений")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("Закрыть") {
+                        dismiss()
+                    }
+                }
+            }
+        }
+        .presentationDetents([.medium, .large])
+    }
+}
+
 private struct SetRowView: View {
     let index: Int
     let set: SessionSetState
@@ -1953,7 +2002,7 @@ private struct QuickActionsBar: View {
                 action: onCopy,
             )
             compactButton(
-                title: "Пропустить упражнение",
+                title: "Пропустить",
                 subtitle: nil,
                 systemImage: "forward.fill",
                 action: onSkipExercise,
@@ -1977,8 +2026,9 @@ private struct QuickActionsBar: View {
             VStack(spacing: 2) {
                 Label(title, systemImage: systemImage)
                     .font(FFTypography.caption.weight(.semibold))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.72)
+                    .lineLimit(2)
+                    .multilineTextAlignment(.center)
+                    .minimumScaleFactor(0.8)
                 if let subtitle {
                     Text(subtitle)
                         .font(.system(size: 11, weight: .regular, design: .rounded))
@@ -1988,7 +2038,7 @@ private struct QuickActionsBar: View {
                 }
             }
             .foregroundStyle(FFColors.textPrimary)
-            .frame(maxWidth: .infinity, minHeight: 48)
+            .frame(maxWidth: .infinity, minHeight: 52)
             .padding(.horizontal, FFSpacing.xxs)
             .background(FFColors.surface)
             .clipShape(RoundedRectangle(cornerRadius: FFTheme.Radius.control))

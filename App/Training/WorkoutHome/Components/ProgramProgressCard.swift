@@ -8,48 +8,55 @@ struct ProgramProgressCard: View {
     let isCompleted: Bool
     var isActionEnabled = true
     let onAction: () -> Void
+    let onOpenHistory: () -> Void
 
     var body: some View {
         WorkoutCardContainer(cornerRadius: 24, padding: 16) {
             VStack(alignment: .leading, spacing: 8) {
-                Text("Прогресс программы")
-                    .font(.headline.weight(.semibold))
-                    .foregroundStyle(FFColors.textPrimary)
+                Button(action: onOpenHistory) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Прогресс программы")
+                            .font(.headline.weight(.semibold))
+                            .foregroundStyle(FFColors.textPrimary)
 
-                Text(programTitle)
-                    .font(FFTypography.body.weight(.semibold))
-                    .foregroundStyle(FFColors.textPrimary)
-                    .lineLimit(2)
+                        Text(programTitle)
+                            .font(FFTypography.body.weight(.semibold))
+                            .foregroundStyle(FFColors.textPrimary)
+                            .lineLimit(2)
 
-                Text(detailsLine)
-                    .font(FFTypography.caption)
-                    .foregroundStyle(FFColors.textSecondary)
-                    .lineLimit(1)
+                        Text(detailsLine)
+                            .font(FFTypography.caption)
+                            .foregroundStyle(FFColors.textSecondary)
+                            .lineLimit(1)
 
-                Text(progressText)
-                    .font(FFTypography.caption)
-                    .foregroundStyle(FFColors.textSecondary)
+                        Text(progressText)
+                            .font(FFTypography.caption)
+                            .foregroundStyle(FFColors.textSecondary)
 
-                ProgramProgressBar(value: progressValue)
-                    .padding(.top, 12)
+                        ProgramProgressBar(value: progressValue)
+                            .padding(.top, 12)
 
-                if isCompleted {
-                    Text("Программа завершена")
-                        .font(FFTypography.caption.weight(.semibold))
-                        .foregroundStyle(FFColors.textSecondary)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 4)
-                        .background(FFColors.gray700.opacity(0.7))
-                        .clipShape(Capsule())
+                        if isCompleted {
+                            Text("✓ Завершено")
+                                .font(FFTypography.caption.weight(.semibold))
+                                .foregroundStyle(FFColors.textSecondary)
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 4)
+                                .background(FFColors.gray700.opacity(0.65))
+                                .clipShape(Capsule())
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
                 }
+                .buttonStyle(.plain)
 
-                WorkoutSecondaryButton(
+                FFButton(
                     title: isCompleted ? "Выбрать следующую программу" : "Продолжить программу",
-                    height: 48,
-                    cornerRadius: 16,
-                    isEnabled: isActionEnabled,
+                    variant: isActionEnabled ? .secondary : .disabled,
                     action: onAction,
                 )
+                .frame(height: 48)
             }
         }
     }
@@ -62,7 +69,11 @@ private struct ProgramProgressBar: View {
         GeometryReader { proxy in
             ZStack(alignment: .leading) {
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(FFColors.gray700)
+                    .fill(FFColors.gray700.opacity(0.9))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .stroke(FFColors.gray500.opacity(0.24), lineWidth: 0.6)
+                    }
 
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
                     .fill(FFColors.accent)

@@ -65,6 +65,10 @@ struct RecentWorkoutDetailsView: View {
                                     .font(FFTypography.caption)
                                     .foregroundStyle(FFColors.textSecondary)
                             }
+                        } else if !hasAccurateSnapshot {
+                            Text("Подробные подходы доступны только для последнего сохранённого выполнения этой тренировки")
+                                .font(FFTypography.caption)
+                                .foregroundStyle(FFColors.textSecondary)
                         } else if detailedExercises.isEmpty {
                             Text("Детальные подходы не сохранены для этой тренировки")
                                 .font(FFTypography.caption)
@@ -116,8 +120,10 @@ struct RecentWorkoutDetailsView: View {
                     }
                 }
 
-                FFButton(title: "Повторить тренировку", variant: .secondary) {
-                    onRepeat()
+                if canRepeatWorkout {
+                    FFButton(title: "Повторить тренировку", variant: .secondary) {
+                        onRepeat()
+                    }
                 }
             }
             .padding(.horizontal, FFSpacing.md)
@@ -184,7 +190,7 @@ struct RecentWorkoutDetailsView: View {
     }
 
     private var detailedExercises: [ExerciseSetDetails] {
-        guard let workoutDetails = snapshot?.workoutDetails else { return [] }
+        guard hasAccurateSnapshot, let workoutDetails = snapshot?.workoutDetails else { return [] }
         let stored = snapshot?.exercises ?? [:]
 
         return workoutDetails.exercises
@@ -221,9 +227,19 @@ struct RecentWorkoutDetailsView: View {
         isLoadingDetails = false
     }
 
+    private var hasAccurateSnapshot: Bool {
+        guard let snapshot else { return false }
+        let delta = abs(snapshot.lastUpdated.timeIntervalSince(record.finishedAt))
+        return delta <= 60 * 60 * 6
+    }
+
     private func trimmed(_ value: String) -> String? {
         let result = value.trimmingCharacters(in: .whitespacesAndNewlines)
         return result.isEmpty ? nil : result
+    }
+
+    private var canRepeatWorkout: Bool {
+        record.source != .program
     }
 }
 

@@ -8,8 +8,14 @@ enum WorkoutSource: String, Codable, Equatable, Sendable {
 
 enum TrainingDayStatus: String, Codable, Equatable, Sendable {
     case planned
+    case inProgress
     case completed
     case missed
+    case skipped
+
+    var isMissedLike: Bool {
+        self == .missed || self == .skipped
+    }
 }
 
 struct CompletedWorkoutRecord: Codable, Equatable, Sendable, Identifiable {
@@ -38,6 +44,7 @@ struct TrainingDayPlan: Codable, Equatable, Sendable, Identifiable {
     let workoutId: String?
     let title: String
     let source: WorkoutSource
+    let workoutDetails: WorkoutDetailsModel?
 }
 
 struct TemplateExerciseDraft: Codable, Equatable, Sendable, Identifiable {
@@ -73,9 +80,53 @@ protocol TrainingStore: Sendable {
     func deleteTemplate(userSub: String, templateId: String) async
     func templates(userSub: String) async -> [WorkoutTemplateDraft]
     func schedule(_ plan: TrainingDayPlan) async
+    func deletePlan(
+        userSub: String,
+        day: Date,
+        planId: String?,
+        workoutId: String?,
+        title: String,
+        source: WorkoutSource,
+    ) async
+    func movePlan(
+        userSub: String,
+        from day: Date,
+        to targetDay: Date,
+        planId: String?,
+        workoutId: String?,
+        title: String,
+        source: WorkoutSource,
+        status: TrainingDayStatus,
+        programId: String?,
+        workoutDetails: WorkoutDetailsModel?,
+    ) async
     func plans(userSub: String, month: Date) async -> [TrainingDayPlan]
     func weeklySummary(userSub: String, weekStart: Date) async -> WeeklyTrainingSummary
     func storageSizeBytes(userSub: String) async -> Int
+}
+
+extension TrainingStore {
+    func deletePlan(
+        userSub _: String,
+        day _: Date,
+        planId _: String?,
+        workoutId _: String?,
+        title _: String,
+        source _: WorkoutSource,
+    ) async {}
+
+    func movePlan(
+        userSub _: String,
+        from _: Date,
+        to _: Date,
+        planId _: String?,
+        workoutId _: String?,
+        title _: String,
+        source _: WorkoutSource,
+        status _: TrainingDayStatus,
+        programId _: String?,
+        workoutDetails _: WorkoutDetailsModel?,
+    ) async {}
 }
 
 actor LocalTrainingStore: TrainingStore {
@@ -106,6 +157,7 @@ actor LocalTrainingStore: TrainingStore {
             workoutId: record.workoutId,
             title: record.workoutTitle,
             source: record.source,
+            workoutDetails: nil,
         )
         await schedule(plan)
     }
@@ -146,14 +198,74 @@ actor LocalTrainingStore: TrainingStore {
 
     func schedule(_ plan: TrainingDayPlan) async {
         var items = loadArray([TrainingDayPlan].self, key: planKey(userSub: plan.userSub)) ?? []
-        let day = startOfDay(plan.day)
-        items.removeAll {
-            $0.userSub == plan
-                .userSub && startOfDay($0.day) == day && ($0.workoutId == plan.workoutId || $0.workoutId == nil)
-        }
+        items.removeAll { $0.userSub == plan.userSub && $0.id == plan.id }
         items.append(plan)
         items.sort { $0.day > $1.day }
         await saveArray(items, key: planKey(userSub: plan.userSub))
+    }
+
+    func deletePlan(
+        userSub: String,
+        day: Date,
+        planId: String?,
+        workoutId: String?,
+        title: String,
+        source: WorkoutSource,
+    ) async {
+        let normalizedDay = startOfDay(day)
+        let normalizedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let items = (loadArray([TrainingDayPlan].self, key: planKey(userSub: userSub)) ?? []).filter { item in
+            guard item.userSub == userSub else { return true }
+            guard startOfDay(item.day) == normalizedDay else { return true }
+            if let planId {
+                return item.id != planId
+            }
+            if let workoutId {
+                return item.workoutId != workoutId
+            }
+            return item.title != normalizedTitle || item.source != source
+        }
+        await saveArray(items, key: planKey(userSub: userSub))
+    }
+
+    func movePlan(
+        userSub: String,
+        from day: Date,
+        to targetDay: Date,
+        planId: String?,
+        workoutId: String?,
+        title: String,
+        source: WorkoutSource,
+        status: TrainingDayStatus,
+        programId: String?,
+        workoutDetails: WorkoutDetailsModel?,
+    ) async {
+        let normalizedFromDay = startOfDay(day)
+        let normalizedTargetDay = startOfDay(targetDay)
+        guard normalizedFromDay != normalizedTargetDay else { return }
+
+        await deletePlan(
+            userSub: userSub,
+            day: normalizedFromDay,
+            planId: planId,
+            workoutId: workoutId,
+            title: title,
+            source: source,
+        )
+
+        let normalizedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let plan = TrainingDayPlan(
+            id: planId ?? UUID().uuidString,
+            userSub: userSub,
+            day: normalizedTargetDay,
+            status: status,
+            programId: programId,
+            workoutId: workoutId,
+            title: normalizedTitle.isEmpty ? "Тренировка" : normalizedTitle,
+            source: source,
+            workoutDetails: workoutDetails,
+        )
+        await schedule(plan)
     }
 
     func plans(userSub: String, month: Date) async -> [TrainingDayPlan] {
@@ -172,9 +284,9 @@ actor LocalTrainingStore: TrainingStore {
         let items = (loadArray([TrainingDayPlan].self, key: planKey(userSub: userSub)) ?? [])
             .filter { $0.day >= start && $0.day < end }
 
-        let planned = items.count(where: { $0.status == .planned })
+        let planned = items.count(where: { $0.status == .planned || $0.status == .inProgress })
         let completed = items.count(where: { $0.status == .completed })
-        let missed = items.count(where: { $0.status == .missed })
+        let missed = items.count(where: { $0.status.isMissedLike })
 
         return WeeklyTrainingSummary(
             weekStart: start,

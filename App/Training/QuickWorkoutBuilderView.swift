@@ -13,8 +13,23 @@ struct QuickWorkoutBuilderView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var selected: [DraftExercise] = []
     @State private var searchQuery = ""
+    @State private var workoutTitle = ""
 
-    let onStart: (WorkoutDetailsModel) -> Void
+    private let initialWorkout: WorkoutDetailsModel?
+    private let submitTitle: String
+    private let onSubmit: (WorkoutDetailsModel) -> Void
+
+    init(
+        initialWorkout: WorkoutDetailsModel? = nil,
+        submitTitle: String = "Начать тренировку",
+        onStart: @escaping (WorkoutDetailsModel) -> Void,
+    ) {
+        self.initialWorkout = initialWorkout
+        self.submitTitle = submitTitle
+        onSubmit = onStart
+        _selected = State(initialValue: QuickWorkoutBuilderView.makeInitialSelected(initialWorkout))
+        _workoutTitle = State(initialValue: initialWorkout?.title ?? "")
+    }
 
     private let library: [DraftExercise] = [
         .init(id: "sq", name: "Присед со штангой", sets: 4, repsMin: 5, repsMax: 8, restSeconds: 120),
@@ -34,13 +49,21 @@ struct QuickWorkoutBuilderView: View {
                 VStack(alignment: .leading, spacing: FFSpacing.md) {
                     FFCard {
                         VStack(alignment: .leading, spacing: FFSpacing.xs) {
-                            Text("Соберите тренировку за минуту")
+                            Text(initialWorkout == nil ? "Соберите тренировку за минуту" : "Обновите тренировку")
                                 .font(FFTypography.h2)
                                 .foregroundStyle(FFColors.textPrimary)
-                            Text("Добавьте упражнения, настройте параметры и запускайте тренировку.")
+                            Text("Добавьте упражнения, настройте параметры и сохраните план.")
                                 .font(FFTypography.body)
                                 .foregroundStyle(FFColors.textSecondary)
                         }
+                    }
+
+                    FFCard {
+                        FFTextField(
+                            label: "Название тренировки",
+                            placeholder: "Например, Круговая A",
+                            text: $workoutTitle,
+                        )
                     }
 
                     FFCard {
@@ -96,18 +119,21 @@ struct QuickWorkoutBuilderView: View {
                 bottomActionBar
             }
         }
-        .navigationTitle("Быстрая тренировка")
+        .navigationTitle(initialWorkout == nil ? "Быстрая тренировка" : "Редактирование")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarLeading) {
-                Button("Закрыть") {
+                Button {
                     dismiss()
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 14, weight: .semibold))
                 }
-                .font(FFTypography.body.weight(.semibold))
                 .foregroundStyle(FFColors.textSecondary)
+                .accessibilityLabel("Закрыть")
             }
             ToolbarItem(placement: .topBarTrailing) {
-                Button("Старт") {
+                Button(submitButtonLabel) {
                     start()
                 }
                 .disabled(selected.isEmpty)
@@ -126,11 +152,11 @@ struct QuickWorkoutBuilderView: View {
 
     private var bottomActionBar: some View {
         VStack(spacing: FFSpacing.xs) {
-            FFButton(title: selected.isEmpty ? "Добавьте упражнение" : "Начать тренировку", variant: .primary) {
+            FFButton(title: selected.isEmpty ? "Добавьте упражнение" : submitTitle, variant: .primary) {
                 start()
             }
             .disabled(selected.isEmpty)
-            .accessibilityLabel("Начать быструю тренировку")
+            .accessibilityLabel(selected.isEmpty ? "Добавьте упражнение" : submitTitle)
         }
         .padding(.horizontal, FFSpacing.md)
         .padding(.top, FFSpacing.xs)
@@ -351,12 +377,54 @@ struct QuickWorkoutBuilderView: View {
             )
         }
 
-        let workout = WorkoutDetailsModel.quickWorkout(
-            title: "Quick workout • \(Date().formatted(date: .omitted, time: .shortened))",
+        let normalizedTitle = workoutTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        let resolvedTitle: String
+        if normalizedTitle.isEmpty {
+            if let initialWorkout {
+                resolvedTitle = initialWorkout.title
+            } else {
+                resolvedTitle = "Quick workout • \(Date().formatted(date: .omitted, time: .shortened))"
+            }
+        } else {
+            resolvedTitle = normalizedTitle
+        }
+
+        let workout = WorkoutDetailsModel(
+            id: initialWorkout?.id ?? "quick-\(UUID().uuidString)",
+            title: resolvedTitle,
+            dayOrder: initialWorkout?.dayOrder ?? 0,
+            coachNote: initialWorkout?.coachNote ?? "Быстрая тренировка",
             exercises: exercises,
         )
-        onStart(workout)
+        onSubmit(workout)
         dismiss()
+    }
+
+    private var submitButtonLabel: String {
+        switch submitTitle {
+        case "Начать тренировку":
+            "Старт"
+        case "Сохранить изменения":
+            "Сохранить"
+        default:
+            submitTitle
+        }
+    }
+
+    private static func makeInitialSelected(_ workout: WorkoutDetailsModel?) -> [DraftExercise] {
+        guard let workout else { return [] }
+        return workout.exercises
+            .sorted(by: { $0.orderIndex < $1.orderIndex })
+            .map { exercise in
+                DraftExercise(
+                    id: exercise.id,
+                    name: exercise.name,
+                    sets: max(1, exercise.sets),
+                    repsMin: max(1, exercise.repsMin ?? 8),
+                    repsMax: max(exercise.repsMin ?? 8, exercise.repsMax ?? max(exercise.repsMin ?? 8, 10)),
+                    restSeconds: max(0, exercise.restSeconds ?? 90),
+                )
+            }
     }
 }
 

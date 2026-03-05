@@ -585,6 +585,126 @@ enum CatalogHubSegment: String, CaseIterable, Identifiable {
     }
 }
 
+struct CatalogHeaderAction {
+    let title: String
+    let systemImage: String
+}
+
+enum AthleteCatalogSortOption: String, CaseIterable, Identifiable {
+    case name
+    case followers
+    case programs
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .name:
+            "По имени"
+        case .followers:
+            "По подписчикам"
+        case .programs:
+            "По числу программ"
+        }
+    }
+}
+
+struct CatalogSegmentHeader: View {
+    @Binding var selectedSegment: CatalogHubSegment
+    let thirdAction: CatalogHeaderAction
+    let isFiltersActive: Bool
+    let isThirdActionSelected: Bool
+    let onSearchTap: () -> Void
+    let onFiltersTap: () -> Void
+    let onThirdTap: () -> Void
+
+    var body: some View {
+        VStack(spacing: FFSpacing.sm) {
+            Picker("Раздел каталога", selection: $selectedSegment) {
+                ForEach(CatalogHubSegment.allCases) { segment in
+                    Text(segment.title).tag(segment)
+                }
+            }
+            .pickerStyle(.segmented)
+
+            AthletesActionBar(
+                thirdAction: thirdAction,
+                isFiltersActive: isFiltersActive,
+                isThirdActionSelected: isThirdActionSelected,
+                onSearchTap: onSearchTap,
+                onFiltersTap: onFiltersTap,
+                onThirdTap: onThirdTap,
+            )
+        }
+        .padding(.horizontal, FFSpacing.md)
+        .padding(.top, 4)
+    }
+}
+
+struct AthletesActionBar: View {
+    let thirdAction: CatalogHeaderAction
+    let isFiltersActive: Bool
+    let isThirdActionSelected: Bool
+    let onSearchTap: () -> Void
+    let onFiltersTap: () -> Void
+    let onThirdTap: () -> Void
+
+    var body: some View {
+        HStack(spacing: 10) {
+            CatalogActionChipButton(
+                title: "Поиск",
+                systemImage: "magnifyingglass",
+                action: onSearchTap,
+            )
+
+            CatalogActionChipButton(
+                title: "Фильтры",
+                systemImage: "line.3.horizontal.decrease.circle",
+                isSelected: isFiltersActive,
+                action: onFiltersTap,
+            )
+
+            CatalogActionChipButton(
+                title: thirdAction.title,
+                systemImage: thirdAction.systemImage,
+                isSelected: isThirdActionSelected,
+                action: onThirdTap,
+            )
+        }
+    }
+}
+
+struct CatalogActionChipButton: View {
+    let title: String
+    let systemImage: String
+    var isSelected = false
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 6) {
+                Image(systemName: systemImage)
+                    .font(.system(size: 18, weight: .semibold))
+                    .frame(width: 18, height: 18)
+                Text(title)
+                    .font(FFTypography.caption.weight(.semibold))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.68)
+            }
+            .foregroundStyle(isSelected ? FFColors.accent : FFColors.textPrimary)
+            .padding(.horizontal, 8)
+            .frame(maxWidth: .infinity, minHeight: 44)
+            .background(isSelected ? FFColors.accent.opacity(0.18) : FFColors.surface)
+            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .stroke(isSelected ? FFColors.accent.opacity(0.9) : FFColors.gray700, lineWidth: 1)
+            }
+        }
+        .buttonStyle(.plain)
+    }
+}
+
 enum AthletesHubSegment: String, CaseIterable, Identifiable {
     case showcase
     case following
@@ -673,22 +793,16 @@ private struct CachedAthleteShelf: Codable, Equatable {
 
 fileprivate enum AthleteShelfKind: String, CaseIterable, Identifiable {
     case recommended
-    case strength
-    case massGain
-    case calisthenics
+    case all
 
     var id: String { rawValue }
 
     var title: String {
         switch self {
         case .recommended:
-            "Рекомендуемые атлеты"
-        case .strength:
-            "Сила"
-        case .massGain:
-            "Набор массы"
-        case .calisthenics:
-            "Калистеника"
+            "Рекомендуемые"
+        case .all:
+            "Все атлеты"
         }
     }
 
@@ -696,12 +810,17 @@ fileprivate enum AthleteShelfKind: String, CaseIterable, Identifiable {
         switch self {
         case .recommended:
             nil
-        case .strength:
-            "сила strength"
-        case .massGain:
-            "масса mass"
-        case .calisthenics:
-            "калистеника calisthenics"
+        case .all:
+            nil
+        }
+    }
+
+    var pageSize: Int {
+        switch self {
+        case .recommended:
+            8
+        case .all:
+            40
         }
     }
 }
@@ -926,7 +1045,7 @@ final class AthletesShowcaseViewModel {
             let request = InfluencersSearchRequest(
                 filter: InfluencerSearchFilter(search: kind.searchTerm),
                 page: 0,
-                size: 6,
+                size: kind.pageSize,
             )
             let result: Result<PagedInfluencerPublicCardResponse, APIError> = if let programsClient {
                 await programsClient.influencersSearch(request: request)
@@ -936,7 +1055,7 @@ final class AthletesShowcaseViewModel {
 
             switch result {
             case let .success(response):
-                let normalized = Array(response.content.prefix(6))
+                let normalized = Array(response.content.prefix(kind.pageSize))
                 shelves[index].athletes = normalized
                 shelves[index].isShowingCachedData = false
                 shelves[index].error = nil
@@ -999,28 +1118,22 @@ final class AthletesShowcaseViewModel {
     }
 
     private func rebalanceShelvesIfNeeded() {
-        guard let recommended = shelves.first(where: { $0.kind == .recommended })?.athletes,
-              !recommended.isEmpty
+        guard let recommendedIndex = shelves.firstIndex(where: { $0.kind == .recommended }),
+              let allIndex = shelves.firstIndex(where: { $0.kind == .all })
         else {
             return
         }
 
-        for index in shelves.indices where shelves[index].kind != .recommended {
-            if shelves[index].athletes.count >= 3 {
-                shelves[index].athletes = Array(shelves[index].athletes.prefix(6))
-                continue
-            }
+        shelves[recommendedIndex].athletes = Array(shelves[recommendedIndex].athletes.prefix(AthleteShelfKind.recommended.pageSize))
 
-            var merged = shelves[index].athletes
-            var existing = Set(merged.map(\.id))
-            for athlete in recommended where merged.count < 3 {
-                if existing.contains(athlete.id) {
-                    continue
-                }
-                merged.append(athlete)
-                existing.insert(athlete.id)
-            }
-            shelves[index].athletes = Array(merged.prefix(6))
+        var seen = Set<UUID>()
+        let deduplicatedAll = shelves[allIndex].athletes.filter { athlete in
+            seen.insert(athlete.id).inserted
+        }
+        if deduplicatedAll.isEmpty {
+            shelves[allIndex].athletes = shelves[recommendedIndex].athletes
+        } else {
+            shelves[allIndex].athletes = deduplicatedAll
         }
     }
 
@@ -1071,7 +1184,10 @@ final class AthletesShowcaseViewModel {
     private func updateAthlete(_ athlete: InfluencerPublicCard) {
         for shelfIndex in shelves.indices {
             if let athleteIndex = shelves[shelfIndex].athletes.firstIndex(where: { $0.id == athlete.id }) {
-                shelves[shelfIndex].athletes[athleteIndex] = athlete
+                shelves[shelfIndex].athletes[athleteIndex] = mergedInfluencerCard(
+                    shelves[shelfIndex].athletes[athleteIndex],
+                    with: athlete,
+                )
             }
         }
     }
@@ -1267,7 +1383,7 @@ final class AthleteSearchViewModel {
         guard let index = creators.firstIndex(where: { $0.id == creator.id }) else {
             return
         }
-        creators[index] = creator
+        creators[index] = mergedInfluencerCard(creators[index], with: creator)
     }
 
     private func loadPage(page: Int, append: Bool) async {
@@ -1351,11 +1467,15 @@ final class AthleteSearchViewModel {
 
     private func merge(existing: [InfluencerPublicCard], incoming: [InfluencerPublicCard]) -> [InfluencerPublicCard] {
         var result = existing
-        var existingIDs = Set(existing.map(\.id))
+        var indexByID = Dictionary(uniqueKeysWithValues: existing.enumerated().map { ($1.id, $0) })
 
-        for card in incoming where !existingIDs.contains(card.id) {
-            result.append(card)
-            existingIDs.insert(card.id)
+        for card in incoming {
+            if let existingIndex = indexByID[card.id] {
+                result[existingIndex] = mergedInfluencerCard(result[existingIndex], with: card)
+            } else {
+                indexByID[card.id] = result.count
+                result.append(card)
+            }
         }
 
         return result
@@ -1571,7 +1691,7 @@ final class FollowingAthletesViewModel {
     func applyExternalAthleteUpdate(_ creator: InfluencerPublicCard) {
         if let index = creators.firstIndex(where: { $0.id == creator.id }) {
             if creator.isFollowedByMe {
-                creators[index] = creator
+                creators[index] = mergedInfluencerCard(creators[index], with: creator)
             } else {
                 creators.remove(at: index)
             }
@@ -1672,11 +1792,15 @@ final class FollowingAthletesViewModel {
 
     private func merge(existing: [InfluencerPublicCard], incoming: [InfluencerPublicCard]) -> [InfluencerPublicCard] {
         var result = existing
-        var existingIDs = Set(existing.map(\.id))
+        var indexByID = Dictionary(uniqueKeysWithValues: existing.enumerated().map { ($1.id, $0) })
 
-        for card in incoming where !existingIDs.contains(card.id) {
-            result.append(card)
-            existingIDs.insert(card.id)
+        for card in incoming {
+            if let existingIndex = indexByID[card.id] {
+                result[existingIndex] = mergedInfluencerCard(result[existingIndex], with: card)
+            } else {
+                indexByID[card.id] = result.count
+                result.append(card)
+            }
         }
 
         return result
@@ -1867,7 +1991,19 @@ final class AthleteProfileViewModel {
 
     func applyExternalAthleteUpdate(_ updated: InfluencerPublicCard) {
         guard creator.id == updated.id else { return }
-        creator = updated
+        creator = InfluencerPublicCard(
+            id: creator.id,
+            displayName: updated.displayName,
+            bio: updated.bio ?? creator.bio,
+            avatar: updated.avatar ?? creator.avatar,
+            socialLinks: (updated.socialLinks?.isEmpty == false) ? updated.socialLinks : creator.socialLinks,
+            followersCount: max(creator.followersCount, updated.followersCount),
+            programsCount: max(creator.programsCount, updated.programsCount),
+            isFollowedByMe: updated.isFollowedByMe,
+            directionTag: updated.directionTag ?? creator.directionTag,
+            achievements: updated.achievements ?? creator.achievements,
+            trainingPhilosophy: updated.trainingPhilosophy ?? creator.trainingPhilosophy,
+        )
     }
 
     private func loadProgramsPage(page: Int, append: Bool) async {
@@ -1883,6 +2019,7 @@ final class AthleteProfileViewModel {
             currentPage = cached.metadata.page
             totalPages = cached.metadata.totalPages
             totalElements = max(cached.metadata.totalElements, programs.count)
+            syncCreatorProgramCount()
             isShowingCachedData = true
         }
 
@@ -1903,6 +2040,7 @@ final class AthleteProfileViewModel {
             currentPage = response.metadata.page
             totalPages = response.metadata.totalPages
             totalElements = max(response.metadata.totalElements, programs.count)
+            syncCreatorProgramCount()
             error = nil
             infoMessage = nil
             isShowingCachedData = false
@@ -1935,8 +2073,27 @@ final class AthleteProfileViewModel {
             if !append {
                 programs = []
                 totalElements = 0
+                syncCreatorProgramCount()
             }
         }
+    }
+
+    private func syncCreatorProgramCount() {
+        let resolvedProgramsCount = max(creator.programsCount, totalElements, programs.count)
+        guard resolvedProgramsCount != creator.programsCount else { return }
+        creator = InfluencerPublicCard(
+            id: creator.id,
+            displayName: creator.displayName,
+            bio: creator.bio,
+            avatar: creator.avatar,
+            socialLinks: creator.socialLinks,
+            followersCount: creator.followersCount,
+            programsCount: resolvedProgramsCount,
+            isFollowedByMe: creator.isFollowedByMe,
+            directionTag: creator.directionTag,
+            achievements: creator.achievements,
+            trainingPhilosophy: creator.trainingPhilosophy,
+        )
     }
 
     private func replayPendingFollowIfNeeded() async {
@@ -1971,7 +2128,185 @@ typealias CreatorsDiscoveryViewModel = AthleteSearchViewModel
 typealias FollowingCreatorsViewModel = FollowingAthletesViewModel
 typealias CreatorProfileViewModel = AthleteProfileViewModel
 typealias ProgramsCatalogViewModel = CatalogViewModel
-typealias AthletesCatalogViewModel = AthletesShowcaseViewModel
+
+@MainActor
+struct AthletesCatalogViewModel {
+    let showcaseViewModel: AthletesShowcaseViewModel
+    let followingViewModel: FollowingAthletesViewModel
+    let isSubscriptionsMode: Bool
+    let sortOption: AthleteCatalogSortOption
+    let onlyWithPrograms: Bool
+
+    var recommendedAthletes: [InfluencerPublicCard] {
+        guard !isSubscriptionsMode else { return [] }
+        let source = showcaseViewModel.shelves
+            .first(where: { $0.kind == .recommended })?
+            .athletes ?? []
+        return Array(uniqueAthletes(in: source).prefix(3))
+    }
+
+    var allAthletes: [InfluencerPublicCard] {
+        let source: [InfluencerPublicCard]
+        if isSubscriptionsMode {
+            source = followingViewModel.creators
+        } else if let allShelf = showcaseViewModel.shelves.first(where: { $0.kind == .all })?.athletes,
+                  !allShelf.isEmpty
+        {
+            source = allShelf
+        } else {
+            source = showcaseViewModel.shelves.flatMap(\.athletes)
+        }
+
+        let deduplicated = uniqueAthletes(in: source)
+        let sorted = sortAthletes(deduplicated)
+
+        guard !isSubscriptionsMode else { return sorted }
+        let recommendedIDs = Set(recommendedAthletes.map(\.id))
+        let withoutRecommended = sorted.filter { !recommendedIDs.contains($0.id) }
+        return withoutRecommended.isEmpty ? sorted : withoutRecommended
+    }
+
+    var filteredAthletes: [InfluencerPublicCard] {
+        let source = allAthletes
+        guard onlyWithPrograms else { return source }
+        return source.filter { $0.programsCount > 0 }
+    }
+
+    var loading: Bool {
+        if isSubscriptionsMode {
+            return followingViewModel.isLoading && filteredAthletes.isEmpty
+        }
+        return showcaseViewModel.isLoading && recommendedAthletes.isEmpty && filteredAthletes.isEmpty
+    }
+
+    var empty: Bool {
+        filteredAthletes.isEmpty
+    }
+
+    var error: UserFacingError? {
+        if isSubscriptionsMode {
+            return followingViewModel.error
+        }
+        return showcaseViewModel.error
+    }
+
+    var infoMessage: String? {
+        if isSubscriptionsMode {
+            return followingViewModel.infoMessage
+        }
+        return showcaseViewModel.infoMessage
+    }
+
+    var isShowingCachedData: Bool {
+        if isSubscriptionsMode {
+            return followingViewModel.isShowingCachedData
+        }
+        return showcaseViewModel.isShowingCachedData
+    }
+
+    var isFollowFeatureAvailable: Bool {
+        showcaseViewModel.isFollowFeatureAvailable
+    }
+
+    var isOnline: Bool {
+        if isSubscriptionsMode {
+            return followingViewModel.isOnline
+        }
+        return showcaseViewModel.isOnline
+    }
+
+    var emptyStateMessage: String {
+        if isSubscriptionsMode {
+            return "Вы пока ни на кого не подписаны."
+        }
+        return "Пока нет атлетов. Попробуйте изменить фильтры."
+    }
+
+    private func uniqueAthletes(in source: [InfluencerPublicCard]) -> [InfluencerPublicCard] {
+        var indexByID: [UUID: Int] = [:]
+        var result: [InfluencerPublicCard] = []
+        result.reserveCapacity(source.count)
+
+        for athlete in source {
+            if let index = indexByID[athlete.id] {
+                result[index] = mergedAthlete(result[index], with: athlete)
+            } else {
+                indexByID[athlete.id] = result.count
+                result.append(athlete)
+            }
+        }
+        return result
+    }
+
+    private func mergedAthlete(_ lhs: InfluencerPublicCard, with rhs: InfluencerPublicCard) -> InfluencerPublicCard {
+        let mergedAchievements = Array(Set((lhs.achievements ?? []) + (rhs.achievements ?? []))).sorted {
+            $0.localizedCaseInsensitiveCompare($1) == .orderedAscending
+        }
+
+        return InfluencerPublicCard(
+            id: lhs.id,
+            displayName: preferredDisplayName(lhs.displayName, rhs.displayName),
+            bio: preferredText(lhs.bio, rhs.bio),
+            avatar: lhs.avatar ?? rhs.avatar,
+            socialLinks: (lhs.socialLinks?.isEmpty == false) ? lhs.socialLinks : rhs.socialLinks,
+            followersCount: max(lhs.followersCount, rhs.followersCount),
+            programsCount: max(lhs.programsCount, rhs.programsCount),
+            isFollowedByMe: lhs.isFollowedByMe || rhs.isFollowedByMe,
+            directionTag: preferredText(lhs.directionTag, rhs.directionTag),
+            achievements: mergedAchievements.isEmpty ? nil : mergedAchievements,
+            trainingPhilosophy: preferredText(lhs.trainingPhilosophy, rhs.trainingPhilosophy),
+        )
+    }
+
+    private func preferredDisplayName(_ lhs: String, _ rhs: String) -> String {
+        let lhsTrimmed = lhs.trimmingCharacters(in: .whitespacesAndNewlines)
+        let rhsTrimmed = rhs.trimmingCharacters(in: .whitespacesAndNewlines)
+        if lhsTrimmed == "Атлет", rhsTrimmed != "Атлет", !rhsTrimmed.isEmpty {
+            return rhsTrimmed
+        }
+        if rhsTrimmed.count > lhsTrimmed.count {
+            return rhsTrimmed
+        }
+        return lhsTrimmed.isEmpty ? rhsTrimmed : lhsTrimmed
+    }
+
+    private func preferredText(_ lhs: String?, _ rhs: String?) -> String? {
+        let lhsTrimmed = lhs?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let rhsTrimmed = rhs?.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        if let lhsTrimmed, !lhsTrimmed.isEmpty, let rhsTrimmed, !rhsTrimmed.isEmpty {
+            return rhsTrimmed.count > lhsTrimmed.count ? rhsTrimmed : lhsTrimmed
+        }
+        if let lhsTrimmed, !lhsTrimmed.isEmpty {
+            return lhsTrimmed
+        }
+        if let rhsTrimmed, !rhsTrimmed.isEmpty {
+            return rhsTrimmed
+        }
+        return nil
+    }
+
+    private func sortAthletes(_ source: [InfluencerPublicCard]) -> [InfluencerPublicCard] {
+        switch sortOption {
+        case .name:
+            return source.sorted { $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending }
+        case .followers:
+            return source.sorted {
+                if $0.followersCount == $1.followersCount {
+                    return $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending
+                }
+                return $0.followersCount > $1.followersCount
+            }
+        case .programs:
+            return source.sorted {
+                if $0.programsCount == $1.programsCount {
+                    return $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending
+                }
+                return $0.programsCount > $1.programsCount
+            }
+        }
+    }
+}
 
 struct CatalogScreen: View {
     @State var programsViewModel: CatalogViewModel
@@ -1986,6 +2321,14 @@ struct CatalogScreen: View {
 
     @State private var selectedSegment: CatalogHubSegment
     @State private var selectedCreator: InfluencerPublicCard?
+    @State private var isProgramSearchPresented = false
+    @State private var isProgramFiltersPresented = false
+    @State private var isProgramSortPresented = false
+    @State private var isAthletesSearchPresented = false
+    @State private var isAthletesFiltersPresented = false
+    @State private var isAthletesSubscriptionsMode = false
+    @State private var athletesOnlyWithPrograms = false
+    @State private var athleteSortOption: AthleteCatalogSortOption = .followers
 
     init(
         programsViewModel: CatalogViewModel,
@@ -2011,24 +2354,25 @@ struct CatalogScreen: View {
     }
 
     var body: some View {
-        VStack(spacing: FFSpacing.sm) {
-            Picker("Раздел каталога", selection: $selectedSegment) {
-                ForEach(CatalogHubSegment.allCases) { segment in
-                    Text(segment.title).tag(segment)
-                }
-            }
-            .pickerStyle(.segmented)
-            .padding(.horizontal, FFSpacing.md)
-            .padding(.top, FFSpacing.md)
-            .onChange(of: selectedSegment) { _, newValue in
-                UserDefaults.standard.set(newValue.rawValue, forKey: Self.segmentStorageKey(for: userSub))
-            }
+        VStack(spacing: 0) {
+            CatalogSegmentHeader(
+                selectedSegment: $selectedSegment,
+                thirdAction: thirdAction,
+                isFiltersActive: isFiltersActive,
+                isThirdActionSelected: isThirdActionSelected,
+                onSearchTap: handleSearchTap,
+                onFiltersTap: handleFiltersTap,
+                onThirdTap: handleThirdTap,
+            )
 
             switch selectedSegment {
             case .programs:
                 ProgramsCatalogScreen(
                     viewModel: programsViewModel,
                     environment: environment,
+                    isSearchPresented: $isProgramSearchPresented,
+                    isFiltersPresented: $isProgramFiltersPresented,
+                    isSortPresented: $isProgramSortPresented,
                     onProgramTap: onProgramTap,
                 )
 
@@ -2038,6 +2382,11 @@ struct CatalogScreen: View {
                     searchViewModel: athletesSearchViewModel,
                     followingViewModel: followingViewModel,
                     environment: environment,
+                    isSearchPresented: $isAthletesSearchPresented,
+                    isFiltersPresented: $isAthletesFiltersPresented,
+                    isSubscriptionsMode: $isAthletesSubscriptionsMode,
+                    sortOption: $athleteSortOption,
+                    showOnlyWithPrograms: $athletesOnlyWithPrograms,
                     onOpenAthleteProfile: { creator in
                         selectedCreator = creator
                     },
@@ -2048,6 +2397,9 @@ struct CatalogScreen: View {
             }
         }
         .background(FFColors.background)
+        .onChange(of: selectedSegment) { _, newValue in
+            UserDefaults.standard.set(newValue.rawValue, forKey: Self.segmentStorageKey(for: userSub))
+        }
         .navigationDestination(item: $selectedCreator) { creator in
             AthleteProfileView(
                 viewModel: AthleteProfileViewModel(
@@ -2081,6 +2433,60 @@ struct CatalogScreen: View {
     private static func segmentStorageKey(for userSub: String) -> String {
         "catalog.segment.last.\(userSub)"
     }
+
+    private var thirdAction: CatalogHeaderAction {
+        switch selectedSegment {
+        case .programs:
+            CatalogHeaderAction(title: "Сортировка", systemImage: "arrow.up.arrow.down")
+        case .athletes:
+            CatalogHeaderAction(title: "Подписки", systemImage: "person.2.fill")
+        }
+    }
+
+    private var isFiltersActive: Bool {
+        switch selectedSegment {
+        case .programs:
+            return programsViewModel.selectedGoal != nil || programsViewModel.selectedLevel != nil
+        case .athletes:
+            return athleteSortOption != .followers || athletesOnlyWithPrograms
+        }
+    }
+
+    private var isThirdActionSelected: Bool {
+        switch selectedSegment {
+        case .programs:
+            return false
+        case .athletes:
+            return isAthletesSubscriptionsMode
+        }
+    }
+
+    private func handleSearchTap() {
+        switch selectedSegment {
+        case .programs:
+            isProgramSearchPresented = true
+        case .athletes:
+            isAthletesSearchPresented = true
+        }
+    }
+
+    private func handleFiltersTap() {
+        switch selectedSegment {
+        case .programs:
+            isProgramFiltersPresented = true
+        case .athletes:
+            isAthletesFiltersPresented = true
+        }
+    }
+
+    private func handleThirdTap() {
+        switch selectedSegment {
+        case .programs:
+            isProgramSortPresented = true
+        case .athletes:
+            isAthletesSubscriptionsMode.toggle()
+        }
+    }
 }
 
 typealias CatalogHubScreen = CatalogScreen
@@ -2090,112 +2496,484 @@ struct AthletesCatalogScreen: View {
     @State var searchViewModel: AthleteSearchViewModel
     @State var followingViewModel: FollowingAthletesViewModel
     let environment: AppEnvironment
+    @Binding var isSearchPresented: Bool
+    @Binding var isFiltersPresented: Bool
+    @Binding var isSubscriptionsMode: Bool
+    @Binding var sortOption: AthleteCatalogSortOption
+    @Binding var showOnlyWithPrograms: Bool
     let onOpenAthleteProfile: (InfluencerPublicCard) -> Void
     let onAthleteUpdated: (InfluencerPublicCard) -> Void
 
-    @State private var isSearchPresented = false
-    @State private var isFollowingPresented = false
+    var body: some View {
+        AthletesTabView(
+            showcaseViewModel: showcaseViewModel,
+            searchViewModel: searchViewModel,
+            followingViewModel: followingViewModel,
+            environment: environment,
+            isSearchPresented: $isSearchPresented,
+            isFiltersPresented: $isFiltersPresented,
+            isSubscriptionsMode: $isSubscriptionsMode,
+            sortOption: $sortOption,
+            showOnlyWithPrograms: $showOnlyWithPrograms,
+            onOpenAthleteProfile: onOpenAthleteProfile,
+            onAthleteUpdated: onAthleteUpdated,
+        )
+    }
+}
+
+struct AthletesTabView: View {
+    @State var showcaseViewModel: AthletesShowcaseViewModel
+    @State var searchViewModel: AthleteSearchViewModel
+    @State var followingViewModel: FollowingAthletesViewModel
+    let environment: AppEnvironment
+    @Binding var isSearchPresented: Bool
+    @Binding var isFiltersPresented: Bool
+    @Binding var isSubscriptionsMode: Bool
+    @Binding var sortOption: AthleteCatalogSortOption
+    @Binding var showOnlyWithPrograms: Bool
+    let onOpenAthleteProfile: (InfluencerPublicCard) -> Void
+    let onAthleteUpdated: (InfluencerPublicCard) -> Void
+
+    private let allAthletesAnchorID = "athletes_all_list_anchor"
+
+    private var catalogViewModel: AthletesCatalogViewModel {
+        AthletesCatalogViewModel(
+            showcaseViewModel: showcaseViewModel,
+            followingViewModel: followingViewModel,
+            isSubscriptionsMode: isSubscriptionsMode,
+            sortOption: sortOption,
+            onlyWithPrograms: showOnlyWithPrograms,
+        )
+    }
 
     var body: some View {
-        VStack(spacing: FFSpacing.sm) {
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: FFSpacing.xs) {
-                    catalogActionButton(
-                        title: "Поиск",
-                        systemImage: "magnifyingglass",
-                    ) {
-                        isSearchPresented = true
+        ScrollViewReader { proxy in
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    if catalogViewModel.isShowingCachedData {
+                        cachedDataBadge
                     }
 
-                    catalogActionButton(
-                        title: "Все атлеты",
-                        systemImage: "list.bullet",
-                    ) {
-                        isSearchPresented = true
+                    if let infoMessage = catalogViewModel.infoMessage {
+                        CardContainer {
+                            Text(infoMessage)
+                                .font(FFTypography.caption)
+                                .foregroundStyle(FFColors.textSecondary)
+                        }
                     }
 
-                    if showcaseViewModel.isFollowFeatureAvailable {
-                        catalogActionButton(
-                            title: "Подписки",
-                            systemImage: "person.2.fill",
-                        ) {
-                            isFollowingPresented = true
+                    if catalogViewModel.loading {
+                        AthletesSkeletonList(count: 4)
+                    } else if let error = catalogViewModel.error, catalogViewModel.empty {
+                        FFErrorState(
+                            title: error.title,
+                            message: error.message,
+                            retryTitle: "Повторить",
+                            onRetry: { Task { await retry() } },
+                        )
+                    } else if catalogViewModel.empty {
+                        CardContainer {
+                            Text(catalogViewModel.emptyStateMessage)
+                                .font(FFTypography.body)
+                                .foregroundStyle(FFColors.textSecondary)
+                        }
+                    } else {
+                        VStack(alignment: .leading, spacing: 12) {
+                            AthletesSectionHeader(
+                                title: isSubscriptionsMode ? "Подписки" : "Все атлеты",
+                                trailingTitle: nil,
+                                onTrailingTap: nil,
+                            )
+                            .id(allAthletesAnchorID)
+
+                            ForEach(catalogViewModel.filteredAthletes) { athlete in
+                                AthleteCardRow(
+                                    creator: athlete,
+                                    environment: environment,
+                                    followButtonState: followButtonState(for: athlete),
+                                    isFollowFeatureAvailable: catalogViewModel.isFollowFeatureAvailable,
+                                    isFollowEnabled: catalogViewModel.isFollowFeatureAvailable && catalogViewModel.isOnline,
+                                    onTap: {
+                                        onOpenAthleteProfile(athlete)
+                                    },
+                                    onFollowTap: {
+                                        handleFollowTap(for: athlete)
+                                    },
+                                )
+                                .onAppear {
+                                    Task {
+                                        if isSubscriptionsMode {
+                                            await followingViewModel.loadNextPageIfNeeded(lastID: athlete.id)
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                 }
-                .padding(.horizontal, FFSpacing.md)
+                .padding(.horizontal, 16)
+                .padding(.top, 12)
+                .padding(.bottom, FFSpacing.lg)
             }
-
-            AthletesShowcaseView(
-                viewModel: showcaseViewModel,
-                environment: environment,
-                onOpenAthleteProfile: onOpenAthleteProfile,
-                onAthleteUpdated: onAthleteUpdated,
-            )
         }
         .background(FFColors.background)
-        .navigationDestination(isPresented: $isSearchPresented) {
-            AthletesSearchView(
-                viewModel: searchViewModel,
-                environment: environment,
-                onOpenAthleteProfile: onOpenAthleteProfile,
-                onAthleteUpdated: onAthleteUpdated,
-            )
-            .navigationTitle("Все атлеты")
+        .sheet(isPresented: $isSearchPresented) {
+            NavigationStack {
+                AthletesSearchView(
+                    viewModel: searchViewModel,
+                    environment: environment,
+                    onOpenAthleteProfile: onOpenAthleteProfile,
+                    onAthleteUpdated: onAthleteUpdated,
+                )
+                .navigationTitle("Все атлеты")
+                .navigationBarTitleDisplayMode(.inline)
+            }
         }
-        .navigationDestination(isPresented: $isFollowingPresented) {
-            FollowingAthletesView(
-                viewModel: followingViewModel,
-                environment: environment,
-                onOpenAthleteProfile: onOpenAthleteProfile,
-                onAthleteUpdated: onAthleteUpdated,
+        .sheet(isPresented: $isFiltersPresented) {
+            AthletesFiltersSheet(
+                sortOption: $sortOption,
+                showOnlyWithPrograms: $showOnlyWithPrograms,
             )
-            .navigationTitle("Подписки")
+        }
+        .refreshable {
+            await refreshCurrentMode()
         }
         .onChange(of: showcaseViewModel.isFollowFeatureAvailable) { _, isAvailable in
             searchViewModel.setFollowFeatureAvailability(isAvailable)
             followingViewModel.setFollowFeatureAvailability(isAvailable)
             if !isAvailable {
-                isFollowingPresented = false
+                isSubscriptionsMode = false
+            }
+        }
+        .onChange(of: isSubscriptionsMode) { _, isEnabled in
+            guard isEnabled else { return }
+            Task {
+                await followingViewModel.onAppear()
             }
         }
         .task {
             searchViewModel.setFollowFeatureAvailability(showcaseViewModel.isFollowFeatureAvailable)
             followingViewModel.setFollowFeatureAvailability(showcaseViewModel.isFollowFeatureAvailable)
+            await showcaseViewModel.onAppear()
+            if isSubscriptionsMode {
+                await followingViewModel.onAppear()
+            }
         }
     }
 
-    private func catalogActionButton(
-        title: String,
-        systemImage: String,
-        action: @escaping () -> Void,
-    ) -> some View {
-        Button(action: action) {
-            Label(title, systemImage: systemImage)
+    private var cachedDataBadge: some View {
+        CardContainer {
+            Text("Нет сети — показаны сохранённые данные")
                 .font(FFTypography.caption.weight(.semibold))
-                .foregroundStyle(FFColors.textPrimary)
-                .padding(.horizontal, FFSpacing.sm)
-                .frame(minHeight: 40)
-                .background(FFColors.surface)
-                .clipShape(RoundedRectangle(cornerRadius: FFTheme.Radius.control))
-                .overlay {
-                    RoundedRectangle(cornerRadius: FFTheme.Radius.control)
-                        .stroke(FFColors.gray700, lineWidth: 1)
+                .foregroundStyle(FFColors.textSecondary)
+        }
+    }
+
+    private func followButtonState(for athlete: InfluencerPublicCard) -> FollowButtonState {
+        let isLoading = if isSubscriptionsMode {
+            followingViewModel.isFollowLoading(athlete.id)
+        } else {
+            showcaseViewModel.isFollowLoading(athlete.id)
+        }
+        if isLoading {
+            return .loading
+        }
+        return athlete.isFollowedByMe ? .following : .follow
+    }
+
+    private func handleFollowTap(for athlete: InfluencerPublicCard) {
+        Task {
+            if isSubscriptionsMode {
+                if let updated = await followingViewModel.toggleFollow(influencerId: athlete.id) {
+                    onAthleteUpdated(updated)
+                } else {
+                    onAthleteUpdated(FollowStateMachine.apply(.unfollow, to: athlete))
                 }
+                return
+            }
+
+            if let updated = await showcaseViewModel.toggleFollow(influencerId: athlete.id) {
+                onAthleteUpdated(updated)
+            }
+        }
+    }
+
+    private func refreshCurrentMode() async {
+        if isSubscriptionsMode {
+            await followingViewModel.refresh()
+            return
+        }
+        await showcaseViewModel.refresh()
+    }
+
+    private func retry() async {
+        if isSubscriptionsMode {
+            await followingViewModel.retry()
+            return
+        }
+        await showcaseViewModel.retry()
+    }
+}
+
+struct AthletesSectionHeader: View {
+    let title: String
+    let trailingTitle: String?
+    let onTrailingTap: (() -> Void)?
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline) {
+            Text(title)
+                .font(FFTypography.h2)
+                .foregroundStyle(FFColors.textPrimary)
+            Spacer(minLength: FFSpacing.sm)
+            if let trailingTitle, let onTrailingTap {
+                Button(trailingTitle) {
+                    onTrailingTap()
+                }
+                .font(FFTypography.caption.weight(.semibold))
+                .foregroundStyle(FFColors.textSecondary)
+                .buttonStyle(.plain)
+            }
+        }
+    }
+}
+
+struct AthleteCardRow: View {
+    let creator: InfluencerPublicCard
+    let environment: AppEnvironment?
+    let followButtonState: FollowButtonState
+    let isFollowFeatureAvailable: Bool
+    let isFollowEnabled: Bool
+    let onTap: () -> Void
+    let onFollowTap: () -> Void
+
+    var body: some View {
+        CardContainer {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(alignment: .top, spacing: FFSpacing.sm) {
+                    avatarView
+
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(creator.displayName)
+                            .font(FFTypography.body.weight(.semibold))
+                            .foregroundStyle(FFColors.textPrimary)
+                            .lineLimit(nil)
+                            .fixedSize(horizontal: false, vertical: true)
+
+                        if let subtitle = subtitle {
+                            Text(subtitle)
+                                .font(FFTypography.caption)
+                                .foregroundStyle(FFColors.textSecondary)
+                                .lineLimit(1)
+                        }
+
+                        Text(programsLine)
+                            .font(FFTypography.caption)
+                            .foregroundStyle(FFColors.textSecondary)
+                            .lineLimit(1)
+                    }
+
+                    Spacer(minLength: FFSpacing.xs)
+                }
+
+                HStack {
+                    Spacer(minLength: 0)
+                    if isFollowFeatureAvailable {
+                        SubscribeButton(
+                            state: followButtonState,
+                            isEnabled: isFollowEnabled,
+                            action: onFollowTap,
+                        )
+                        .frame(width: 150)
+                    }
+                }
+            }
+        }
+        .contentShape(Rectangle())
+        .onTapGesture {
+            onTap()
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Открыть профиль атлета \(creator.displayName)")
+    }
+
+    private var subtitle: String? {
+        if let direction = creator.directionTag?.trimmedNilIfEmpty {
+            return direction
+        }
+        if let philosophy = creator.trainingPhilosophy?.trimmedNilIfEmpty {
+            return philosophy
+        }
+        if let bio = creator.bio?.trimmedNilIfEmpty {
+            return bio
+        }
+        return nil
+    }
+
+    private var programsLine: String {
+        "\(creator.programsCount) \(pluralized(creator.programsCount, one: "программа", few: "программы", many: "программ"))"
+    }
+
+    private var avatarView: some View {
+        Group {
+            if let url = resolvedAvatarURL(creator.avatar) {
+                FFRemoteImage(url: url) {
+                    avatarPlaceholder
+                }
+            } else {
+                avatarPlaceholder
+            }
+        }
+        .frame(width: 52, height: 52)
+        .clipShape(Circle())
+    }
+
+    private var avatarPlaceholder: some View {
+        Circle()
+            .fill(FFColors.gray700)
+            .overlay {
+                Image(systemName: "person.crop.circle.fill")
+                    .font(.system(size: 26, weight: .semibold))
+                    .foregroundStyle(FFColors.gray300)
+            }
+    }
+
+    private func resolvedAvatarURL(_ url: URL?) -> URL? {
+        guard let url else { return nil }
+        if url.scheme != nil {
+            return url
+        }
+        guard let baseURL = environment?.backendBaseURL else {
+            return url
+        }
+        let normalizedPath = url.path.hasPrefix("/") ? String(url.path.dropFirst()) : url.path
+        return baseURL.appendingPathComponent(normalizedPath)
+    }
+
+    private func pluralized(_ value: Int, one: String, few: String, many: String) -> String {
+        let remainder100 = value % 100
+        let remainder10 = value % 10
+        if remainder100 >= 11 && remainder100 <= 14 {
+            return many
+        }
+        switch remainder10 {
+        case 1:
+            return one
+        case 2 ... 4:
+            return few
+        default:
+            return many
+        }
+    }
+}
+
+struct SubscribeButton: View {
+    let state: FollowButtonState
+    var isEnabled = true
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 6) {
+                if state == .loading {
+                    ProgressView()
+                        .controlSize(.small)
+                        .tint(FFColors.textSecondary)
+                } else if state == .follow {
+                    Image(systemName: "plus")
+                        .font(.system(size: 12, weight: .semibold))
+                } else {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 11, weight: .semibold))
+                }
+
+                Text(title)
+                    .font(FFTypography.caption.weight(.semibold))
+                    .lineLimit(1)
+            }
+            .foregroundStyle(state == .loading ? FFColors.textSecondary : FFColors.textPrimary)
+            .padding(.horizontal, 12)
+            .frame(maxWidth: .infinity, minHeight: 38, maxHeight: 38)
+            .background(FFColors.surface)
+            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .stroke(FFColors.gray700, lineWidth: 1)
+            }
         }
         .buttonStyle(.plain)
+        .disabled(!isEnabled || state == .loading)
+    }
+
+    private var title: String {
+        switch state {
+        case .follow:
+            "Подписаться"
+        case .following:
+            "Вы подписаны"
+        case .loading:
+            "Загрузка"
+        }
+    }
+}
+
+struct AthletesSkeletonList: View {
+    let count: Int
+
+    var body: some View {
+        VStack(spacing: 12) {
+            ForEach(0 ..< count, id: \.self) { _ in
+                CardContainer {
+                    HStack(spacing: FFSpacing.sm) {
+                        Circle()
+                            .fill(FFColors.gray700)
+                            .frame(width: 52, height: 52)
+                        VStack(alignment: .leading, spacing: 6) {
+                            RoundedRectangle(cornerRadius: 4)
+                                .fill(FFColors.gray700)
+                                .frame(width: 120, height: 12)
+                            RoundedRectangle(cornerRadius: 4)
+                                .fill(FFColors.gray700)
+                                .frame(maxWidth: .infinity)
+                                .frame(height: 10)
+                            RoundedRectangle(cornerRadius: 4)
+                                .fill(FFColors.gray700)
+                                .frame(width: 180, height: 10)
+                        }
+                        Spacer(minLength: FFSpacing.xs)
+                        RoundedRectangle(cornerRadius: 14)
+                            .fill(FFColors.gray700)
+                            .frame(width: 118, height: 38)
+                    }
+                    .frame(minHeight: 80)
+                    .redacted(reason: .placeholder)
+                }
+            }
+        }
     }
 }
 
 struct AthletesShowcaseView: View {
     @State var viewModel: AthletesShowcaseViewModel
     let environment: AppEnvironment
+    let sortOption: AthleteCatalogSortOption
+    let onOpenAllAthletes: () -> Void
     let onOpenAthleteProfile: (InfluencerPublicCard) -> Void
     let onAthleteUpdated: (InfluencerPublicCard) -> Void
 
     var body: some View {
         ScrollView {
-            VStack(spacing: FFSpacing.md) {
+            VStack(spacing: 20) {
+                HStack {
+                    Spacer()
+                    Button("Все атлеты →") {
+                        onOpenAllAthletes()
+                    }
+                    .font(FFTypography.caption.weight(.semibold))
+                    .foregroundStyle(FFColors.textSecondary)
+                    .buttonStyle(.plain)
+                }
+
                 if viewModel.isShowingCachedData {
                     cachedDataBadge
                 }
@@ -2222,6 +3000,7 @@ struct AthletesShowcaseView: View {
                         AthleteShelfView(
                             shelf: shelf,
                             environment: environment,
+                            sortOption: sortOption,
                             isFollowFeatureAvailable: viewModel.isFollowFeatureAvailable,
                             isFollowEnabled: viewModel.isFollowFeatureAvailable && viewModel.isOnline,
                             followHint: viewModel.isFollowFeatureAvailable && !viewModel.isOnline ? "Нужен интернет" : nil,
@@ -2262,6 +3041,7 @@ struct AthletesShowcaseView: View {
 private struct AthleteShelfView: View {
     let shelf: AthleteShelfState
     let environment: AppEnvironment
+    let sortOption: AthleteCatalogSortOption
     let isFollowFeatureAvailable: Bool
     let isFollowEnabled: Bool
     let followHint: String?
@@ -2299,7 +3079,7 @@ private struct AthleteShelfView: View {
             } else {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: FFSpacing.sm) {
-                        ForEach(Array(shelf.athletes.prefix(6))) { athlete in
+                        ForEach(Array(sortedAthletes.prefix(6))) { athlete in
                             AthleteCard(
                                 creator: athlete,
                                 environment: environment,
@@ -2314,11 +3094,32 @@ private struct AthleteShelfView: View {
                                     onFollowTap(athlete.id)
                                 },
                             )
-                            .frame(width: 250)
+                            .frame(width: 270, height: 152, alignment: .topLeading)
                         }
                     }
                     .padding(.vertical, 1)
                 }
+            }
+        }
+    }
+
+    private var sortedAthletes: [InfluencerPublicCard] {
+        switch sortOption {
+        case .name:
+            shelf.athletes.sorted { $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending }
+        case .followers:
+            shelf.athletes.sorted {
+                if $0.followersCount == $1.followersCount {
+                    return $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending
+                }
+                return $0.followersCount > $1.followersCount
+            }
+        case .programs:
+            shelf.athletes.sorted {
+                if $0.programsCount == $1.programsCount {
+                    return $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending
+                }
+                return $0.programsCount > $1.programsCount
             }
         }
     }
@@ -2372,13 +3173,12 @@ struct AthletesSearchView: View {
                 } else {
                     LazyVStack(spacing: FFSpacing.sm) {
                         ForEach(viewModel.creators) { creator in
-                            AthleteListCard(
+                            AthleteCardRow(
                                 creator: creator,
                                 environment: environment,
                                 followButtonState: viewModel.isFollowLoading(creator.id) ? .loading : (creator.isFollowedByMe ? .following : .follow),
                                 isFollowFeatureAvailable: viewModel.isFollowFeatureAvailable,
                                 isFollowEnabled: viewModel.isFollowFeatureAvailable && viewModel.isOnline,
-                                followHint: viewModel.isFollowFeatureAvailable && !viewModel.isOnline ? "Нужен интернет" : nil,
                                 onTap: {
                                     onOpenAthleteProfile(creator)
                                 },
@@ -2468,13 +3268,12 @@ struct FollowingAthletesView: View {
                 } else {
                     LazyVStack(spacing: FFSpacing.sm) {
                         ForEach(viewModel.creators) { creator in
-                            AthleteListCard(
+                            AthleteCardRow(
                                 creator: creator,
                                 environment: environment,
                                 followButtonState: viewModel.isFollowLoading(creator.id) ? .loading : (creator.isFollowedByMe ? .following : .follow),
                                 isFollowFeatureAvailable: viewModel.isFollowFeatureAvailable,
                                 isFollowEnabled: viewModel.isFollowFeatureAvailable && viewModel.isOnline,
-                                followHint: viewModel.isFollowFeatureAvailable && !viewModel.isOnline ? "Нужен интернет" : nil,
                                 onTap: {
                                     onOpenAthleteProfile(creator)
                                 },
@@ -2550,56 +3349,53 @@ struct AthleteProfileView: View {
                     }
                 }
 
-                FFCard {
-                    VStack(alignment: .leading, spacing: FFSpacing.sm) {
-                        HStack {
-                            Text("Фирменные программы")
-                                .font(FFTypography.h2)
-                                .foregroundStyle(FFColors.textPrimary)
-                            Spacer(minLength: FFSpacing.sm)
-                            if viewModel.isLoadingPrograms {
-                                ProgressView()
-                                    .controlSize(.small)
+                VStack(alignment: .leading, spacing: FFSpacing.sm) {
+                    HStack {
+                        Text("Программы")
+                            .font(FFTypography.h2)
+                            .foregroundStyle(FFColors.textPrimary)
+                        Spacer(minLength: FFSpacing.sm)
+                        if viewModel.isLoadingPrograms {
+                            ProgressView()
+                                .controlSize(.small)
+                        }
+                    }
+
+                    if viewModel.isShowingCachedData {
+                        Text("Нет сети — показаны сохранённые данные")
+                            .font(FFTypography.caption)
+                            .foregroundStyle(FFColors.textSecondary)
+                    }
+
+                    if viewModel.isLoadingPrograms, viewModel.programs.isEmpty {
+                        FFLoadingState(title: "Загружаем программы атлета")
+                    } else if let error = viewModel.error, viewModel.programs.isEmpty {
+                        FFErrorState(
+                            title: error.title,
+                            message: error.message,
+                            retryTitle: "Повторить",
+                            onRetry: { Task { await viewModel.refresh() } },
+                        )
+                    } else if viewModel.programs.isEmpty {
+                        Text("У атлета пока нет опубликованных программ.")
+                            .font(FFTypography.body)
+                            .foregroundStyle(FFColors.textSecondary)
+                    } else {
+                        LazyVStack(spacing: FFSpacing.sm) {
+                            ForEach(viewModel.signaturePrograms) { program in
+                                AthleteProgramCatalogCard(
+                                    program: program,
+                                    onTap: {
+                                        viewModel.trackProgramOpened(programID: program.id)
+                                        onProgramTap(program.id)
+                                    },
+                                )
                             }
                         }
 
-                        if viewModel.isShowingCachedData {
-                            Text("Нет сети — показаны сохранённые данные")
-                                .font(FFTypography.caption)
-                                .foregroundStyle(FFColors.textSecondary)
-                        }
-
-                        if viewModel.isLoadingPrograms, viewModel.programs.isEmpty {
-                            FFLoadingState(title: "Загружаем программы атлета")
-                        } else if let error = viewModel.error, viewModel.programs.isEmpty {
-                            FFErrorState(
-                                title: error.title,
-                                message: error.message,
-                                retryTitle: "Повторить",
-                                onRetry: { Task { await viewModel.refresh() } },
-                            )
-                        } else if viewModel.programs.isEmpty {
-                            Text("У атлета пока нет опубликованных программ.")
-                                .font(FFTypography.body)
-                                .foregroundStyle(FFColors.textSecondary)
-                        } else {
-                            LazyVStack(spacing: FFSpacing.sm) {
-                                ForEach(viewModel.signaturePrograms) { program in
-                                    AthleteProgramCatalogCard(
-                                        program: program,
-                                        environment: environment,
-                                        onTap: {
-                                            viewModel.trackProgramOpened(programID: program.id)
-                                            onProgramTap(program.id)
-                                        },
-                                    )
-                                }
-                            }
-
-                            if viewModel.canOpenAllPrograms {
-                                FFButton(title: "Все программы атлета", variant: .secondary) {
-                                    isAllProgramsPresented = true
-                                }
+                        if viewModel.canOpenAllPrograms {
+                            FFButton(title: "Все программы атлета", variant: .secondary) {
+                                isAllProgramsPresented = true
                             }
                         }
                     }
@@ -2621,7 +3417,7 @@ struct AthleteProfileView: View {
                 environment: environment,
                 onProgramTap: onProgramTap,
             )
-            .navigationTitle("Программы атлета")
+            .navigationTitle("Программы")
         }
     }
 }
@@ -2663,7 +3459,6 @@ private struct AthleteProgramsListView: View {
                         ForEach(viewModel.programs) { program in
                             AthleteProgramCatalogCard(
                                 program: program,
-                                environment: environment,
                                 onTap: {
                                     viewModel.trackProgramOpened(programID: program.id)
                                     onProgramTap(program.id)
@@ -2700,42 +3495,59 @@ private struct AthleteProfileHeader: View {
     var body: some View {
         FFCard {
             VStack(alignment: .leading, spacing: FFSpacing.sm) {
-                HStack(alignment: .top, spacing: FFSpacing.sm) {
+                VStack(spacing: FFSpacing.xs) {
                     avatarView
 
-                    VStack(alignment: .leading, spacing: FFSpacing.xxs) {
-                        Text(creator.displayName)
-                            .font(FFTypography.h1)
-                            .foregroundStyle(FFColors.textPrimary)
-                            .lineLimit(2)
+                    Text(creator.displayName)
+                        .font(FFTypography.h2.weight(.semibold))
+                        .foregroundStyle(FFColors.textPrimary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.82)
 
-                        if creator.followersCount > 0 {
-                            Text("Подписчики: \(creator.followersCount)")
-                                .font(FFTypography.caption)
-                                .foregroundStyle(FFColors.textSecondary)
-                        }
+                    if let specializationLine {
+                        Text(specializationLine)
+                            .font(FFTypography.body)
+                            .foregroundStyle(FFColors.textSecondary)
+                            .lineLimit(1)
+                    }
 
-                        if let direction = creator.directionTag?.trimmedNilIfEmpty {
-                            Text(direction)
-                                .font(FFTypography.caption.weight(.semibold))
-                                .foregroundStyle(FFColors.accent)
-                                .padding(.horizontal, FFSpacing.xs)
-                                .padding(.vertical, FFSpacing.xxs)
-                                .background(FFColors.accent.opacity(0.14))
-                                .clipShape(Capsule())
+                    if let profileStatsLine {
+                        Text(profileStatsLine)
+                            .font(FFTypography.caption)
+                            .foregroundStyle(FFColors.textSecondary)
+                            .lineLimit(1)
+                    }
+
+                    if !socialProofBadges.isEmpty {
+                        HStack(spacing: 6) {
+                            ForEach(Array(socialProofBadges.prefix(2)), id: \.self) { badge in
+                                Text(badge)
+                                    .font(FFTypography.caption.weight(.semibold))
+                                    .foregroundStyle(FFColors.textPrimary)
+                                    .lineLimit(1)
+                                    .padding(.horizontal, 8)
+                                    .padding(.vertical, 4)
+                                    .background(FFColors.surface.opacity(0.92))
+                                    .clipShape(Capsule())
+                                    .overlay {
+                                        Capsule()
+                                            .stroke(FFColors.gray700, lineWidth: 1)
+                                    }
+                            }
                         }
                     }
 
-                    Spacer(minLength: FFSpacing.sm)
-
                     if isFollowFeatureAvailable, let onFollowTap {
-                        FollowButton(
+                        SubscribeButton(
                             state: followButtonState,
                             isEnabled: isFollowEnabled,
                             action: onFollowTap,
                         )
+                        .frame(width: 180)
+                        .padding(.top, 2)
                     }
                 }
+                .frame(maxWidth: .infinity, alignment: .center)
 
                 if let followHint {
                     Text(followHint)
@@ -2743,12 +3555,7 @@ private struct AthleteProfileHeader: View {
                         .foregroundStyle(FFColors.textSecondary)
                 }
 
-                if let bio = creator.bio?.trimmedNilIfEmpty {
-                    Text(bio)
-                        .font(FFTypography.body)
-                        .foregroundStyle(FFColors.textSecondary)
-                        .lineLimit(3)
-                }
+                aboutSection
 
                 if let achievements = creator.achievements, !achievements.isEmpty {
                     VStack(alignment: .leading, spacing: FFSpacing.xxs) {
@@ -2778,6 +3585,56 @@ private struct AthleteProfileHeader: View {
         }
     }
 
+    private var specializationLine: String? {
+        if let direction = creator.directionTag?.trimmedNilIfEmpty {
+            return direction
+        }
+        if let philosophy = creator.trainingPhilosophy?.trimmedNilIfEmpty {
+            return philosophy
+        }
+        return nil
+    }
+
+    private var profileStatsLine: String? {
+        var parts: [String] = []
+        if creator.programsCount > 0 {
+            parts.append("\(creator.programsCount) \(pluralized(creator.programsCount, one: "программа", few: "программы", many: "программ"))")
+        }
+        if creator.followersCount > 0 {
+            parts.append("\(compactCount(creator.followersCount)) \(pluralized(creator.followersCount, one: "подписчик", few: "подписчика", many: "подписчиков"))")
+        }
+        return parts.isEmpty ? nil : parts.joined(separator: " • ")
+    }
+
+    private var aboutSection: some View {
+        VStack(alignment: .leading, spacing: FFSpacing.xxs) {
+            Text("О тренере")
+                .font(FFTypography.caption.weight(.semibold))
+                .foregroundStyle(FFColors.textSecondary)
+            HStack(alignment: .top, spacing: FFSpacing.xs) {
+                avatarMiniView
+                Text(aboutText)
+                    .font(FFTypography.body)
+                    .foregroundStyle(FFColors.textSecondary)
+                    .lineLimit(4)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+    }
+
+    private var aboutText: String {
+        if let bio = creator.bio?.trimmedNilIfEmpty {
+            return bio
+        }
+        if let philosophy = creator.trainingPhilosophy?.trimmedNilIfEmpty {
+            return philosophy
+        }
+        if let direction = creator.directionTag?.trimmedNilIfEmpty {
+            return direction
+        }
+        return "Информация об атлете скоро появится."
+    }
+
     private var avatarView: some View {
         Group {
             if let url = resolvedAvatarURL(creator.avatar) {
@@ -2788,7 +3645,21 @@ private struct AthleteProfileHeader: View {
                 avatarPlaceholder
             }
         }
-        .frame(width: 72, height: 72)
+        .frame(width: 64, height: 64)
+        .clipShape(Circle())
+    }
+
+    private var avatarMiniView: some View {
+        Group {
+            if let url = resolvedAvatarURL(creator.avatar) {
+                FFRemoteImage(url: url) {
+                    avatarPlaceholder
+                }
+            } else {
+                avatarPlaceholder
+            }
+        }
+        .frame(width: 36, height: 36)
         .clipShape(Circle())
     }
 
@@ -2813,6 +3684,34 @@ private struct AthleteProfileHeader: View {
         let normalizedPath = url.path.hasPrefix("/") ? String(url.path.dropFirst()) : url.path
         return baseURL.appendingPathComponent(normalizedPath)
     }
+
+    private func pluralized(_ value: Int, one: String, few: String, many: String) -> String {
+        let remainder100 = value % 100
+        let remainder10 = value % 10
+        if remainder100 >= 11 && remainder100 <= 14 {
+            return many
+        }
+        switch remainder10 {
+        case 1:
+            return one
+        case 2 ... 4:
+            return few
+        default:
+            return many
+        }
+    }
+
+    private var socialProofBadges: [String] {
+        resolveSocialProofBadges(for: creator)
+    }
+
+    private func compactCount(_ value: Int) -> String {
+        guard value >= 1_000 else { return "\(value)" }
+        let thousands = Double(value) / 1_000
+        let rounded = (thousands * 10).rounded() / 10
+        let text = String(format: rounded.truncatingRemainder(dividingBy: 1) == 0 ? "%.0f" : "%.1f", rounded)
+        return "\(text)k"
+    }
 }
 
 struct AthleteCard: View {
@@ -2826,7 +3725,7 @@ struct AthleteCard: View {
     let onFollowTap: (() -> Void)?
 
     var body: some View {
-        FFCard {
+        CardContainer {
             VStack(alignment: .leading, spacing: FFSpacing.sm) {
                 Button {
                     onTap?()
@@ -2852,19 +3751,11 @@ struct AthleteCard: View {
                 .buttonStyle(.plain)
                 .disabled(onTap == nil)
 
-                if creator.programsCount > 0 || creator.followersCount > 0 {
-                    VStack(alignment: .leading, spacing: FFSpacing.xxs) {
-                        if creator.programsCount > 0 {
-                            Text("Программ: \(creator.programsCount)")
-                                .font(FFTypography.caption)
-                                .foregroundStyle(FFColors.textSecondary)
-                        }
-                        if creator.followersCount > 0 {
-                            Text("Подписчики: \(creator.followersCount)")
-                                .font(FFTypography.caption)
-                                .foregroundStyle(FFColors.textSecondary)
-                        }
-                    }
+                if let statsTitle {
+                    Text(statsTitle)
+                        .font(FFTypography.caption)
+                        .foregroundStyle(FFColors.textSecondary)
+                        .lineLimit(1)
                 }
 
                 if isFollowFeatureAvailable, let onFollowTap {
@@ -2873,13 +3764,14 @@ struct AthleteCard: View {
                         isEnabled: isFollowEnabled,
                         action: onFollowTap,
                     )
-                    .frame(minHeight: 44)
+                    .frame(minHeight: 38)
                 }
 
                 if let followHint {
                     Text(followHint)
                         .font(FFTypography.caption)
                         .foregroundStyle(FFColors.textSecondary)
+                        .lineLimit(1)
                 }
             }
         }
@@ -2920,6 +3812,17 @@ struct AthleteCard: View {
         let normalizedPath = url.path.hasPrefix("/") ? String(url.path.dropFirst()) : url.path
         return baseURL.appendingPathComponent(normalizedPath)
     }
+
+    private var statsTitle: String? {
+        var parts: [String] = []
+        if creator.programsCount > 0 {
+            parts.append("Программ: \(creator.programsCount)")
+        }
+        if creator.followersCount > 0 {
+            parts.append("Подписчики: \(creator.followersCount)")
+        }
+        return parts.isEmpty ? nil : parts.joined(separator: " • ")
+    }
 }
 
 private struct AthleteListCard: View {
@@ -2933,7 +3836,7 @@ private struct AthleteListCard: View {
     let onFollowTap: (() -> Void)?
 
     var body: some View {
-        FFCard {
+        CardContainer {
             VStack(alignment: .leading, spacing: FFSpacing.sm) {
                 HStack(alignment: .top, spacing: FFSpacing.sm) {
                     Button {
@@ -2966,7 +3869,7 @@ private struct AthleteListCard: View {
                             isEnabled: isFollowEnabled,
                             action: onFollowTap,
                         )
-                        .frame(minHeight: 44)
+                        .frame(minHeight: 38)
                     }
                 }
 
@@ -3033,165 +3936,50 @@ private struct AthleteListCard: View {
 
 private struct AthleteProgramCatalogCard: View {
     let program: ProgramListItem
-    let environment: AppEnvironment?
     let onTap: () -> Void
 
     var body: some View {
-        Button(action: onTap) {
-            FFCard {
-                VStack(alignment: .leading, spacing: FFSpacing.sm) {
-                    if let imageURL = resolvedImageURL(from: program.cover?.url ?? program.media?.first?.url) {
-                        FFRemoteImage(url: imageURL) {
-                            placeholderImage
-                        }
-                        .frame(height: 180)
-                        .frame(maxWidth: .infinity)
-                        .clipped()
-                        .clipShape(RoundedRectangle(cornerRadius: FFTheme.Radius.control))
-                    } else {
-                        placeholderImage
-                    }
-
-                    HStack(alignment: .top, spacing: FFSpacing.xs) {
-                        VStack(alignment: .leading, spacing: FFSpacing.xs) {
-                            Text(program.title)
-                                .font(FFTypography.h2)
-                                .foregroundStyle(FFColors.textPrimary)
-                                .multilineTextAlignment(.leading)
-                            Text(program.description?.trimmedNilIfEmpty ?? "Описание пока не добавлено.")
-                                .font(FFTypography.body)
-                                .foregroundStyle(FFColors.textSecondary)
-                                .multilineTextAlignment(.leading)
-                                .lineLimit(3)
-                        }
-                        Spacer(minLength: FFSpacing.sm)
-                        VStack(alignment: .trailing, spacing: FFSpacing.xxs) {
-                            FFBadge(status: .published)
-                            if program.isFeatured ?? false {
-                                Text("Рекомендуем")
-                                    .font(FFTypography.caption.weight(.semibold))
-                                    .foregroundStyle(FFColors.background)
-                                    .padding(.horizontal, FFSpacing.xs)
-                                    .padding(.vertical, FFSpacing.xxs)
-                                    .background(FFColors.accent)
-                                    .clipShape(Capsule())
-                            }
-                        }
-                    }
-
-                    if let influencerName = program.influencer?.displayName.trimmedNilIfEmpty {
-                        Text("Атлет: \(influencerName)")
-                            .font(FFTypography.caption)
-                            .foregroundStyle(FFColors.gray300)
-                    }
-
-                    if let goals = program.goals?.filter({ !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }),
-                       !goals.isEmpty
-                    {
-                        Text(goals.joined(separator: " • "))
-                            .font(FFTypography.caption)
-                            .foregroundStyle(FFColors.accent)
-                    }
-
-                    LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: FFSpacing.xs) {
-                        specTag(title: "Уровень", value: CatalogViewModel.localizedLevel(program.level ?? program.currentPublishedVersion?.level), icon: "chart.bar")
-                        specTag(title: "Частота", value: frequencyTitle, icon: "calendar")
-                        specTag(title: "Длительность", value: durationTitle, icon: "clock")
-                        specTag(title: "Оборудование", value: equipmentTitle, icon: "dumbbell")
-                    }
-
-                    if let updatedAt = updatedLabel {
-                        Text("Обновлено: \(updatedAt)")
-                            .font(FFTypography.caption)
-                            .foregroundStyle(FFColors.textSecondary)
-                    }
-                }
-            }
-        }
-        .buttonStyle(.plain)
-        .frame(minHeight: 44)
+        ProgramCard(program: mappedProgram, onTap: onTap)
     }
 
-    private var frequencyTitle: String {
-        if let days = program.daysPerWeek ?? program.currentPublishedVersion?.frequencyPerWeek {
-            return "\(days) дн/нед"
-        }
-        return "Частота не указана"
-    }
-
-    private var durationTitle: String {
-        if let estimatedDuration = program.estimatedDurationMinutes {
-            return "~\(estimatedDuration) мин"
-        }
-        return "Длительность не указана"
-    }
-
-    private var equipmentTitle: String {
-        let equipment = (program.equipment ?? [])
+    private var mappedProgram: CatalogViewModel.ProgramCard {
+        let requirementsSummary = program.currentPublishedVersion?.requirements?.equipmentSummaryText
+        let derivedEquipment = requirementsSummary?
+            .split(separator: ",")
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
-        if equipment.isEmpty {
-            return "Оборудование не указано"
-        }
-        if equipment.count <= 2 {
-            return equipment.joined(separator: ", ")
-        }
-        return "\(equipment.prefix(2).joined(separator: ", ")) +\(equipment.count - 2)"
+            .filter { !$0.isEmpty && $0 != "Оборудование не указано" } ?? []
+        let mergedEquipment = uniqueSorted((program.equipment ?? []) + derivedEquipment)
+
+        return CatalogViewModel.ProgramCard(
+            id: program.id,
+            title: program.title,
+            description: program.description?.trimmedNilIfEmpty ?? "Описание пока не добавлено.",
+            influencerName: program.influencer?.displayName,
+            goals: program.goals ?? [],
+            coverURL: program.cover?.url ?? program.media?.first?.url,
+            isPublished: program.status == .published,
+            isFeatured: program.isFeatured ?? false,
+            level: program.level ?? program.currentPublishedVersion?.level,
+            daysPerWeek: program.daysPerWeek ?? program.currentPublishedVersion?.frequencyPerWeek,
+            estimatedDurationMinutes: program.estimatedDurationMinutes,
+            equipment: mergedEquipment,
+            createdAt: program.createdAt,
+            updatedAt: program.updatedAt,
+        )
     }
 
-    private var updatedLabel: String? {
-        let parsed = CatalogViewModel.parseISODate(program.updatedAt) ?? CatalogViewModel.parseISODate(program.createdAt)
-        return parsed?.formatted(date: .abbreviated, time: .omitted)
-    }
-
-    private var placeholderImage: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: FFTheme.Radius.control)
-                .fill(FFColors.gray700)
-            Image(systemName: "figure.strengthtraining.traditional")
-                .font(.system(size: 36, weight: .semibold))
-                .foregroundStyle(FFColors.accent)
+    private func uniqueSorted(_ values: [String]) -> [String] {
+        var seen = Set<String>()
+        var result: [String] = []
+        for value in values {
+            let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { continue }
+            let key = trimmed.lowercased()
+            guard !seen.contains(key) else { continue }
+            seen.insert(key)
+            result.append(trimmed)
         }
-        .frame(height: 180)
-        .frame(maxWidth: .infinity)
-    }
-
-    private func specTag(title: String, value: String, icon: String) -> some View {
-        VStack(alignment: .leading, spacing: FFSpacing.xxs) {
-            Label(title, systemImage: icon)
-                .font(FFTypography.caption)
-                .foregroundStyle(FFColors.textSecondary)
-            Text(value)
-                .font(FFTypography.caption.weight(.semibold))
-                .foregroundStyle(FFColors.textPrimary)
-                .lineLimit(2)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, FFSpacing.sm)
-        .padding(.vertical, FFSpacing.xs)
-        .background(FFColors.surface)
-        .clipShape(RoundedRectangle(cornerRadius: FFTheme.Radius.control))
-        .overlay {
-            RoundedRectangle(cornerRadius: FFTheme.Radius.control)
-                .stroke(FFColors.gray700, lineWidth: 1)
-        }
-    }
-
-    private func resolvedImageURL(from pathOrURL: String?) -> URL? {
-        guard let pathOrURL, !pathOrURL.isEmpty else {
-            return nil
-        }
-
-        if let direct = URL(string: pathOrURL), direct.scheme != nil {
-            return direct
-        }
-
-        guard let baseURL = environment?.backendBaseURL else {
-            return nil
-        }
-
-        let normalizedPath = pathOrURL.hasPrefix("/") ? String(pathOrURL.dropFirst()) : pathOrURL
-        return baseURL.appendingPathComponent(normalizedPath)
+        return result.sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
     }
 }
 
@@ -3206,18 +3994,25 @@ struct FollowButton: View {
                 if state == .loading {
                     ProgressView()
                         .controlSize(.small)
-                        .tint(FFColors.background)
+                        .tint(FFColors.textSecondary)
+                }
+                if state == .follow {
+                    Image(systemName: "plus")
+                        .font(.system(size: 12, weight: .semibold))
+                } else if state == .following {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 11, weight: .semibold))
                 }
                 Text(title)
                     .font(FFTypography.caption.weight(.semibold))
             }
             .padding(.horizontal, FFSpacing.sm)
-            .frame(minHeight: 36)
+            .frame(minHeight: 38)
             .background(backgroundColor)
             .foregroundStyle(foregroundColor)
-            .clipShape(Capsule())
+            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
             .overlay {
-                Capsule()
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
                     .stroke(borderColor, lineWidth: 1)
             }
         }
@@ -3239,28 +4034,32 @@ struct FollowButton: View {
     private var backgroundColor: Color {
         switch state {
         case .follow:
-            FFColors.primary
-        case .following:
             FFColors.surface
+        case .following:
+            FFColors.surface.opacity(0.92)
         case .loading:
-            FFColors.gray700
+            FFColors.surface
         }
     }
 
     private var foregroundColor: Color {
         switch state {
-        case .follow, .loading:
-            FFColors.background
-        case .following:
+        case .follow:
             FFColors.textPrimary
+        case .following:
+            FFColors.accent
+        case .loading:
+            FFColors.textSecondary
         }
     }
 
     private var borderColor: Color {
         switch state {
-        case .follow, .loading:
-            FFColors.primary
+        case .follow:
+            FFColors.gray500
         case .following:
+            FFColors.accent.opacity(0.6)
+        case .loading:
             FFColors.gray700
         }
     }
@@ -3298,34 +4097,88 @@ private func isFollowFeatureNotSupported(_ apiError: APIError) -> Bool {
     return false
 }
 
+private func mergedInfluencerCard(_ current: InfluencerPublicCard, with incoming: InfluencerPublicCard) -> InfluencerPublicCard {
+    let mergedAchievements = Array(Set((current.achievements ?? []) + (incoming.achievements ?? []))).sorted {
+        $0.localizedCaseInsensitiveCompare($1) == .orderedAscending
+    }
+
+    return InfluencerPublicCard(
+        id: current.id,
+        displayName: preferredDisplayName(current.displayName, incoming.displayName),
+        bio: preferredText(current.bio, incoming.bio),
+        avatar: current.avatar ?? incoming.avatar,
+        socialLinks: (incoming.socialLinks?.isEmpty == false) ? incoming.socialLinks : current.socialLinks,
+        followersCount: max(current.followersCount, incoming.followersCount),
+        programsCount: max(current.programsCount, incoming.programsCount),
+        isFollowedByMe: incoming.isFollowedByMe,
+        directionTag: preferredText(current.directionTag, incoming.directionTag),
+        achievements: mergedAchievements.isEmpty ? nil : mergedAchievements,
+        trainingPhilosophy: preferredText(current.trainingPhilosophy, incoming.trainingPhilosophy),
+    )
+}
+
+private func preferredDisplayName(_ lhs: String, _ rhs: String) -> String {
+    let lhsTrimmed = lhs.trimmingCharacters(in: .whitespacesAndNewlines)
+    let rhsTrimmed = rhs.trimmingCharacters(in: .whitespacesAndNewlines)
+    if lhsTrimmed == "Атлет", rhsTrimmed != "Атлет", !rhsTrimmed.isEmpty {
+        return rhsTrimmed
+    }
+    if rhsTrimmed.count > lhsTrimmed.count {
+        return rhsTrimmed
+    }
+    return lhsTrimmed.isEmpty ? rhsTrimmed : lhsTrimmed
+}
+
+private func preferredText(_ lhs: String?, _ rhs: String?) -> String? {
+    let lhsTrimmed = lhs?.trimmingCharacters(in: .whitespacesAndNewlines)
+    let rhsTrimmed = rhs?.trimmingCharacters(in: .whitespacesAndNewlines)
+
+    if let lhsTrimmed, !lhsTrimmed.isEmpty, let rhsTrimmed, !rhsTrimmed.isEmpty {
+        return rhsTrimmed.count > lhsTrimmed.count ? rhsTrimmed : lhsTrimmed
+    }
+    if let lhsTrimmed, !lhsTrimmed.isEmpty {
+        return lhsTrimmed
+    }
+    if let rhsTrimmed, !rhsTrimmed.isEmpty {
+        return rhsTrimmed
+    }
+    return nil
+}
+
+private func resolveSocialProofBadges(for creator: InfluencerPublicCard) -> [String] {
+    guard let achievements = creator.achievements, !achievements.isEmpty else { return [] }
+    var result: [String] = []
+
+    for rawValue in achievements {
+        let normalized = rawValue.lowercased()
+        if (normalized.contains("popular") || normalized.contains("популяр") || normalized.contains("🔥")),
+           !result.contains("🔥 Популярный")
+        {
+            result.append("🔥 Популярный")
+        }
+        if (normalized.contains("top") || normalized.contains("топ") || normalized.contains("trainer") || normalized.contains("тренер") || normalized.contains("⭐")),
+           !result.contains("⭐ Топ тренер")
+        {
+            result.append("⭐ Топ тренер")
+        }
+    }
+
+    return result
+}
+
 struct ProgramsCatalogScreen: View {
     @State var viewModel: ProgramsCatalogViewModel
     let environment: AppEnvironment
+    @Binding var isSearchPresented: Bool
+    @Binding var isFiltersPresented: Bool
+    @Binding var isSortPresented: Bool
     let onProgramTap: (String) -> Void
-
-    @State private var isSearchExpanded = false
-    @State private var isFiltersPresented = false
 
     var body: some View {
         ScrollView {
             VStack(spacing: FFSpacing.md) {
                 if viewModel.isShowingCachedData {
                     cachedDataBadge
-                }
-
-                controlsRow
-
-                if isSearchExpanded || !viewModel.query.isEmpty {
-                    FFTextField(
-                        label: "Поиск",
-                        placeholder: "Название, цель или атлет",
-                        text: Binding(
-                            get: { viewModel.query },
-                            set: { viewModel.searchQueryChanged($0) },
-                        ),
-                        helperText: nil,
-                    )
-                    .accessibilityLabel("Поиск программы по названию")
                 }
 
                 if let error = viewModel.error, hasAnyPrograms {
@@ -3355,12 +4208,18 @@ struct ProgramsCatalogScreen: View {
                 }
             }
             .padding(.horizontal, FFSpacing.md)
-            .padding(.top, FFSpacing.sm)
+            .padding(.top, 4)
             .padding(.bottom, FFSpacing.lg)
         }
         .background(FFColors.background)
+        .sheet(isPresented: $isSearchPresented) {
+            ProgramSearchSheet(viewModel: viewModel)
+        }
         .sheet(isPresented: $isFiltersPresented) {
             FiltersSheet(viewModel: viewModel)
+        }
+        .sheet(isPresented: $isSortPresented) {
+            ProgramSortSheet(viewModel: viewModel)
         }
         .refreshable {
             await viewModel.refresh()
@@ -3374,48 +4233,9 @@ struct ProgramsCatalogScreen: View {
         !viewModel.programs.isEmpty || !viewModel.featuredPrograms.isEmpty
     }
 
-    private var controlsRow: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: FFSpacing.xs) {
-                catalogActionButton(
-                    title: viewModel.query.isEmpty ? "Поиск" : "Поиск: \(viewModel.query)",
-                    systemImage: "magnifyingglass",
-                    isActive: isSearchExpanded || !viewModel.query.isEmpty,
-                ) {
-                    withAnimation(.easeInOut(duration: 0.2)) {
-                        isSearchExpanded.toggle()
-                    }
-                }
-
-                catalogActionButton(
-                    title: "Фильтры",
-                    systemImage: "line.3.horizontal.decrease.circle",
-                    isActive: viewModel.hasActiveFilters,
-                ) {
-                    isFiltersPresented = true
-                }
-
-                Menu {
-                    ForEach(CatalogViewModel.SortOption.allCases) { option in
-                        Button(option.title) {
-                            viewModel.sortOption = option
-                        }
-                    }
-                } label: {
-                    chipLabel(
-                        title: "Сортировка",
-                        systemImage: "arrow.up.arrow.down",
-                        isActive: true,
-                    )
-                }
-            }
-            .padding(.horizontal, FFSpacing.md)
-        }
-    }
-
     @ViewBuilder
     private var content: some View {
-        VStack(alignment: .leading, spacing: FFSpacing.md) {
+        VStack(alignment: .leading, spacing: 20) {
             if !viewModel.featuredPrograms.isEmpty {
                 VStack(alignment: .leading, spacing: FFSpacing.sm) {
                     Text("Подборка")
@@ -3489,32 +4309,212 @@ struct ProgramsCatalogScreen: View {
             FFLoadingState(title: "Подбираем лучшие варианты")
         }
     }
+}
 
-    private func catalogActionButton(
-        title: String,
-        systemImage: String,
-        isActive: Bool,
-        action: @escaping () -> Void,
-    ) -> some View {
-        Button(action: action) {
-            chipLabel(title: title, systemImage: systemImage, isActive: isActive)
-        }
-        .buttonStyle(.plain)
-    }
+private struct ProgramSearchSheet: View {
+    @State var viewModel: ProgramsCatalogViewModel
+    @Environment(\.dismiss) private var dismiss
 
-    private func chipLabel(title: String, systemImage: String, isActive: Bool) -> some View {
-        Label(title, systemImage: systemImage)
-            .font(FFTypography.caption.weight(.semibold))
-            .foregroundStyle(isActive ? FFColors.background : FFColors.textPrimary)
-            .padding(.horizontal, FFSpacing.sm)
-            .frame(minHeight: 40)
-            .background(isActive ? FFColors.primary : FFColors.surface)
-            .clipShape(RoundedRectangle(cornerRadius: FFTheme.Radius.control))
-            .overlay {
-                RoundedRectangle(cornerRadius: FFTheme.Radius.control)
-                    .stroke(isActive ? FFColors.primary : FFColors.gray700, lineWidth: 1)
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(spacing: FFSpacing.sm) {
+                    FFTextField(
+                        label: "Поиск",
+                        placeholder: "Название, цель или атлет",
+                        text: Binding(
+                            get: { viewModel.query },
+                            set: { viewModel.searchQueryChanged($0) },
+                        ),
+                        helperText: "Поиск запускается автоматически",
+                    )
+
+                    if !viewModel.query.isEmpty {
+                        FFButton(title: "Очистить", variant: .secondary) {
+                            viewModel.searchQueryChanged("")
+                        }
+                    }
+                }
+                .padding(.horizontal, FFSpacing.md)
+                .padding(.top, FFSpacing.sm)
+                .padding(.bottom, FFSpacing.md)
             }
-            .lineLimit(1)
+            .background(FFColors.background)
+            .navigationTitle("Поиск")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("Закрыть") {
+                        dismiss()
+                    }
+                }
+            }
+        }
+    }
+}
+
+private struct ProgramSortSheet: View {
+    @State var viewModel: ProgramsCatalogViewModel
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(spacing: FFSpacing.sm) {
+                    ForEach(CatalogViewModel.SortOption.allCases) { option in
+                        Button {
+                            viewModel.sortOption = option
+                            dismiss()
+                        } label: {
+                            HStack(spacing: FFSpacing.sm) {
+                                Text(option.title)
+                                    .font(FFTypography.body.weight(.semibold))
+                                    .foregroundStyle(FFColors.textPrimary)
+                                Spacer()
+                                if viewModel.sortOption == option {
+                                    Image(systemName: "checkmark")
+                                        .font(.system(size: 13, weight: .bold))
+                                        .foregroundStyle(FFColors.accent)
+                                }
+                            }
+                        }
+                        .buttonStyle(.plain)
+                        .modifier(CardContainerStyle())
+                    }
+                }
+                .padding(.horizontal, FFSpacing.md)
+                .padding(.top, FFSpacing.sm)
+                .padding(.bottom, FFSpacing.md)
+            }
+            .background(FFColors.background)
+            .navigationTitle("Сортировка")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("Закрыть") {
+                        dismiss()
+                    }
+                }
+            }
+        }
+    }
+}
+
+private struct AthleteSortSheet: View {
+    @Binding var sortOption: AthleteCatalogSortOption
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(spacing: FFSpacing.sm) {
+                    ForEach(AthleteCatalogSortOption.allCases) { option in
+                        Button {
+                            sortOption = option
+                            dismiss()
+                        } label: {
+                            HStack(spacing: FFSpacing.sm) {
+                                Text(option.title)
+                                    .font(FFTypography.body.weight(.semibold))
+                                    .foregroundStyle(FFColors.textPrimary)
+                                Spacer()
+                                if sortOption == option {
+                                    Image(systemName: "checkmark")
+                                        .font(.system(size: 13, weight: .bold))
+                                        .foregroundStyle(FFColors.accent)
+                                }
+                            }
+                        }
+                        .buttonStyle(.plain)
+                        .modifier(CardContainerStyle())
+                    }
+                }
+                .padding(.horizontal, FFSpacing.md)
+                .padding(.top, FFSpacing.sm)
+                .padding(.bottom, FFSpacing.md)
+            }
+            .background(FFColors.background)
+            .navigationTitle("Сортировка")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("Закрыть") {
+                        dismiss()
+                    }
+                }
+            }
+        }
+    }
+}
+
+private struct AthletesFiltersSheet: View {
+    @Binding var sortOption: AthleteCatalogSortOption
+    @Binding var showOnlyWithPrograms: Bool
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(spacing: FFSpacing.sm) {
+                    CardContainer {
+                        VStack(alignment: .leading, spacing: FFSpacing.sm) {
+                            Text("Сортировка")
+                                .font(FFTypography.body.weight(.semibold))
+                                .foregroundStyle(FFColors.textPrimary)
+
+                            ForEach(AthleteCatalogSortOption.allCases) { option in
+                                Button {
+                                    sortOption = option
+                                } label: {
+                                    HStack(spacing: FFSpacing.sm) {
+                                        Text(option.title)
+                                            .font(FFTypography.body)
+                                            .foregroundStyle(FFColors.textPrimary)
+                                        Spacer(minLength: FFSpacing.sm)
+                                        if sortOption == option {
+                                            Image(systemName: "checkmark")
+                                                .font(.system(size: 12, weight: .bold))
+                                                .foregroundStyle(FFColors.textPrimary)
+                                        }
+                                    }
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                    }
+
+                    CardContainer {
+                        Toggle(
+                            isOn: $showOnlyWithPrograms,
+                            label: {
+                                VStack(alignment: .leading, spacing: FFSpacing.xxs) {
+                                    Text("Только с программами")
+                                        .font(FFTypography.body.weight(.semibold))
+                                        .foregroundStyle(FFColors.textPrimary)
+                                    Text("Скрывать атлетов без опубликованных программ")
+                                        .font(FFTypography.caption)
+                                        .foregroundStyle(FFColors.textSecondary)
+                                }
+                            },
+                        )
+                        .tint(FFColors.textPrimary)
+                    }
+                }
+                .padding(.horizontal, FFSpacing.md)
+                .padding(.top, FFSpacing.sm)
+                .padding(.bottom, FFSpacing.md)
+            }
+            .background(FFColors.background)
+            .navigationTitle("Фильтры")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("Закрыть") {
+                        dismiss()
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -3660,6 +4660,29 @@ struct FiltersSheet: View {
     }
 }
 
+struct CardContainerStyle: ViewModifier {
+    func body(content: Content) -> some View {
+        content
+            .padding(FFSpacing.md)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(FFColors.surface)
+            .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 24, style: .continuous)
+                    .stroke(FFColors.gray700.opacity(0.7), lineWidth: 1)
+            }
+    }
+}
+
+struct CardContainer<Content: View>: View {
+    @ViewBuilder var content: Content
+
+    var body: some View {
+        content
+            .modifier(CardContainerStyle())
+    }
+}
+
 struct ProgramCard: View {
     let program: CatalogViewModel.ProgramCard
     var isCompact = false
@@ -3667,7 +4690,7 @@ struct ProgramCard: View {
 
     var body: some View {
         Button(action: onTap) {
-            FFCard {
+            CardContainer {
                 VStack(alignment: .leading, spacing: FFSpacing.xs) {
                     Text(program.title)
                         .font(isCompact ? FFTypography.body.weight(.semibold) : FFTypography.h2)
@@ -3680,7 +4703,10 @@ struct ProgramCard: View {
                         .foregroundStyle(FFColors.textSecondary)
                         .lineLimit(1)
 
-                    HStack(spacing: FFSpacing.xs) {
+                    LazyVGrid(
+                        columns: Array(repeating: GridItem(.flexible(), spacing: FFSpacing.xs), count: 3),
+                        spacing: FFSpacing.xs,
+                    ) {
                         statChip(title: "Уровень", value: program.levelTitle)
                         statChip(title: "Дней в неделю", value: daysTitle)
                         statChip(title: "Длительность", value: durationTitle)
@@ -3725,17 +4751,22 @@ struct ProgramCard: View {
             Text(title)
                 .font(FFTypography.caption)
                 .foregroundStyle(FFColors.textSecondary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.72)
             Text(value)
                 .font(FFTypography.caption.weight(.semibold))
                 .foregroundStyle(FFColors.textPrimary)
                 .lineLimit(1)
+                .minimumScaleFactor(0.72)
         }
-        .padding(.horizontal, FFSpacing.xs)
-        .padding(.vertical, FFSpacing.xxs)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 10)
+        .padding(.vertical, FFSpacing.xs)
+        .frame(minHeight: 56, maxHeight: 56, alignment: .topLeading)
         .background(FFColors.surface)
-        .clipShape(RoundedRectangle(cornerRadius: FFTheme.Radius.control))
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         .overlay {
-            RoundedRectangle(cornerRadius: FFTheme.Radius.control)
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .stroke(FFColors.gray700, lineWidth: 1)
         }
     }
@@ -3767,15 +4798,28 @@ private extension String {
 
 #Preview("Каталог") {
     NavigationStack {
+        ProgramsCatalogPreviewContainer()
+        .navigationTitle("Каталог")
+    }
+}
+
+private struct ProgramsCatalogPreviewContainer: View {
+    @State private var isSearchPresented = false
+    @State private var isFiltersPresented = false
+    @State private var isSortPresented = false
+
+    var body: some View {
         ProgramsCatalogScreen(
             viewModel: CatalogViewModel(
                 userSub: "preview",
                 programsClient: CatalogPreviewProgramsClient(),
             ),
             environment: PreviewMocks.environment,
+            isSearchPresented: $isSearchPresented,
+            isFiltersPresented: $isFiltersPresented,
+            isSortPresented: $isSortPresented,
             onProgramTap: { _ in },
         )
-        .navigationTitle("Каталог")
     }
 }
 

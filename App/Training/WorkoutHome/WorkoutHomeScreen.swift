@@ -10,6 +10,7 @@ struct WorkoutHomeScreen: View {
     let onRepeatWorkout: (CompletedWorkoutRecord) -> Void
     let onOpenRecentWorkout: (CompletedWorkoutRecord) -> Void
     let onOpenCatalog: () -> Void
+    let onOpenProgramHistory: (_ programId: String, _ programTitle: String) -> Void
 
     private let sectionSpacing: CGFloat = 14
 
@@ -24,7 +25,8 @@ struct WorkoutHomeScreen: View {
                    viewModel.hasResumeWorkout
                 {
                     WorkoutInProgressBanner(
-                        subtitle: resumeSubtitle(for: resumeWorkout),
+                        workoutName: resumeWorkout.workoutName,
+                        detailsText: resumeProgressText(for: resumeWorkout),
                         onContinue: {
                             runResumeAction(resumeWorkout)
                         }
@@ -49,6 +51,9 @@ struct WorkoutHomeScreen: View {
                         isCompleted: progress.isCompleted,
                         isActionEnabled: true,
                         onAction: runProgramAction,
+                        onOpenHistory: {
+                            onOpenProgramHistory(progress.programId, progress.title)
+                        }
                     )
                 }
 
@@ -168,18 +173,8 @@ struct WorkoutHomeScreen: View {
         }
     }
 
-    private func resumeSubtitle(for workout: WorkoutHomeViewModel.ResumeWorkout) -> String {
-        let elapsedText = relativeTimeText(for: workout.startedAt)
-        if let elapsedText {
-            return "\(workout.workoutName) • \(elapsedText)"
-        }
-        return workout.metricsText
-    }
-
-    private func relativeTimeText(for startedAt: Date?) -> String? {
-        guard let startedAt else { return nil }
-        let minutes = max(1, Int(Date().timeIntervalSince(startedAt) / 60))
-        return "Начата \(minutes) мин назад"
+    private func resumeProgressText(for workout: WorkoutHomeViewModel.ResumeWorkout) -> String {
+        "\(workout.completedExercisesCount) из \(max(workout.totalExercisesCount, 1)) упражнений"
     }
 }
 
@@ -194,6 +189,7 @@ struct WorkoutHomeScreen: View {
             onRepeatWorkout: { _ in },
             onOpenRecentWorkout: { _ in },
             onOpenCatalog: {},
+            onOpenProgramHistory: { _, _ in },
         )
     }
 }

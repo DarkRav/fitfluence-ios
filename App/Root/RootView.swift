@@ -136,6 +136,7 @@ private struct AthleteShellView: View {
 
     @State private var selectedTab: ShellTab = .training
     @State private var resumeSession: ActiveWorkoutSession?
+    @State private var resumeSessionTitle: String?
     @State private var pendingResumeRequest: ActiveWorkoutSession?
 
     enum ShellTab: Hashable {
@@ -150,7 +151,8 @@ private struct AthleteShellView: View {
         VStack(spacing: 0) {
             if let session = resumeSession, selectedTab != .training {
                 WorkoutInProgressBanner(
-                    subtitle: resumeSubtitle(for: session),
+                    workoutName: resumeSessionTitle,
+                    detailsText: nil,
                     onContinue: {
                         ClientAnalytics.track(
                             .workoutContinueButtonTapped,
@@ -258,18 +260,17 @@ private struct AthleteShellView: View {
         }
     }
 
-    private func resumeSubtitle(for session: ActiveWorkoutSession) -> String {
-        let minutes = max(1, Int(Date().timeIntervalSince(session.lastUpdated) / 60))
-        return "Начата \(minutes) мин назад"
-    }
-
     private func refreshResumeSession() async {
         let userSub = me.subject ?? "anonymous"
         guard !userSub.isEmpty, userSub != "anonymous" else {
             resumeSession = nil
+            resumeSessionTitle = nil
             return
         }
-        var latest = await LocalWorkoutProgressStore().latestActiveSession(userSub: userSub)
+        let progressStore = LocalWorkoutProgressStore()
+        let resumeStore = LocalWorkoutResumeStore()
+        var latest = await progressStore.latestActiveSession(userSub: userSub)
+        var remoteWorkoutTitle: String?
 
         if latest == nil,
            isOnline,
@@ -287,6 +288,7 @@ private struct AthleteShellView: View {
                    !workoutId.isEmpty,
                    !programId.isEmpty
                 {
+                    remoteWorkoutTitle = normalizedWorkoutTitle(progress.currentWorkoutTitle)
                     latest = ActiveWorkoutSession(
                         userSub: userSub,
                         programId: programId,
@@ -302,6 +304,7 @@ private struct AthleteShellView: View {
                           !workoutId.isEmpty,
                           !programId.isEmpty
                 {
+                    remoteWorkoutTitle = normalizedWorkoutTitle(progress.nextWorkoutTitle)
                     latest = ActiveWorkoutSession(
                         userSub: userSub,
                         programId: programId,
@@ -316,6 +319,56 @@ private struct AthleteShellView: View {
         }
 
         resumeSession = latest
+        guard let latest else {
+            resumeSessionTitle = nil
+            return
+        }
+
+        resumeSessionTitle = await resolveResumeWorkoutTitle(
+            for: latest,
+            userSub: userSub,
+            progressStore: progressStore,
+            resumeStore: resumeStore,
+            remoteWorkoutTitle: remoteWorkoutTitle,
+        )
+    }
+
+    private func resolveResumeWorkoutTitle(
+        for session: ActiveWorkoutSession,
+        userSub: String,
+        progressStore: WorkoutProgressStore,
+        resumeStore: WorkoutResumeStore,
+        remoteWorkoutTitle: String?,
+    ) async -> String? {
+        if let remoteWorkoutTitle = normalizedWorkoutTitle(remoteWorkoutTitle) {
+            return remoteWorkoutTitle
+        }
+
+        if let localResume = await resumeStore.latest(userSub: userSub),
+           localResume.programId == session.programId,
+           localResume.workoutId == session.workoutId,
+           let resumeTitle = normalizedWorkoutTitle(localResume.workoutName)
+        {
+            return resumeTitle
+        }
+
+        if let snapshot = await progressStore.load(
+            userSub: session.userSub,
+            programId: session.programId,
+            workoutId: session.workoutId,
+        ),
+            let snapshotTitle = normalizedWorkoutTitle(snapshot.workoutDetails?.title)
+        {
+            return snapshotTitle
+        }
+
+        return nil
+    }
+
+    private func normalizedWorkoutTitle(_ value: String?) -> String? {
+        guard let value else { return nil }
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
     }
 }
 
@@ -324,6 +377,44 @@ private struct PlanTabContent: View {
     let userSub: String
 
     @State private var planViewModel: PlanScheduleViewModel
+    @State private var programWorkoutRoute: ProgramWorkoutRoute?
+    @State private var presetWorkoutRoute: PresetWorkoutRoute?
+    @State private var recentWorkoutDetailsRoute: RecentWorkoutDetailsRoute?
+    @State private var isQuickBuilderPresented = false
+
+    private struct ProgramWorkoutRoute: Identifiable, Hashable {
+        let programId: String
+        let workoutId: String
+
+        var id: String {
+            "\(programId)::\(workoutId)"
+        }
+    }
+
+    private struct PresetWorkoutRoute: Identifiable {
+        let workout: WorkoutDetailsModel
+        let source: WorkoutSource
+
+        var id: String {
+            "\(source.rawValue)::\(workout.id)"
+        }
+    }
+
+    private struct RecentWorkoutDetailsRoute: Identifiable, Hashable {
+        let record: CompletedWorkoutRecord
+
+        var id: String {
+            record.id
+        }
+
+        static func == (lhs: RecentWorkoutDetailsRoute, rhs: RecentWorkoutDetailsRoute) -> Bool {
+            lhs.id == rhs.id
+        }
+
+        func hash(into hasher: inout Hasher) {
+            hasher.combine(id)
+        }
+    }
 
     init(
         apiClient: APIClientProtocol?,
@@ -340,8 +431,72 @@ private struct PlanTabContent: View {
     }
 
     var body: some View {
-        PlanScheduleScreen(viewModel: planViewModel)
+        PlanScheduleScreen(
+            viewModel: planViewModel,
+            onOpenProgramWorkout: { programId, workoutId in
+                programWorkoutRoute = ProgramWorkoutRoute(programId: programId, workoutId: workoutId)
+            },
+            onOpenPresetWorkout: { workout, source in
+                presetWorkoutRoute = PresetWorkoutRoute(workout: workout, source: source)
+            },
+            onOpenQuickWorkoutBuilder: {
+                isQuickBuilderPresented = true
+            },
+            onOpenCompletedWorkout: { record in
+                recentWorkoutDetailsRoute = RecentWorkoutDetailsRoute(record: record)
+            },
+        )
             .navigationTitle("План")
+            .navigationDestination(item: $programWorkoutRoute) { route in
+                WorkoutLaunchView(
+                    userSub: userSub,
+                    programId: route.programId,
+                    workoutId: route.workoutId,
+                    apiClient: apiClient,
+                    onOpenPlan: {},
+                )
+            }
+            .navigationDestination(item: $presetWorkoutRoute) { route in
+                WorkoutLaunchView(
+                    userSub: userSub,
+                    programId: route.source.rawValue,
+                    workoutId: route.workout.id,
+                    apiClient: apiClient,
+                    presetWorkout: route.workout,
+                    source: route.source,
+                    onOpenPlan: {},
+                )
+            }
+            .navigationDestination(item: $recentWorkoutDetailsRoute) { route in
+                RecentWorkoutDetailsView(
+                    record: route.record,
+                    onRepeat: {
+                        openRepeatWorkout(route.record)
+                    },
+                )
+            }
+            .fullScreenCover(isPresented: $isQuickBuilderPresented) {
+                NavigationStack {
+                    QuickWorkoutBuilderView { workout in
+                        presetWorkoutRoute = PresetWorkoutRoute(workout: workout, source: .freestyle)
+                    }
+                }
+            }
+    }
+
+    private func openRepeatWorkout(_ record: CompletedWorkoutRecord) {
+        switch record.source {
+        case .program:
+            guard UUID(uuidString: record.programId) != nil else {
+                isQuickBuilderPresented = true
+                return
+            }
+            programWorkoutRoute = ProgramWorkoutRoute(programId: record.programId, workoutId: record.workoutId)
+        case .template:
+            isQuickBuilderPresented = true
+        case .freestyle:
+            isQuickBuilderPresented = true
+        }
     }
 }
 
@@ -425,6 +580,7 @@ private struct CatalogTabContent: View {
                 },
             )
             .navigationTitle("Каталог")
+            .navigationBarTitleDisplayMode(.inline)
             .navigationDestination(
                 isPresented: Binding(
                     get: { viewStore.state != nil },
@@ -1349,6 +1505,7 @@ private struct TrainingTabContent: View {
 
     @State private var sessionRoute: ActiveWorkoutSession?
     @State private var programWorkoutRoute: ProgramWorkoutRoute?
+    @State private var programHistoryRoute: ProgramHistoryRoute?
     @State private var presetWorkoutRoute: PresetWorkoutRoute?
     @State private var recentWorkoutDetailsRoute: RecentWorkoutDetailsRoute?
     @State private var isQuickBuilderPresented = false
@@ -1367,6 +1524,15 @@ private struct TrainingTabContent: View {
         let source: WorkoutSource
         var id: String {
             "\(source.rawValue)::\(workout.id)"
+        }
+    }
+
+    private struct ProgramHistoryRoute: Identifiable, Hashable {
+        let programId: String
+        let programTitle: String
+
+        var id: String {
+            programId
         }
     }
 
@@ -1413,6 +1579,9 @@ private struct TrainingTabContent: View {
             onOpenCatalog: {
                 onOpenCatalog()
             },
+            onOpenProgramHistory: { programId, programTitle in
+                programHistoryRoute = ProgramHistoryRoute(programId: programId, programTitle: programTitle)
+            },
         )
         .navigationDestination(item: $sessionRoute) { session in
             WorkoutLaunchView(
@@ -1442,6 +1611,22 @@ private struct TrainingTabContent: View {
                 presetWorkout: route.workout,
                 source: route.source,
                 onOpenPlan: onOpenPlan,
+            )
+        }
+        .navigationDestination(item: $programHistoryRoute) { route in
+            ProgramWorkoutHistoryScreen(
+                viewModel: ProgramWorkoutHistoryViewModel(
+                    programId: route.programId,
+                    programTitle: route.programTitle,
+                    userSub: userSub,
+                    workoutsClient: makeWorkoutsClient(),
+                ),
+                onOpenWorkout: { workoutId in
+                    programWorkoutRoute = ProgramWorkoutRoute(programId: route.programId, workoutId: workoutId)
+                },
+                onOpenCompletedWorkout: { record in
+                    recentWorkoutDetailsRoute = RecentWorkoutDetailsRoute(record: record)
+                },
             )
         }
         .navigationDestination(item: $recentWorkoutDetailsRoute) { route in
@@ -1497,6 +1682,13 @@ private struct TrainingTabContent: View {
         case .freestyle:
             isQuickBuilderPresented = true
         }
+    }
+
+    private func makeWorkoutsClient() -> any WorkoutsClientProtocol {
+        if let programsClient = apiClient as? ProgramsClientProtocol {
+            return WorkoutsClient(programsClient: programsClient)
+        }
+        return UnavailableWorkoutsClient()
     }
 }
 

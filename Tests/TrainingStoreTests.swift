@@ -100,6 +100,104 @@ final class TrainingStoreTests: XCTestCase {
         XCTAssertEqual(insight.ctaTitle, "Открыть план")
     }
 
+    func testDeleteAndMovePlannedWorkout() async throws {
+        let suite = "fitfluence.tests.training.plan.move.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        let calendar = Calendar.current
+        let store = LocalTrainingStore(defaults: defaults, calendar: calendar)
+        let today = calendar.startOfDay(for: Date())
+        let tomorrow = calendar.date(byAdding: .day, value: 1, to: today) ?? today
+
+        let plan = TrainingDayPlan(
+            id: "plan-1",
+            userSub: "u1",
+            day: today,
+            status: .planned,
+            programId: "program-1",
+            workoutId: "workout-1",
+            title: "День A",
+            source: .program,
+            workoutDetails: nil,
+        )
+
+        await store.schedule(plan)
+        var plansToday = await store.plans(userSub: "u1", month: today)
+        XCTAssertEqual(plansToday.count, 1)
+
+        await store.movePlan(
+            userSub: "u1",
+            from: today,
+            to: tomorrow,
+            planId: "plan-1",
+            workoutId: "workout-1",
+            title: "День A",
+            source: .program,
+            status: .planned,
+            programId: "program-1",
+            workoutDetails: nil,
+        )
+
+        plansToday = await store.plans(userSub: "u1", month: today)
+        let plansTomorrow = await store.plans(userSub: "u1", month: tomorrow)
+        XCTAssertFalse(plansToday.contains(where: { calendar.isDate($0.day, inSameDayAs: today) }))
+        XCTAssertTrue(plansTomorrow.contains(where: { calendar.isDate($0.day, inSameDayAs: tomorrow) }))
+
+        await store.deletePlan(
+            userSub: "u1",
+            day: tomorrow,
+            planId: "plan-1",
+            workoutId: "workout-1",
+            title: "День A",
+            source: .program,
+        )
+        let afterDelete = await store.plans(userSub: "u1", month: tomorrow)
+        XCTAssertFalse(afterDelete.contains(where: { $0.workoutId == "workout-1" }))
+    }
+
+    func testScheduleAllowsMultiplePlansOnSameDayForSameWorkoutId() async throws {
+        let suite = "fitfluence.tests.training.plan.multi.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        let calendar = Calendar.current
+        let store = LocalTrainingStore(defaults: defaults, calendar: calendar)
+        let today = calendar.startOfDay(for: Date())
+
+        let first = TrainingDayPlan(
+            id: "plan-1",
+            userSub: "u1",
+            day: today,
+            status: .planned,
+            programId: nil,
+            workoutId: "repeat-target",
+            title: "Повтор 1",
+            source: .freestyle,
+            workoutDetails: nil,
+        )
+        let second = TrainingDayPlan(
+            id: "plan-2",
+            userSub: "u1",
+            day: today,
+            status: .planned,
+            programId: nil,
+            workoutId: "repeat-target",
+            title: "Повтор 2",
+            source: .freestyle,
+            workoutDetails: nil,
+        )
+
+        await store.schedule(first)
+        await store.schedule(second)
+
+        let plans = await store.plans(userSub: "u1", month: today)
+            .filter { calendar.isDate($0.day, inSameDayAs: today) }
+        XCTAssertEqual(plans.count, 2)
+        XCTAssertTrue(plans.contains(where: { $0.id == "plan-1" }))
+        XCTAssertTrue(plans.contains(where: { $0.id == "plan-2" }))
+    }
+
     func testProgressInsightEngineShowsRecentPRAction() {
         let calendar = Calendar.current
         let recentDate = calendar.date(byAdding: .day, value: -3, to: Date()) ?? Date()

@@ -1,4 +1,5 @@
 import Observation
+import Charts
 import SwiftUI
 
 enum ProgressSection: String, CaseIterable, Identifiable, Sendable {
@@ -51,6 +52,86 @@ enum ProgressPeriod: String, CaseIterable, Equatable, Sendable {
             nil
         }
     }
+
+    static var analyticsCases: [ProgressPeriod] {
+        [.days7, .days30]
+    }
+}
+
+enum ProgressChartMode: String, CaseIterable, Identifiable, Sendable {
+    case workouts
+    case volume
+    case minutes
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .workouts:
+            "Тренировки"
+        case .volume:
+            "Объём"
+        case .minutes:
+            "Время"
+        }
+    }
+}
+
+enum ProgressStreakState: Equatable, Sendable {
+    case active
+    case atRisk
+    case broken
+}
+
+struct ProgressStreakSnapshot: Equatable, Sendable {
+    let days: Int
+    let bestDays: Int
+    let state: ProgressStreakState
+    let title: String
+    let subtitle: String
+
+    static let empty = ProgressStreakSnapshot(
+        days: 0,
+        bestDays: 0,
+        state: .broken,
+        title: "Начните новую серию тренировок",
+        subtitle: "Сделайте тренировку, чтобы открыть серию.",
+    )
+}
+
+struct ProgressPeriodMetricSnapshot: Equatable, Sendable, Identifiable {
+    let id: String
+    let title: String
+    let value: String
+    let delta: Int
+}
+
+struct ProgressPeriodSummarySnapshot: Equatable, Sendable {
+    let period: ProgressPeriod
+    let metrics: [ProgressPeriodMetricSnapshot]
+}
+
+struct ProgressActivityPoint: Equatable, Sendable, Identifiable {
+    let day: Date
+    let workouts: Int
+    let volume: Double
+    let minutes: Int
+
+    var id: Date { day }
+}
+
+struct ProgressPersonalRecordSnapshot: Equatable, Sendable, Identifiable {
+    let id: String
+    let title: String
+    let value: String
+    let dateText: String
+    let achievedAt: Date?
+}
+
+enum ProgressPrimaryAchievement: Equatable, Sendable {
+    case personalRecord(title: String, value: String)
+    case streak(days: Int)
+    case weeklyVolume(Int)
 }
 
 enum ProgressHistorySourceFilter: String, CaseIterable, Equatable, Sendable {
@@ -265,6 +346,62 @@ final class TrainingInsightsViewModel {
 
     var historyGroups: [ProgressHistoryGroup] = []
 
+    var streakSnapshot: ProgressStreakSnapshot {
+        buildStreakSnapshot(referenceDay: calendar.startOfDay(for: Date()))
+    }
+
+    var primaryAchievement: ProgressPrimaryAchievement? {
+        if let pr = topPersonalRecords.first {
+            return .personalRecord(title: pr.title, value: pr.value)
+        }
+
+        let streak = streakSnapshot
+        if streak.days > 0 {
+            return .streak(days: streak.days)
+        }
+
+        let weeklyVolume = Int(volume(inLast: 7, history: localHistory).rounded())
+        if weeklyVolume > 0 {
+            return .weeklyVolume(weeklyVolume)
+        }
+
+        return nil
+    }
+
+    var periodSummary: ProgressPeriodSummarySnapshot {
+        buildPeriodSummary(for: selectedPeriod)
+    }
+
+    var activityPoints: [ProgressActivityPoint] {
+        buildActivityPoints(for: selectedPeriod)
+    }
+
+    var topPersonalRecords: [ProgressPersonalRecordSnapshot] {
+        let formatter = Self.listDateFormatter
+
+        return personalRecords
+            .sorted { lhs, rhs in
+                let leftValue = lhs.value ?? 0
+                let rightValue = rhs.value ?? 0
+                if abs(leftValue - rightValue) > 0.001 {
+                    return leftValue > rightValue
+                }
+                return (lhs.achievedAtDate ?? .distantPast) > (rhs.achievedAtDate ?? .distantPast)
+            }
+            .prefix(3)
+            .map { record in
+                let exerciseName = record.exerciseName?.trimmedNilIfEmpty ?? "Упражнение"
+                let dateText = record.achievedAtDate.map { formatter.string(from: $0) } ?? "Дата неизвестна"
+                return ProgressPersonalRecordSnapshot(
+                    id: record.id,
+                    title: exerciseName,
+                    value: record.valueWithUnit,
+                    dateText: dateText,
+                    achievedAt: record.achievedAtDate,
+                )
+            }
+    }
+
     private(set) var allExerciseItems: [ExerciseProgressListItem] = []
     private var localHistory: [CompletedWorkoutRecord] = []
     private var localPlansByMonth: [String: [TrainingDayPlan]] = [:]
@@ -305,7 +442,6 @@ final class TrainingInsightsViewModel {
 
     func onAppear() async {
         if didInitialLoad {
-            await preloadVisibleExerciseMetadata(limit: 20)
             return
         }
         didInitialLoad = true
@@ -357,7 +493,6 @@ final class TrainingInsightsViewModel {
         }
 
         rebuildDerivedState()
-        await preloadVisibleExerciseMetadata(limit: 20)
 
         guard networkMonitor.currentStatus, let athleteTrainingClient else {
             if statsSummary == nil, personalRecords.isEmpty, localHistory.isEmpty {
@@ -371,7 +506,6 @@ final class TrainingInsightsViewModel {
         await fetchRemoteNextAction(client: athleteTrainingClient)
 
         rebuildDerivedState()
-        await preloadVisibleExerciseMetadata(limit: 20)
 
         if statsSummary == nil, personalRecords.isEmpty, localHistory.isEmpty {
             errorMessage = "Не удалось загрузить прогресс. Попробуйте позже."
@@ -555,6 +689,243 @@ final class TrainingInsightsViewModel {
         rebuildHistoryGroups()
     }
 
+    private func buildPeriodSummary(for period: ProgressPeriod) -> ProgressPeriodSummarySnapshot {
+        let days = period.days ?? 30
+        let today = calendar.startOfDay(for: Date())
+        let currentWindow = metricWindow(days: days, endingAt: today)
+        let previousWindowEnd = calendar.date(byAdding: .day, value: -days, to: today) ?? today
+        let previousWindow = metricWindow(days: days, endingAt: previousWindowEnd)
+
+        let streak = streakSnapshot
+
+        let metrics = [
+            ProgressPeriodMetricSnapshot(
+                id: "workouts",
+                title: "Тренировок",
+                value: "\(currentWindow.workouts)",
+                delta: currentWindow.workouts - previousWindow.workouts,
+            ),
+            ProgressPeriodMetricSnapshot(
+                id: "minutes",
+                title: "Время (мин)",
+                value: "\(currentWindow.minutes)",
+                delta: currentWindow.minutes - previousWindow.minutes,
+            ),
+            ProgressPeriodMetricSnapshot(
+                id: "volume",
+                title: "Объём (кг)",
+                value: "\(Int(currentWindow.volume.rounded()))",
+                delta: Int((currentWindow.volume - previousWindow.volume).rounded()),
+            ),
+            ProgressPeriodMetricSnapshot(
+                id: "streak",
+                title: "Серия",
+                value: "\(streak.days)",
+                delta: streak.days - previousWindow.streakDays,
+            ),
+        ]
+
+        return ProgressPeriodSummarySnapshot(period: period, metrics: metrics)
+    }
+
+    private func buildActivityPoints(for period: ProgressPeriod) -> [ProgressActivityPoint] {
+        let days = max(1, period.days ?? 30)
+        let today = calendar.startOfDay(for: Date())
+        let start = calendar.date(byAdding: .day, value: -(days - 1), to: today) ?? today
+
+        let grouped = Dictionary(grouping: localHistory) { record in
+            calendar.startOfDay(for: record.finishedAt)
+        }
+
+        return (0 ..< days).compactMap { offset in
+            guard let day = calendar.date(byAdding: .day, value: offset, to: start) else { return nil }
+            let records = grouped[day] ?? []
+            let workouts = records.count
+            let minutes = records.reduce(0) { $0 + max(1, $1.durationSeconds / 60) }
+            let volume = records.reduce(0.0) { $0 + max(0, $1.volume) }
+            return ProgressActivityPoint(
+                day: day,
+                workouts: workouts,
+                volume: volume,
+                minutes: minutes,
+            )
+        }
+    }
+
+    private func metricWindow(days: Int, endingAt endDay: Date) -> (workouts: Int, minutes: Int, volume: Double, streakDays: Int) {
+        let normalizedEnd = calendar.startOfDay(for: endDay)
+        let normalizedStart = calendar.date(byAdding: .day, value: -(days - 1), to: normalizedEnd) ?? normalizedEnd
+
+        let records = localHistory.filter { record in
+            let day = calendar.startOfDay(for: record.finishedAt)
+            return day >= normalizedStart && day <= normalizedEnd
+        }
+
+        let workouts = records.count
+        let minutes = records.reduce(0) { $0 + max(1, $1.durationSeconds / 60) }
+        let volume = records.reduce(0.0) { $0 + max(0, $1.volume) }
+        let streakDays = buildStreakSnapshot(referenceDay: normalizedEnd).days
+
+        return (workouts, minutes, volume, streakDays)
+    }
+
+    private enum ExpectedDayStatus {
+        case completed
+        case pending
+        case missed
+    }
+
+    private struct ExpectedDaySnapshot {
+        let day: Date
+        let status: ExpectedDayStatus
+    }
+
+    private struct ExpectedDayAccumulator {
+        var scheduled = false
+        var completed = false
+        var missed = false
+    }
+
+    private func buildStreakSnapshot(referenceDay: Date) -> ProgressStreakSnapshot {
+        let today = calendar.startOfDay(for: referenceDay)
+        let expectedDays = expectedDaySnapshots(referenceDay: today)
+        guard !expectedDays.isEmpty else { return .empty }
+
+        let sortedDesc = expectedDays.sorted { $0.day > $1.day }
+        let atRiskToday = sortedDesc.first(where: { $0.day == today })?.status == .pending
+
+        var startIndex = 0
+        if atRiskToday, sortedDesc.first?.day == today {
+            startIndex = 1
+        }
+
+        var currentDays = 0
+        if startIndex < sortedDesc.count {
+            for index in startIndex ..< sortedDesc.count {
+                if sortedDesc[index].status == .completed {
+                    currentDays += 1
+                } else {
+                    break
+                }
+            }
+        }
+
+        let bestDays = bestStreakDays(from: expectedDays, referenceDay: today)
+
+        if atRiskToday {
+            let subtitle = currentDays > 0 ? "\(currentDays) дн подряд" : "Завершите тренировку сегодня"
+            return ProgressStreakSnapshot(
+                days: currentDays,
+                bestDays: bestDays,
+                state: .atRisk,
+                title: "Серия может прерваться сегодня",
+                subtitle: subtitle,
+            )
+        }
+
+        if currentDays <= 0 {
+            return ProgressStreakSnapshot(
+                days: 0,
+                bestDays: bestDays,
+                state: .broken,
+                title: "Начните новую серию тренировок",
+                subtitle: bestDays > 0 ? "Лучшая серия: \(bestDays) дн" : "Сделайте тренировку, чтобы открыть серию.",
+            )
+        }
+
+        return ProgressStreakSnapshot(
+            days: currentDays,
+            bestDays: bestDays,
+            state: .active,
+            title: currentDays == 1 ? "🔥 1 день" : "🔥 \(currentDays) дней подряд",
+            subtitle: bestDays > currentDays ? "Лучшая серия: \(bestDays) дн" : "Продолжайте в том же темпе",
+        )
+    }
+
+    private func expectedDaySnapshots(referenceDay: Date) -> [ExpectedDaySnapshot] {
+        let today = calendar.startOfDay(for: referenceDay)
+        var perDay: [Date: ExpectedDayAccumulator] = [:]
+
+        for monthCalendar in calendarByMonth.values {
+            for workout in monthCalendar.workouts {
+                guard let workoutDate = dateForWorkout(workout) else { continue }
+                let day = calendar.startOfDay(for: workoutDate)
+                var accumulator = perDay[day] ?? ExpectedDayAccumulator()
+                accumulator.scheduled = true
+
+                switch workout.status {
+                case .completed:
+                    accumulator.completed = true
+                case .missed, .abandoned:
+                    accumulator.missed = true
+                case .planned, .inProgress, .none:
+                    break
+                }
+
+                perDay[day] = accumulator
+            }
+        }
+
+        for plans in localPlansByMonth.values {
+            for plan in plans {
+                let day = calendar.startOfDay(for: plan.day)
+                var accumulator = perDay[day] ?? ExpectedDayAccumulator()
+                accumulator.scheduled = true
+
+                switch plan.status {
+                case .completed:
+                    accumulator.completed = true
+                case .missed, .skipped:
+                    accumulator.missed = true
+                case .planned, .inProgress:
+                    break
+                }
+
+                perDay[day] = accumulator
+            }
+        }
+
+        return perDay
+            .compactMap { day, accumulator in
+                guard day <= today else { return nil }
+                if accumulator.completed {
+                    return ExpectedDaySnapshot(day: day, status: .completed)
+                }
+                if day == today, accumulator.scheduled, !accumulator.missed {
+                    return ExpectedDaySnapshot(day: day, status: .pending)
+                }
+                if accumulator.scheduled || accumulator.missed {
+                    return ExpectedDaySnapshot(day: day, status: .missed)
+                }
+                return nil
+            }
+            .sorted { $0.day < $1.day }
+    }
+
+    private func bestStreakDays(from expectedDays: [ExpectedDaySnapshot], referenceDay: Date) -> Int {
+        let today = calendar.startOfDay(for: referenceDay)
+        let filtered = expectedDays
+            .filter { $0.day <= today }
+            .sorted { $0.day < $1.day }
+
+        var best = 0
+        var current = 0
+
+        for snapshot in filtered {
+            switch snapshot.status {
+            case .completed:
+                current += 1
+                best = max(best, current)
+            case .pending:
+                continue
+            case .missed:
+                current = 0
+            }
+        }
+
+        return best
+    }
+
     private func rebuildOverview() {
         let fallbackStreak = computeLocalStreakDays(history: localHistory)
         let fallbackWorkouts7d = workouts(inLast: 7, history: localHistory)
@@ -734,9 +1105,11 @@ final class TrainingInsightsViewModel {
                     switch plan.status {
                     case .planned:
                         planned += 1
+                    case .inProgress:
+                        planned += 1
                     case .completed:
                         completed += 1
-                    case .missed:
+                    case .missed, .skipped:
                         missed += 1
                     }
                 }
@@ -1010,28 +1383,11 @@ struct TrainingInsightsView: View {
     var onOpenPlan: () -> Void = {}
     var onStartNextWorkout: () -> Void = {}
 
-    @State private var selectedExercise: ExerciseProgressListItem?
-    @State private var trackedHighlightID: String?
+    @State private var selectedChartMode: ProgressChartMode = .workouts
 
     var body: some View {
         ScrollView {
             VStack(spacing: FFSpacing.md) {
-                if viewModel.isOffline {
-                    FFCard {
-                        Text("Нет сети — показаны сохранённые данные")
-                            .font(FFTypography.caption)
-                            .foregroundStyle(FFColors.textSecondary)
-                    }
-                }
-
-                if viewModel.isShowingCachedData {
-                    FFCard {
-                        Text("Часть данных показана из кэша")
-                            .font(FFTypography.caption)
-                            .foregroundStyle(FFColors.textSecondary)
-                    }
-                }
-
                 sectionContent
             }
             .padding(.horizontal, FFSpacing.md)
@@ -1050,17 +1406,6 @@ struct TrainingInsightsView: View {
         .onChange(of: isOnline) { _, online in
             viewModel.updateNetworkStatus(online)
         }
-        .onChange(of: viewModel.weeklyHighlight?.id) { _, newValue in
-            guard let newValue, trackedHighlightID != newValue else { return }
-            trackedHighlightID = newValue
-            ClientAnalytics.track(
-                .progressWeeklyHighlightShown,
-                properties: ["highlight_id": newValue],
-            )
-        }
-        .navigationDestination(item: $selectedExercise) { item in
-            ExerciseProgressDetailsView(viewModel: viewModel.makeExerciseDetailsViewModel(for: item))
-        }
     }
 
     @ViewBuilder
@@ -1078,170 +1423,150 @@ struct TrainingInsightsView: View {
                 retryTitle: "Обновить",
                 onRetry: { Task { await viewModel.reload() } },
             )
-        } else if viewModel.overview.totalWorkouts == 0, viewModel.exerciseItems.isEmpty {
-            FFCard {
-                VStack(alignment: .center, spacing: FFSpacing.sm) {
-                    Text("Пока нет тренировок")
-                        .font(FFTypography.h2)
-                        .foregroundStyle(FFColors.textPrimary)
-                    Text("Завершите первую тренировку, и здесь появятся ваши достижения и история.")
-                        .font(FFTypography.body)
-                        .foregroundStyle(FFColors.textSecondary)
-                        .multilineTextAlignment(.center)
-                    FFButton(title: "Начать тренировку", variant: .primary) {
-                        ClientAnalytics.track(.progressNextWorkoutTapped, properties: ["type": "empty"])
-                        onStartNextWorkout()
-                    }
-                }
-                .frame(maxWidth: .infinity)
-            }
         } else {
-            ProgressOverviewView(
-                overview: viewModel.overview,
-                weeklyHighlight: viewModel.weeklyHighlight,
+            ProgressAnalyticsView(
+                primaryAchievement: viewModel.primaryAchievement,
+                streak: viewModel.streakSnapshot,
+                summary: viewModel.periodSummary,
                 selectedPeriod: viewModel.selectedPeriod,
-                searchQuery: viewModel.searchQuery,
-                exercises: viewModel.exerciseItems,
-                nextAction: viewModel.nextAction,
+                activityPoints: viewModel.activityPoints,
+                selectedChartMode: selectedChartMode,
+                personalRecords: viewModel.topPersonalRecords,
                 onSelectPeriod: { period in
                     Task { await viewModel.selectPeriod(period) }
                 },
-                onSearchChanged: { query in
-                    Task { await viewModel.updateSearchQuery(query) }
-                },
-                onSelectExercise: { item in
-                    ClientAnalytics.track(
-                        .exerciseHistoryOpened,
-                        properties: ["exercise_id": item.exerciseId ?? item.id],
-                    )
-                    selectedExercise = item
-                },
-                onStartNextAction: {
-                    ClientAnalytics.track(
-                        .progressNextWorkoutTapped,
-                        properties: ["has_next": viewModel.nextAction.hasNextWorkout ? "1" : "0"],
-                    )
-                    onStartNextWorkout()
+                onSelectChartMode: { mode in
+                    selectedChartMode = mode
                 },
             )
         }
     }
 }
 
-struct ProgressOverviewView: View {
-    let overview: ProgressOverviewSnapshot
-    let weeklyHighlight: WeeklyHighlightSnapshot?
+private struct ProgressAnalyticsView: View {
+    let primaryAchievement: ProgressPrimaryAchievement?
+    let streak: ProgressStreakSnapshot
+    let summary: ProgressPeriodSummarySnapshot
     let selectedPeriod: ProgressPeriod
-    let searchQuery: String
-    let exercises: [ExerciseProgressListItem]
-    let nextAction: ProgressNextActionSnapshot
+    let activityPoints: [ProgressActivityPoint]
+    let selectedChartMode: ProgressChartMode
+    let personalRecords: [ProgressPersonalRecordSnapshot]
 
     let onSelectPeriod: (ProgressPeriod) -> Void
-    let onSearchChanged: (String) -> Void
-    let onSelectExercise: (ExerciseProgressListItem) -> Void
-    let onStartNextAction: () -> Void
+    let onSelectChartMode: (ProgressChartMode) -> Void
 
     var body: some View {
         VStack(spacing: FFSpacing.md) {
-            FFCard {
-                VStack(alignment: .leading, spacing: FFSpacing.sm) {
-                    HStack {
-                        Text("Главное достижение недели")
-                            .font(FFTypography.h2)
+            mainAchievementCard
+            periodSummaryCard
+            activityChartCard
+            personalRecordsCard
+        }
+    }
+
+    private var mainAchievementCard: some View {
+        FFCard {
+            VStack(alignment: .leading, spacing: FFSpacing.xs) {
+                Text("Главное достижение")
+                    .font(FFTypography.h2)
+                    .foregroundStyle(FFColors.textPrimary)
+
+                if let primaryAchievement {
+                    switch primaryAchievement {
+                    case let .personalRecord(title, value):
+                        Text("Новый рекорд")
+                            .font(FFTypography.caption.weight(.semibold))
+                            .foregroundStyle(FFColors.accent)
+                        Text(title)
+                            .font(FFTypography.body.weight(.semibold))
+                            .foregroundStyle(FFColors.textPrimary)
+                        Text(value)
+                            .font(FFTypography.h1)
+                            .foregroundStyle(FFColors.textPrimary)
+
+                    case let .streak(days):
+                        Text("🔥 Серия тренировок")
+                            .font(FFTypography.caption.weight(.semibold))
+                            .foregroundStyle(FFColors.accent)
+                        Text(days == 1 ? "1 день" : "\(days) дней подряд")
+                            .font(FFTypography.h1)
+                            .foregroundStyle(FFColors.textPrimary)
+
+                    case let .weeklyVolume(volume):
+                        Text("Лучший объём недели")
+                            .font(FFTypography.caption.weight(.semibold))
+                            .foregroundStyle(FFColors.accent)
+                        Text("\(volume) кг")
+                            .font(FFTypography.h1)
                             .foregroundStyle(FFColors.textPrimary)
                     }
+                } else {
+                    Text("Сделайте тренировку, чтобы открыть достижения.")
+                        .font(FFTypography.body)
+                        .foregroundStyle(FFColors.textSecondary)
+                }
 
-                    if let weeklyHighlight {
-                        VStack(alignment: .leading, spacing: FFSpacing.xxs) {
-                            Text(weeklyHighlight.exerciseName)
-                                .font(FFTypography.body.weight(.semibold))
-                                .foregroundStyle(FFColors.textPrimary)
-                            Text(weeklyHighlight.improvementText)
-                                .font(FFTypography.body)
-                                .foregroundStyle(FFColors.accent)
-                            Text(weeklyHighlight.contextText)
-                                .font(FFTypography.caption)
-                                .foregroundStyle(FFColors.textSecondary)
-                        }
-                    } else {
-                        Text("Завершите тренировку, и здесь появятся ваши рекорды.")
-                            .font(FFTypography.body)
-                            .foregroundStyle(FFColors.textSecondary)
-                    }
+                if streak.state == .atRisk {
+                    Text("⚠ Серия может прерваться сегодня")
+                        .font(FFTypography.caption.weight(.semibold))
+                        .foregroundStyle(FFColors.danger)
+                } else if streak.state == .broken {
+                    Text(streak.title)
+                        .font(FFTypography.caption)
+                        .foregroundStyle(FFColors.textSecondary)
                 }
             }
+        }
+    }
 
-            FFCard {
-                VStack(alignment: .leading, spacing: FFSpacing.sm) {
-                    HStack {
-                        Text("Сводка недели")
-                            .font(FFTypography.h2)
-                            .foregroundStyle(FFColors.textPrimary)
-                        Spacer(minLength: FFSpacing.sm)
-                        periodMenu
-                    }
-
-                    LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: FFSpacing.sm) {
-                        overviewCard(title: "Тренировок за 7 дней", value: "\(overview.workouts7d)")
-                        overviewCard(title: "Время (мин)", value: "\(overview.totalMinutes7d)")
-                        overviewCard(title: "Общий объём", value: "\(Int(overview.totalVolume7d)) кг")
-                        overviewCard(title: "Серия тренировок", value: "\(overview.streakDays) дн")
-                    }
-                }
-            }
-
-            ExerciseProgressListView(
-                searchQuery: searchQuery,
-                items: exercises,
-                onSearchChanged: onSearchChanged,
-                onSelectExercise: onSelectExercise,
-            )
-
-            FFCard {
-                VStack(alignment: .leading, spacing: FFSpacing.sm) {
-                    Text("Следующее действие")
+    private var periodSummaryCard: some View {
+        FFCard {
+            VStack(alignment: .leading, spacing: FFSpacing.sm) {
+                HStack(alignment: .center) {
+                    Text("Сводка периода")
                         .font(FFTypography.h2)
                         .foregroundStyle(FFColors.textPrimary)
-
-                    if let nextWorkoutTitle = nextAction.nextWorkoutTitle {
-                        Text(nextWorkoutTitle)
-                            .font(FFTypography.body)
-                            .foregroundStyle(FFColors.textSecondary)
+                    Spacer(minLength: FFSpacing.sm)
+                    HStack(spacing: FFSpacing.xxs) {
+                        ForEach(ProgressPeriod.analyticsCases, id: \.self) { period in
+                            Button(period.title) {
+                                onSelectPeriod(period)
+                            }
+                            .buttonStyle(.plain)
+                            .font(FFTypography.caption.weight(.semibold))
+                            .foregroundStyle(selectedPeriod == period ? FFColors.background : FFColors.textSecondary)
+                            .padding(.horizontal, FFSpacing.xs)
+                            .padding(.vertical, FFSpacing.xxs)
+                            .background(selectedPeriod == period ? FFColors.accent : FFColors.gray700)
+                            .clipShape(Capsule())
+                        }
                     }
+                }
 
-                    FFButton(title: nextAction.primaryTitle, variant: .primary) {
-                        onStartNextAction()
+                LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: FFSpacing.xs) {
+                    ForEach(summary.metrics) { metric in
+                        metricCard(metric)
                     }
                 }
             }
         }
     }
 
-    private var periodMenu: some View {
-        Menu {
-            ForEach(ProgressPeriod.allCases, id: \.self) { period in
-                Button(period.title) {
-                    onSelectPeriod(period)
-                }
-            }
-        } label: {
-            Label(selectedPeriod.title, systemImage: "calendar.badge.clock")
-                .font(FFTypography.caption)
-                .foregroundStyle(FFColors.accent)
-        }
-    }
-
-    private func overviewCard(title: String, value: String) -> some View {
+    private func metricCard(_ metric: ProgressPeriodMetricSnapshot) -> some View {
         VStack(alignment: .leading, spacing: FFSpacing.xxs) {
-            Text(title)
+            Text(metric.title)
                 .font(FFTypography.caption)
                 .foregroundStyle(FFColors.textSecondary)
-            Text(value)
+            Text(metric.id == "streak" ? "🔥 \(metric.value)" : metric.value)
                 .font(FFTypography.h2)
                 .foregroundStyle(FFColors.textPrimary)
+            Text(deltaLabel(metric.delta))
+                .font(FFTypography.caption.weight(.semibold))
+                .foregroundStyle(deltaColor(metric.delta))
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(FFSpacing.sm)
+        .padding(.horizontal, FFSpacing.sm)
+        .padding(.vertical, FFSpacing.xs)
         .background(FFColors.surface)
         .clipShape(RoundedRectangle(cornerRadius: FFTheme.Radius.control))
         .overlay {
@@ -1249,81 +1574,166 @@ struct ProgressOverviewView: View {
                 .stroke(FFColors.gray700, lineWidth: 1)
         }
     }
-}
 
-struct ExerciseProgressListView: View {
-    let searchQuery: String
-    let items: [ExerciseProgressListItem]
+    private func deltaLabel(_ value: Int) -> String {
+        if value > 0 {
+            return "↑ +\(value)"
+        }
+        if value < 0 {
+            return "↓ \(value)"
+        }
+        return "→ 0"
+    }
 
-    let onSearchChanged: (String) -> Void
-    let onSelectExercise: (ExerciseProgressListItem) -> Void
+    private func deltaColor(_ value: Int) -> Color {
+        if value > 0 {
+            return FFColors.accent
+        }
+        if value < 0 {
+            return FFColors.danger
+        }
+        return FFColors.textSecondary
+    }
 
-    var body: some View {
-        VStack(spacing: FFSpacing.sm) {
-            FFCard {
-                VStack(alignment: .leading, spacing: FFSpacing.sm) {
-                    Text("Упражнения")
-                        .font(FFTypography.h2)
-                        .foregroundStyle(FFColors.textPrimary)
-
-                    TextField(
-                        "Поиск упражнения",
-                        text: Binding(
-                            get: { searchQuery },
-                            set: { onSearchChanged($0) },
-                        ),
-                    )
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
-                    .font(FFTypography.body)
+    private var activityChartCard: some View {
+        FFCard {
+            VStack(alignment: .leading, spacing: FFSpacing.sm) {
+                Text("График активности")
+                    .font(FFTypography.h2)
                     .foregroundStyle(FFColors.textPrimary)
-                }
-            }
 
-            if items.isEmpty {
-                FFCard {
-                    Text("Когда появятся рекорды и история, здесь будет список упражнений.")
-                        .font(FFTypography.body)
-                        .foregroundStyle(FFColors.textSecondary)
-                }
-            } else {
-                LazyVStack(spacing: FFSpacing.sm) {
-                    ForEach(items) { item in
-                        Button {
-                            onSelectExercise(item)
-                        } label: {
-                            FFCard {
-                                VStack(alignment: .leading, spacing: FFSpacing.xs) {
-                                    HStack(alignment: .top, spacing: FFSpacing.xs) {
-                                        Text(item.name)
-                                            .font(FFTypography.body.weight(.semibold))
-                                            .foregroundStyle(FFColors.textPrimary)
-                                        Spacer(minLength: FFSpacing.sm)
-                                        if let trendLabel = item.trendLabel {
-                                            Text(trendLabel)
-                                                .font(FFTypography.caption.weight(.bold))
-                                                .foregroundStyle(
-                                                    trendLabel == "↑" ? FFColors.accent :
-                                                        (trendLabel == "↓" ? FFColors.danger : FFColors.textSecondary),
-                                                )
-                                                .padding(.horizontal, FFSpacing.xs)
-                                                .padding(.vertical, FFSpacing.xxs)
-                                                .background(FFColors.gray700)
-                                                .clipShape(Capsule())
-                                        }
-                                    }
-
-                                    Text("Личный рекорд: \(item.prText)")
-                                        .font(FFTypography.caption)
-                                        .foregroundStyle(FFColors.textSecondary)
-
-                                    Text("Последняя тренировка: \(item.lastPerformedText)")
-                                        .font(FFTypography.caption)
-                                        .foregroundStyle(FFColors.textSecondary)
-                                }
-                            }
+                HStack(spacing: FFSpacing.xxs) {
+                    ForEach(ProgressChartMode.allCases) { mode in
+                        Button(mode.title) {
+                            onSelectChartMode(mode)
                         }
                         .buttonStyle(.plain)
+                        .font(FFTypography.caption.weight(.semibold))
+                        .foregroundStyle(selectedChartMode == mode ? FFColors.background : FFColors.textSecondary)
+                        .padding(.horizontal, FFSpacing.xs)
+                        .padding(.vertical, FFSpacing.xxs)
+                        .background(selectedChartMode == mode ? FFColors.accent : FFColors.gray700)
+                        .clipShape(Capsule())
+                    }
+                }
+
+                if hasEnoughActivityData {
+                    Chart(activityPoints) { point in
+                        switch selectedChartMode {
+                        case .workouts:
+                            BarMark(
+                                x: .value("День", point.day, unit: .day),
+                                y: .value("Тренировки", point.workouts),
+                            )
+                            .foregroundStyle(FFColors.accent)
+
+                        case .volume:
+                            LineMark(
+                                x: .value("День", point.day, unit: .day),
+                                y: .value("Объём", point.volume),
+                            )
+                            .foregroundStyle(FFColors.accent)
+                            .interpolationMethod(.catmullRom)
+                            AreaMark(
+                                x: .value("День", point.day, unit: .day),
+                                y: .value("Объём", point.volume),
+                            )
+                            .foregroundStyle(FFColors.accent.opacity(0.2))
+
+                        case .minutes:
+                            LineMark(
+                                x: .value("День", point.day, unit: .day),
+                                y: .value("Время", point.minutes),
+                            )
+                            .foregroundStyle(FFColors.primary)
+                            .interpolationMethod(.catmullRom)
+                        }
+                    }
+                    .frame(height: 180)
+                    .chartXAxis {
+                        AxisMarks(values: .stride(by: .day, count: selectedPeriod == .days7 ? 1 : 5)) {
+                            AxisGridLine(stroke: StrokeStyle(lineWidth: 0.5))
+                                .foregroundStyle(FFColors.gray700.opacity(0.5))
+                            AxisTick()
+                            AxisValueLabel(format: .dateTime.day(), centered: true)
+                                .font(FFTypography.caption)
+                        }
+                    }
+                    .chartYAxis {
+                        AxisMarks(position: .leading) {
+                            AxisGridLine(stroke: StrokeStyle(lineWidth: 0.5))
+                                .foregroundStyle(FFColors.gray700.opacity(0.5))
+                            AxisTick()
+                            AxisValueLabel()
+                                .font(FFTypography.caption)
+                        }
+                    }
+                } else {
+                    Text("Сделайте несколько тренировок, чтобы увидеть график прогресса.")
+                        .font(FFTypography.caption)
+                        .foregroundStyle(FFColors.textSecondary)
+                }
+            }
+        }
+    }
+
+    private var hasEnoughActivityData: Bool {
+        let nonZeroPoints = activityPoints.filter { point in
+            switch selectedChartMode {
+            case .workouts:
+                return point.workouts > 0
+            case .volume:
+                return point.volume > 0.5
+            case .minutes:
+                return point.minutes > 0
+            }
+        }
+        return nonZeroPoints.count >= 2
+    }
+
+    private var personalRecordsCard: some View {
+        FFCard {
+            VStack(alignment: .leading, spacing: FFSpacing.sm) {
+                Text("Личные рекорды")
+                    .font(FFTypography.h2)
+                    .foregroundStyle(FFColors.textPrimary)
+
+                if personalRecords.isEmpty {
+                    Text("Сделайте тренировку, чтобы открыть личные рекорды.")
+                        .font(FFTypography.caption)
+                        .foregroundStyle(FFColors.textSecondary)
+                } else {
+                    ForEach(personalRecords.prefix(3)) { record in
+                        HStack(alignment: .top, spacing: FFSpacing.sm) {
+                            VStack(alignment: .leading, spacing: FFSpacing.xxs) {
+                                Text(record.title)
+                                    .font(FFTypography.body.weight(.semibold))
+                                    .foregroundStyle(FFColors.textPrimary)
+                                Text(record.dateText)
+                                    .font(FFTypography.caption)
+                                    .foregroundStyle(FFColors.textSecondary)
+                            }
+                            Spacer(minLength: FFSpacing.sm)
+                            VStack(alignment: .trailing, spacing: FFSpacing.xxs) {
+                                Text("PR")
+                                    .font(FFTypography.caption.weight(.bold))
+                                    .foregroundStyle(FFColors.background)
+                                    .padding(.horizontal, FFSpacing.xs)
+                                    .padding(.vertical, FFSpacing.xxs)
+                                    .background(FFColors.accent)
+                                    .clipShape(Capsule())
+                                Text(record.value)
+                                    .font(FFTypography.body.weight(.semibold))
+                                    .foregroundStyle(FFColors.textPrimary)
+                            }
+                        }
+                        .padding(.vertical, FFSpacing.xxs)
+                        .overlay(alignment: .bottom) {
+                            Rectangle()
+                                .fill(FFColors.gray700.opacity(0.5))
+                                .frame(height: 1)
+                                .opacity(record.id == personalRecords.prefix(3).last?.id ? 0 : 1)
+                        }
                     }
                 }
             }
@@ -1809,6 +2219,24 @@ private enum ProgressDateParser {
 private extension AthletePersonalRecord {
     var achievedAtDate: Date? {
         ProgressDateParser.parse(achievedAt)
+    }
+
+    var valueWithUnit: String {
+        guard let value else {
+            return "—"
+        }
+
+        let formattedValue: String
+        if floor(value) == value {
+            formattedValue = "\(Int(value))"
+        } else {
+            formattedValue = String(format: "%.1f", value)
+        }
+
+        if let unit = unit?.trimmedNilIfEmpty {
+            return "\(formattedValue) \(unit)"
+        }
+        return formattedValue
     }
 
     var displayValue: String {

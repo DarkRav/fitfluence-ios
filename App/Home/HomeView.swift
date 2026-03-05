@@ -267,10 +267,14 @@ final class HomeViewModel {
         let statusText = switch plan.status {
         case .planned:
             "Запланирована"
+        case .inProgress:
+            "В процессе"
         case .completed:
             "Выполнена"
         case .missed:
             "Пропущена"
+        case .skipped:
+            "Пропущена намеренно"
         }
         let sourceText = switch plan.source {
         case .program:
