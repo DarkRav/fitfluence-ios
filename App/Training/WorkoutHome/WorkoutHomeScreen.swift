@@ -23,19 +23,20 @@ struct WorkoutHomeScreen: View {
                 if let resumeWorkout = viewModel.resumeWorkout,
                    viewModel.hasResumeWorkout
                 {
-                    ResumeWorkoutCard(
-                        workoutName: resumeWorkout.workoutName,
-                        metricsText: resumeWorkout.metricsText,
+                    WorkoutInProgressBanner(
+                        subtitle: resumeSubtitle(for: resumeWorkout),
                         onContinue: {
                             runResumeAction(resumeWorkout)
-                        },
+                        }
                     )
                 }
 
-                StartWorkoutCard(
-                    isLoading: false,
-                    onStartWorkout: runStartWorkout,
-                )
+                if !viewModel.hasResumeWorkout {
+                    StartWorkoutCard(
+                        isLoading: false,
+                        onStartWorkout: runStartWorkout,
+                    )
+                }
 
                 if let progress = viewModel.programProgress,
                    viewModel.hasActiveProgram
@@ -165,6 +166,20 @@ struct WorkoutHomeScreen: View {
                 onOpenRemoteWorkout(target)
             }
         }
+    }
+
+    private func resumeSubtitle(for workout: WorkoutHomeViewModel.ResumeWorkout) -> String {
+        let elapsedText = relativeTimeText(for: workout.startedAt)
+        if let elapsedText {
+            return "\(workout.workoutName) • \(elapsedText)"
+        }
+        return workout.metricsText
+    }
+
+    private func relativeTimeText(for startedAt: Date?) -> String? {
+        guard let startedAt else { return nil }
+        let minutes = max(1, Int(Date().timeIntervalSince(startedAt) / 60))
+        return "Начата \(minutes) мин назад"
     }
 }
 

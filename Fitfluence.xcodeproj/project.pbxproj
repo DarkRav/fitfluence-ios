@@ -26,6 +26,7 @@
 		2446FADE5A6601002AB8A61D /* Colors.swift in Sources */ = {isa = PBXBuildFile; fileRef = 87E0FAD6B3FC785EE59C774B /* Colors.swift */; };
 		24A48678A501B841969AB1EC /* RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 870E9DD10FEBC22074CF71BA /* RootView.swift */; };
 		268CC2843BD27BA0CDDE9075 /* ComposableArchitecture in Frameworks */ = {isa = PBXBuildFile; productRef = CF92C8BF8645F9BA258E283B /* ComposableArchitecture */; };
+		2851AA0973690B0993812C26 /* WorkoutInProgressBanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B251CFA71A948090A2A48A3 /* WorkoutInProgressBanner.swift */; };
 		28A1BACADED54018734A2488 /* AuthTokenProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 73D40B15217387B49B13527A /* AuthTokenProvider.swift */; };
 		29B89F66630D53FDF9B00030 /* SyncWorker.swift in Sources */ = {isa = PBXBuildFile; fileRef = EF34A4AE4A992ECE90DD03CE /* SyncWorker.swift */; };
 		2C1FC3EF8C6F16B005027DF1 /* ProgramDetailsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 075C9ED6113F50057E609DD0 /* ProgramDetailsView.swift */; };
@@ -152,6 +153,7 @@
 		6738DCE7C58830BB8D53065B /* ResumeWorkoutCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ResumeWorkoutCard.swift; sourceTree = "<group>"; };
 		73D40B15217387B49B13527A /* AuthTokenProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthTokenProvider.swift; sourceTree = "<group>"; };
 		74E11F1CB909C74B1DC174BE /* QuickActionsSection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QuickActionsSection.swift; sourceTree = "<group>"; };
+		7B251CFA71A948090A2A48A3 /* WorkoutInProgressBanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkoutInProgressBanner.swift; sourceTree = "<group>"; };
 		7D5DAA77BFBBF8EB1EE9084A /* TokenSet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TokenSet.swift; sourceTree = "<group>"; };
 		7EEDCA84EDE9877A99455D47 /* WorkoutsClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkoutsClient.swift; sourceTree = "<group>"; };
 		80D4B8754AB2E901312C854C /* WorkoutPlayerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkoutPlayerView.swift; sourceTree = "<group>"; };
@@ -345,6 +347,7 @@
 				8E5B8D56EED74266DE911846 /* RecentWorkoutsSection.swift */,
 				6738DCE7C58830BB8D53065B /* ResumeWorkoutCard.swift */,
 				D928341C0D0F07AC1F0B63F3 /* StartWorkoutCard.swift */,
+				7B251CFA71A948090A2A48A3 /* WorkoutInProgressBanner.swift */,
 			);
 			path = Components;
 			sourceTree = "<group>";
@@ -676,6 +679,7 @@
 				112789E5E9B2E40BD29A0427 /* WorkoutHomeCardStyle.swift in Sources */,
 				02E3184774125877DD65B8EA /* WorkoutHomeScreen.swift in Sources */,
 				CAA9ACED46B3DE8F609EF735 /* WorkoutHomeViewModel.swift in Sources */,
+				2851AA0973690B0993812C26 /* WorkoutInProgressBanner.swift in Sources */,
 				A1788B18CB78B7660191A722 /* WorkoutPlayerView.swift in Sources */,
 				CB4D026F97EC3E2173ACA43E /* WorkoutResumeStore.swift in Sources */,
 				C02072FD6DB6B3A191B83CB8 /* WorkoutSettingsView.swift in Sources */,

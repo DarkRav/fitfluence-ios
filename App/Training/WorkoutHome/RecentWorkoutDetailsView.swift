@@ -3,6 +3,20 @@ import SwiftUI
 struct RecentWorkoutDetailsView: View {
     let record: CompletedWorkoutRecord
     let onRepeat: () -> Void
+    private let progressStore: WorkoutProgressStore
+
+    @State private var snapshot: WorkoutProgressSnapshot?
+    @State private var isLoadingDetails = false
+
+    init(
+        record: CompletedWorkoutRecord,
+        onRepeat: @escaping () -> Void,
+        progressStore: WorkoutProgressStore = LocalWorkoutProgressStore(),
+    ) {
+        self.record = record
+        self.onRepeat = onRepeat
+        self.progressStore = progressStore
+    }
 
     var body: some View {
         ScrollView {
@@ -36,6 +50,58 @@ struct RecentWorkoutDetailsView: View {
                     }
                 }
 
+                FFCard {
+                    VStack(alignment: .leading, spacing: FFSpacing.xs) {
+                        Text("Подходы и веса")
+                            .font(FFTypography.h2)
+                            .foregroundStyle(FFColors.textPrimary)
+
+                        if isLoadingDetails {
+                            HStack(spacing: FFSpacing.xs) {
+                                ProgressView()
+                                    .controlSize(.small)
+                                    .tint(FFColors.accent)
+                                Text("Загружаем детали тренировки")
+                                    .font(FFTypography.caption)
+                                    .foregroundStyle(FFColors.textSecondary)
+                            }
+                        } else if detailedExercises.isEmpty {
+                            Text("Детальные подходы не сохранены для этой тренировки")
+                                .font(FFTypography.caption)
+                                .foregroundStyle(FFColors.textSecondary)
+                        } else {
+                            ForEach(Array(detailedExercises.enumerated()), id: \.element.id) { sectionIndex, exercise in
+                                VStack(alignment: .leading, spacing: FFSpacing.xs) {
+                                    Text(exercise.name)
+                                        .font(FFTypography.body.weight(.semibold))
+                                        .foregroundStyle(FFColors.textPrimary)
+
+                                    ForEach(exercise.sets) { set in
+                                        HStack(alignment: .firstTextBaseline, spacing: FFSpacing.xs) {
+                                            Text("Подход \(set.index)")
+                                                .font(FFTypography.caption)
+                                                .foregroundStyle(FFColors.textSecondary)
+
+                                            Spacer(minLength: FFSpacing.xs)
+
+                                            Text(set.valueLine)
+                                                .font(FFTypography.body.weight(.semibold))
+                                                .foregroundStyle(FFColors.textPrimary)
+                                        }
+                                    }
+                                }
+
+                                if sectionIndex < detailedExercises.count - 1 {
+                                    Rectangle()
+                                        .fill(FFColors.gray700)
+                                        .frame(height: 1)
+                                        .padding(.vertical, FFSpacing.xxs)
+                                }
+                            }
+                        }
+                    }
+                }
+
                 if let notes = trimmedNotes {
                     FFCard {
                         VStack(alignment: .leading, spacing: FFSpacing.xs) {
@@ -60,6 +126,9 @@ struct RecentWorkoutDetailsView: View {
         .background(FFColors.background)
         .navigationTitle("Тренировка")
         .navigationBarTitleDisplayMode(.inline)
+        .task(id: record.id) {
+            await loadSnapshot()
+        }
     }
 
     private var formattedDate: String {
@@ -113,6 +182,62 @@ struct RecentWorkoutDetailsView: View {
         }
         return String(format: "%.1f", volume)
     }
+
+    private var detailedExercises: [ExerciseSetDetails] {
+        guard let workoutDetails = snapshot?.workoutDetails else { return [] }
+        let stored = snapshot?.exercises ?? [:]
+
+        return workoutDetails.exercises
+            .sorted(by: { $0.orderIndex < $1.orderIndex })
+            .compactMap { exercise in
+                let sets = (stored[exercise.id]?.sets ?? [])
+                    .enumerated()
+                    .compactMap { index, set -> SetLine? in
+                        let reps = trimmed(set.repsText)
+                        let weight = trimmed(set.weightText)
+                        let rpe = trimmed(set.rpeText)
+                        let hasData = set.isCompleted || reps != nil || weight != nil || rpe != nil
+                        guard hasData else { return nil }
+
+                        let repsLabel = reps ?? "—"
+                        let weightLabel = weight ?? "—"
+                        let rpeSuffix = rpe.map { " • RPE \($0)" } ?? ""
+                        let line = "\(repsLabel) повт • \(weightLabel) кг\(rpeSuffix)"
+                        return SetLine(index: index + 1, valueLine: line)
+                    }
+
+                guard !sets.isEmpty else { return nil }
+                return ExerciseSetDetails(id: exercise.id, name: exercise.name, sets: sets)
+            }
+    }
+
+    private func loadSnapshot() async {
+        isLoadingDetails = true
+        snapshot = await progressStore.load(
+            userSub: record.userSub,
+            programId: record.programId,
+            workoutId: record.workoutId,
+        )
+        isLoadingDetails = false
+    }
+
+    private func trimmed(_ value: String) -> String? {
+        let result = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return result.isEmpty ? nil : result
+    }
+}
+
+private struct ExerciseSetDetails: Identifiable {
+    let id: String
+    let name: String
+    let sets: [SetLine]
+}
+
+private struct SetLine: Identifiable {
+    let index: Int
+    let valueLine: String
+
+    var id: Int { index }
 }
 
 #Preview("Детали завершенной") {

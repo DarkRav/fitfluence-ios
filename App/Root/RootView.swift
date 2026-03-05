@@ -149,9 +149,9 @@ private struct AthleteShellView: View {
     var body: some View {
         VStack(spacing: 0) {
             if let session = resumeSession, selectedTab != .training {
-                ResumeWorkoutBannerView(
-                    session: session,
-                    onResume: {
+                WorkoutInProgressBanner(
+                    subtitle: resumeSubtitle(for: session),
+                    onContinue: {
                         ClientAnalytics.track(
                             .workoutContinueButtonTapped,
                             properties: ["source": "other_tab_banner"],
@@ -258,6 +258,11 @@ private struct AthleteShellView: View {
         }
     }
 
+    private func resumeSubtitle(for session: ActiveWorkoutSession) -> String {
+        let minutes = max(1, Int(Date().timeIntervalSince(session.lastUpdated) / 60))
+        return "Начата \(minutes) мин назад"
+    }
+
     private func refreshResumeSession() async {
         let userSub = me.subject ?? "anonymous"
         guard !userSub.isEmpty, userSub != "anonymous" else {
@@ -311,41 +316,6 @@ private struct AthleteShellView: View {
         }
 
         resumeSession = latest
-    }
-}
-
-private struct ResumeWorkoutBannerView: View {
-    let session: ActiveWorkoutSession
-    let onResume: () -> Void
-
-    var body: some View {
-        HStack(spacing: FFSpacing.sm) {
-            VStack(alignment: .leading, spacing: FFSpacing.xxs) {
-                Text("Тренировка в процессе")
-                    .font(FFTypography.body.weight(.semibold))
-                    .foregroundStyle(FFColors.textPrimary)
-                Text(startedText)
-                    .font(FFTypography.caption)
-                    .foregroundStyle(FFColors.textSecondary)
-            }
-
-            Spacer(minLength: FFSpacing.sm)
-
-            FFButton(title: "Продолжить", variant: .secondary, action: onResume)
-        }
-        .padding(.horizontal, FFSpacing.sm)
-        .padding(.vertical, FFSpacing.xs)
-        .background(FFColors.surface)
-        .clipShape(RoundedRectangle(cornerRadius: FFTheme.Radius.control))
-        .overlay {
-            RoundedRectangle(cornerRadius: FFTheme.Radius.control)
-                .stroke(FFColors.gray700, lineWidth: 1)
-        }
-    }
-
-    private var startedText: String {
-        let minutes = max(1, Int(Date().timeIntervalSince(session.lastUpdated) / 60))
-        return "Начата \(minutes) мин назад"
     }
 }
 
