@@ -1,6 +1,7 @@
 import ComposableArchitecture
 import Network
 import SwiftUI
+import UIKit
 
 @main
 struct FitfluenceApp: App {
@@ -13,6 +14,8 @@ struct FitfluenceApp: App {
     private let localNetworkProbe: LocalNetworkProbe?
 
     init() {
+        Self.configureNavigationBarAppearance()
+
         let tokenStore = KeychainTokenStore()
 
         let keycloakBaseURL = environment.keycloakBaseURL ?? URL(string: "https://invalid.fitfluence.local")!
@@ -65,6 +68,26 @@ struct FitfluenceApp: App {
         FFLog.info("Keycloak URL: \(environment.keycloakBaseURL?.absoluteString ?? "не задан")")
         FFLog.info("Keycloak realm: \(environment.keycloakRealm)")
         FFLog.info("Keycloak clientId: \(environment.keycloakClientId)")
+    }
+
+    private static func configureNavigationBarAppearance() {
+        let appearance = UINavigationBarAppearance()
+        appearance.configureWithOpaqueBackground()
+        appearance.backgroundColor = UIColor(FFColors.background)
+        appearance.shadowColor = .clear
+        appearance.titleTextAttributes = [
+            .foregroundColor: UIColor(FFColors.textPrimary),
+        ]
+        appearance.largeTitleTextAttributes = [
+            .foregroundColor: UIColor(FFColors.textPrimary),
+        ]
+
+        let navigationBar = UINavigationBar.appearance()
+        navigationBar.standardAppearance = appearance
+        navigationBar.scrollEdgeAppearance = appearance
+        navigationBar.compactAppearance = appearance
+        navigationBar.compactScrollEdgeAppearance = appearance
+        navigationBar.tintColor = UIColor(FFColors.accent)
     }
 
     var body: some Scene {
