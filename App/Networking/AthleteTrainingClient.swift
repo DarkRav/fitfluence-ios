@@ -17,6 +17,25 @@ struct ActiveEnrollmentProgressResponse: Codable, Equatable, Sendable {
     let completionPercent: Double?
     let lastCompletedAt: String?
     let updatedAt: String?
+
+    static let empty = ActiveEnrollmentProgressResponse(
+        enrollmentId: nil,
+        status: nil,
+        programId: nil,
+        programTitle: nil,
+        programVersionId: nil,
+        currentWorkoutId: nil,
+        currentWorkoutTitle: nil,
+        currentWorkoutStatus: nil,
+        nextWorkoutId: nil,
+        nextWorkoutTitle: nil,
+        nextWorkoutStatus: nil,
+        completedSessions: nil,
+        totalSessions: nil,
+        completionPercent: nil,
+        lastCompletedAt: nil,
+        updatedAt: nil,
+    )
 }
 
 enum AthleteWorkoutInstanceStatus: String, Codable, Equatable, Sendable {
@@ -259,6 +278,9 @@ struct AthleteExerciseBrief: Codable, Equatable, Sendable {
     let id: String
     let code: String?
     let name: String
+    let description: String?
+    let isBodyweight: Bool?
+    let media: [ContentMedia]?
 }
 
 struct AthleteSetExecution: Codable, Equatable, Sendable {
@@ -996,6 +1018,7 @@ extension AthleteWorkoutDetailsResponse {
                 WorkoutExercise(
                     id: execution.exerciseId,
                     name: execution.exercise?.name.trimmedNilIfEmpty ?? "Упражнение \(index + 1)",
+                    description: execution.exercise?.description?.trimmedNilIfEmpty,
                     sets: max(1, execution.plannedSets ?? execution.sets?.count ?? 1),
                     repsMin: execution.plannedRepsMin,
                     repsMax: execution.plannedRepsMax,
@@ -1003,6 +1026,8 @@ extension AthleteWorkoutDetailsResponse {
                     restSeconds: execution.plannedRestSeconds,
                     notes: execution.plannedNotes?.trimmedNilIfEmpty ?? execution.notes?.trimmedNilIfEmpty,
                     orderIndex: execution.orderIndex,
+                    isBodyweight: execution.exercise?.isBodyweight ?? false,
+                    media: execution.exercise?.media,
                 )
             }
 
@@ -1033,6 +1058,9 @@ extension APIClient: AthleteTrainingClientProtocol {
         case let .success(response):
             return .success(response.items)
         case let .failure(error):
+            if case let .httpError(statusCode, _) = error, statusCode == 404 {
+                return .success([])
+            }
             return .failure(error)
         }
     }
@@ -1047,7 +1075,7 @@ extension APIClient: AthleteTrainingClientProtocol {
             if let first = items.first {
                 return .success(first)
             }
-            return .failure(.decodingError)
+            return .success(.empty)
         case let .failure(error):
             return .failure(error)
         }

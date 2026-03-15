@@ -3,7 +3,7 @@
 	archiveVersion = 1;
 	classes = {
 	};
-	objectVersion = 77;
+	objectVersion = 63;
 	objects = {
 
 /* Begin PBXBuildFile section */
@@ -15,6 +15,7 @@
 		07E691D96D97DC67191332E6 /* ProfileViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = D566BB28F7146B5858070BD2 /* ProfileViewModel.swift */; };
 		0AF9ACEEACEF5516F5A125FC /* APIRequest.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E4CF13A2531205E9575D66B /* APIRequest.swift */; };
 		0BD75B053CAE785680A0D197 /* DataAndOfflineView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0D6D04C74DE23C15A1CF9745 /* DataAndOfflineView.swift */; };
+		0BE97B780D61BFEDEAAE5DFB /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 654FD1508F7F2775277C3FF4 /* Assets.xcassets */; };
 		0CFE26D86AB1FDFEB7ADDBB6 /* QuickWorkoutBuilderView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D7ADF6ADDAF5414D4B59CDCA /* QuickWorkoutBuilderView.swift */; };
 		112789E5E9B2E40BD29A0427 /* WorkoutHomeCardStyle.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3F0DFD48B79D4EC127D5DC30 /* WorkoutHomeCardStyle.swift */; };
 		12A7A67E73A0788C42B3430E /* WorkoutHomeButtons.swift in Sources */ = {isa = PBXBuildFile; fileRef = 491FFA62A600D1871EB304BB /* WorkoutHomeButtons.swift */; };
@@ -129,7 +130,7 @@
 		1A5EE0FB696AC968E52E7C79 /* TemplateLibraryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TemplateLibraryView.swift; sourceTree = "<group>"; };
 		2406C59ACFAD49D5F8BF8FC2 /* FitfluenceApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FitfluenceApp.swift; sourceTree = "<group>"; };
 		2470CD8E28F4838E9A6B693B /* SyncCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SyncCoordinator.swift; sourceTree = "<group>"; };
-		274454899BAE117E3568041E /* FitfluenceApp.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = FitfluenceApp.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		274454899BAE117E3568041E /* FitfluenceApp.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = FitfluenceApp.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		2C14F95287E487CD42E63859 /* SyncOutboxStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SyncOutboxStore.swift; sourceTree = "<group>"; };
 		2C571FBEBDFDA288B1E05B14 /* FFLoadingState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFLoadingState.swift; sourceTree = "<group>"; };
 		2E16BBE6F885A8F976874EE8 /* TrainingInsightsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrainingInsightsView.swift; sourceTree = "<group>"; };
@@ -150,7 +151,8 @@
 		59F8273C6875008A5C9A3300 /* NetworkingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NetworkingTests.swift; sourceTree = "<group>"; };
 		5C86524522FD187BCB6065C5 /* OIDCDiscoveryDocument.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OIDCDiscoveryDocument.swift; sourceTree = "<group>"; };
 		64143FD02B2501B96BD88680 /* HelpAndDiagnosticsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HelpAndDiagnosticsView.swift; sourceTree = "<group>"; };
-		65EE21EADAEB1C46C1227CF6 /* FitfluenceTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = FitfluenceTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		654FD1508F7F2775277C3FF4 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		65EE21EADAEB1C46C1227CF6 /* FitfluenceTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = FitfluenceTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		6738DCE7C58830BB8D53065B /* ResumeWorkoutCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ResumeWorkoutCard.swift; sourceTree = "<group>"; };
 		73D40B15217387B49B13527A /* AuthTokenProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthTokenProvider.swift; sourceTree = "<group>"; };
 		74E11F1CB909C74B1DC174BE /* QuickActionsSection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QuickActionsSection.swift; sourceTree = "<group>"; };
@@ -373,6 +375,7 @@
 			children = (
 				2406C59ACFAD49D5F8BF8FC2 /* FitfluenceApp.swift */,
 				D45116A2BFE9402EC531FE76 /* Info.plist */,
+				654FD1508F7F2775277C3FF4 /* Assets.xcassets */,
 				80ACD2B45A2E912217541181 /* Auth */,
 				52D229C7FDCB08BD69A6AAFA /* Catalog */,
 				AAAC776BF68BD9D9EAA0E275 /* DesignSystem */,
@@ -548,6 +551,7 @@
 			buildPhases = (
 				6A93BA49EBA02A580FF0B680 /* Sources */,
 				CDD31637A0F7E44D18CAFDFF /* Frameworks */,
+				71646C5D12AE691B02286A9B /* Resources */,
 			);
 			buildRules = (
 			);
@@ -572,7 +576,6 @@
 				LastUpgradeCheck = 1430;
 				TargetAttributes = {
 					97EC3E4C23CB2A83536869EE = {
-						DevelopmentTeam = "";
 						ProvisioningStyle = Automatic;
 					};
 				};
@@ -591,7 +594,6 @@
 				080986477868F448E7815FB3 /* XCRemoteSwiftPackageReference "AppAuth-iOS" */,
 				1B554A44E2195B8050B95C49 /* XCRemoteSwiftPackageReference "swift-composable-architecture" */,
 			);
-			preferredProjectObjectVersion = 77;
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
@@ -600,6 +602,17 @@
 			);
 		};
 /* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		71646C5D12AE691B02286A9B /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				0BE97B780D61BFEDEAAE5DFB /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		6A93BA49EBA02A580FF0B680 /* Sources */ = {
@@ -728,8 +741,8 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = "";
+				CURRENT_PROJECT_VERSION = 3;
+				DEVELOPMENT_TEAM = BA7GZ9H8US;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = App/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
@@ -807,6 +820,8 @@
 			baseConfigurationReference = 8B5464E69784604F0C29B39C /* Prod.xcconfig */;
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
+				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
+				DEVELOPMENT_TEAM = BA7GZ9H8US;
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -826,6 +841,8 @@
 			baseConfigurationReference = 4BB48B9AF4D57EE8E899CC9E /* Stage.xcconfig */;
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
+				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
+				DEVELOPMENT_TEAM = BA7GZ9H8US;
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -847,8 +864,8 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = "";
+				CURRENT_PROJECT_VERSION = 3;
+				DEVELOPMENT_TEAM = BA7GZ9H8US;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = App/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
@@ -926,6 +943,8 @@
 			baseConfigurationReference = 9244A63DF5237F20107DDA2E /* Dev.xcconfig */;
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
+				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
+				DEVELOPMENT_TEAM = BA7GZ9H8US;
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -1010,8 +1029,8 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = "";
+				CURRENT_PROJECT_VERSION = 3;
+				DEVELOPMENT_TEAM = BA7GZ9H8US;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = App/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;

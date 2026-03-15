@@ -1,9 +1,104 @@
 import Observation
 import SwiftUI
 
+enum ProgramScheduleWeekday: Int, CaseIterable, Identifiable, Hashable, Sendable {
+    case monday
+    case tuesday
+    case wednesday
+    case thursday
+    case friday
+    case saturday
+    case sunday
+
+    var id: Int { rawValue }
+
+    var shortTitle: String {
+        switch self {
+        case .monday: "Пн"
+        case .tuesday: "Вт"
+        case .wednesday: "Ср"
+        case .thursday: "Чт"
+        case .friday: "Пт"
+        case .saturday: "Сб"
+        case .sunday: "Вс"
+        }
+    }
+
+    var title: String {
+        switch self {
+        case .monday: "Понедельник"
+        case .tuesday: "Вторник"
+        case .wednesday: "Среда"
+        case .thursday: "Четверг"
+        case .friday: "Пятница"
+        case .saturday: "Суббота"
+        case .sunday: "Воскресенье"
+        }
+    }
+
+    var calendarWeekday: Int {
+        switch self {
+        case .sunday: 1
+        case .monday: 2
+        case .tuesday: 3
+        case .wednesday: 4
+        case .thursday: 5
+        case .friday: 6
+        case .saturday: 7
+        }
+    }
+
+    static func from(date: Date, calendar: Calendar) -> Self? {
+        let weekday = calendar.component(.weekday, from: date)
+        return allCases.first(where: { $0.calendarWeekday == weekday })
+    }
+
+    static func recommended(for frequency: Int) -> [Self] {
+        switch max(1, min(7, frequency)) {
+        case 1:
+            [.monday]
+        case 2:
+            [.monday, .thursday]
+        case 3:
+            [.monday, .wednesday, .friday]
+        case 4:
+            [.monday, .tuesday, .thursday, .saturday]
+        case 5:
+            [.monday, .tuesday, .wednesday, .friday, .saturday]
+        case 6:
+            [.monday, .tuesday, .wednesday, .thursday, .friday, .saturday]
+        default:
+            allCases
+        }
+    }
+}
+
+@MainActor
+final class PlanNavigationCoordinator {
+    static let shared = PlanNavigationCoordinator()
+
+    private(set) var pendingDay: Date?
+
+    func request(day: Date?) {
+        pendingDay = day
+    }
+
+    func consumePendingDay() -> Date? {
+        defer { pendingDay = nil }
+        return pendingDay
+    }
+}
+
 @Observable
 @MainActor
 final class ProgramDetailsViewModel {
+    struct PlannableWorkout: Equatable, Identifiable {
+        let id: String
+        let dayOrder: Int
+        let title: String
+        let workout: WorkoutDetailsModel
+    }
+
     struct SelectedWorkout: Equatable, Identifiable {
         let userSub: String
         let programId: String
@@ -32,10 +127,15 @@ final class ProgramDetailsViewModel {
         let firstWorkoutTitle: String?
         let firstWorkoutInstanceId: String?
         let fallbackWorkoutTemplateId: String?
+        let plannableWorkouts: [PlannableWorkout]
         let isPendingEnrollment: Bool
 
         var canStartFirstWorkout: Bool {
             firstWorkoutInstanceId != nil || fallbackWorkoutTemplateId != nil
+        }
+
+        var canPlanProgram: Bool {
+            !plannableWorkouts.isEmpty
         }
     }
 
@@ -288,6 +388,10 @@ final class ProgramDetailsViewModel {
         enrollmentConfirmation = nil
     }
 
+    func openPlanningFlow() {
+        openEnrollmentConfirmation(isPendingEnrollment: false)
+    }
+
     func dismissWorkoutIntro() {
         workoutIntro = nil
     }
@@ -449,6 +553,14 @@ final class ProgramDetailsViewModel {
 
         let firstWorkoutInstanceId = nextWorkoutInstanceId?.trimmedNilIfEmpty
         let firstWorkoutTitle = nextWorkoutInstanceTitle?.trimmedNilIfEmpty ?? fallbackTitle
+        let plannableWorkouts = sortedWorkouts.map { template in
+            PlannableWorkout(
+                id: template.id,
+                dayOrder: template.dayOrder,
+                title: template.title?.trimmedNilIfEmpty ?? "Тренировка \(template.dayOrder)",
+                workout: mapTemplateWorkout(template),
+            )
+        }
 
         enrollmentConfirmation = ProgramOnboardingRoute(
             id: "enrollment-confirmation-\(programId)-\(Date().timeIntervalSince1970)",
@@ -468,6 +580,7 @@ final class ProgramDetailsViewModel {
             firstWorkoutTitle: firstWorkoutTitle,
             firstWorkoutInstanceId: firstWorkoutInstanceId,
             fallbackWorkoutTemplateId: firstWorkoutInstanceId == nil ? fallbackWorkout?.id : nil,
+            plannableWorkouts: plannableWorkouts,
             isPendingEnrollment: isPendingEnrollment,
         )
     }
@@ -656,6 +769,75 @@ final class ProgramDetailsViewModel {
         guard !estimates.isEmpty else { return nil }
         let total = estimates.reduce(0, +)
         return max(10, total / estimates.count)
+    }
+
+    func scheduleProgramWorkouts(
+        startDate: Date,
+        weekdays: Set<ProgramScheduleWeekday>,
+    ) async -> Date? {
+        guard let details else { return nil }
+        let templates = (details.workouts ?? []).sorted(by: { $0.dayOrder < $1.dayOrder })
+        guard !templates.isEmpty else { return nil }
+
+        let recommended = ProgramScheduleWeekday.recommended(
+            for: details.currentPublishedVersion?.frequencyPerWeek ?? min(templates.count, 3)
+        )
+        let resolvedDays = weekdays.isEmpty ? Set(recommended) : weekdays
+        let scheduledDays = generateScheduleDates(
+            startDate: startDate,
+            weekdays: resolvedDays,
+            count: templates.count,
+        )
+        guard scheduledDays.count == templates.count else { return nil }
+
+        for (index, template) in templates.enumerated() {
+            let workout = mapTemplateWorkout(template)
+            let plan = TrainingDayPlan(
+                id: localProgramPlanID(workoutId: template.id),
+                userSub: userSub,
+                day: scheduledDays[index],
+                status: .planned,
+                programId: programId,
+                programTitle: details.title.trimmedNilIfEmpty,
+                workoutId: template.id,
+                title: workout.title,
+                source: .program,
+                workoutDetails: workout,
+            )
+            await trainingStore.schedule(plan)
+        }
+
+        return scheduledDays.first
+    }
+
+    private func generateScheduleDates(
+        startDate: Date,
+        weekdays: Set<ProgramScheduleWeekday>,
+        count: Int,
+    ) -> [Date] {
+        guard count > 0, !weekdays.isEmpty else { return [] }
+
+        let minimumDay = Calendar.current.startOfDay(for: Date())
+        var cursor = max(Calendar.current.startOfDay(for: startDate), minimumDay)
+        var result: [Date] = []
+        var attempts = 0
+
+        while result.count < count, attempts < count * 21 {
+            attempts += 1
+            if let weekday = ProgramScheduleWeekday.from(date: cursor, calendar: Calendar.current),
+               weekdays.contains(weekday)
+            {
+                result.append(cursor)
+            }
+            guard let next = Calendar.current.date(byAdding: .day, value: 1, to: cursor) else { break }
+            cursor = next
+        }
+
+        return result
+    }
+
+    private func localProgramPlanID(workoutId: String) -> String {
+        "local-program-plan::\(programId)::\(workoutId)"
     }
 
     private func localizedLevel(_ value: String?) -> String? {
@@ -949,6 +1131,19 @@ struct ProgramDetailsScreen: View {
                 isPreparingFirstWorkout: viewModel.isPreparingFirstWorkout,
                 onStartFirstWorkout: {
                     Task { await viewModel.handleEnrollmentPrimaryAction() }
+                },
+                onPlanProgram: { startDate, weekdays in
+                    Task {
+                        let firstDay = await viewModel.scheduleProgramWorkouts(
+                            startDate: startDate,
+                            weekdays: weekdays,
+                        )
+                        await MainActor.run {
+                            PlanNavigationCoordinator.shared.request(day: firstDay)
+                            viewModel.dismissEnrollmentConfirmation()
+                            onOpenProgramPlan?()
+                        }
+                    }
                 },
                 onOpenProgramPlan: {
                     ClientAnalytics.track(
@@ -1273,6 +1468,13 @@ struct ProgramDetailsScreen: View {
                     action: { Task { await viewModel.handlePrimaryProgramAction() } },
                 )
                 .accessibilityLabel(viewModel.primaryProgramActionTitle)
+                if viewModel.isProgramAlreadyActive, !(details.workouts ?? []).isEmpty {
+                    FFButton(
+                        title: "Распланировать тренировки",
+                        variant: .secondary,
+                        action: { viewModel.openPlanningFlow() },
+                    )
+                }
             }
             .padding(.horizontal, FFSpacing.md)
             .padding(.top, FFSpacing.xs)
@@ -1441,7 +1643,9 @@ struct ProgramOnboardingView: View {
     let route: ProgramDetailsViewModel.ProgramOnboardingRoute
     let isPreparingFirstWorkout: Bool
     let onStartFirstWorkout: () -> Void
+    let onPlanProgram: (Date, Set<ProgramScheduleWeekday>) -> Void
     let onOpenProgramPlan: () -> Void
+    @State private var isPlanningPresented = false
 
     var body: some View {
         ScrollView {
@@ -1525,10 +1729,32 @@ struct ProgramOnboardingView: View {
                     }
                 }
 
+                if route.canPlanProgram {
+                    FFCard {
+                        VStack(alignment: .leading, spacing: FFSpacing.xs) {
+                            Text("Распланируйте программу")
+                                .font(FFTypography.h2)
+                                .foregroundStyle(FFColors.textPrimary)
+                            Text(planningSummaryText)
+                                .font(FFTypography.body)
+                                .foregroundStyle(FFColors.textSecondary)
+                        }
+                    }
+                }
+
+                if route.canPlanProgram {
+                    FFButton(
+                        title: "Распланировать тренировки",
+                        variant: .primary,
+                        action: {
+                            isPlanningPresented = true
+                        },
+                    )
+                }
                 if route.canStartFirstWorkout {
                     FFButton(
                         title: "Начать первую тренировку",
-                        variant: .primary,
+                        variant: route.canPlanProgram ? .secondary : .primary,
                         isLoading: isPreparingFirstWorkout,
                         action: onStartFirstWorkout,
                     )
@@ -1543,12 +1769,234 @@ struct ProgramOnboardingView: View {
             .padding(.vertical, FFSpacing.md)
         }
         .background(FFColors.background)
+        .sheet(isPresented: $isPlanningPresented) {
+            ProgramPlanningSetupView(
+                route: route,
+                onClose: {
+                    isPlanningPresented = false
+                },
+                onApply: { startDate, weekdays in
+                    isPlanningPresented = false
+                    onPlanProgram(startDate, weekdays)
+                },
+            )
+        }
         .task {
             ClientAnalytics.track(
                 .programOnboardingScreenOpened,
                 properties: ["program_id": route.programId],
             )
         }
+    }
+
+    private var planningSummaryText: String {
+        let recommendedDays = ProgramScheduleWeekday.recommended(for: recommendedFrequency)
+            .map(\.shortTitle)
+            .joined(separator: " • ")
+        return "Мы предложим удобные дни недели, покажем первые тренировки и сразу сохраним всё в ваш календарь. Рекомендация: \(recommendedDays)."
+    }
+
+    private var recommendedFrequency: Int {
+        route.frequencyPerWeek ?? max(1, min(route.plannableWorkouts.count, 3))
+    }
+}
+
+private struct ProgramPlanningSetupView: View {
+    let route: ProgramDetailsViewModel.ProgramOnboardingRoute
+    let onClose: () -> Void
+    let onApply: (Date, Set<ProgramScheduleWeekday>) -> Void
+
+    @State private var selectedDays: Set<ProgramScheduleWeekday>
+    @State private var startDate: Date
+
+    init(
+        route: ProgramDetailsViewModel.ProgramOnboardingRoute,
+        onClose: @escaping () -> Void,
+        onApply: @escaping (Date, Set<ProgramScheduleWeekday>) -> Void,
+    ) {
+        self.route = route
+        self.onClose = onClose
+        self.onApply = onApply
+        let recommendedDays = Set(
+            ProgramScheduleWeekday.recommended(
+                for: route.frequencyPerWeek ?? max(1, min(route.plannableWorkouts.count, 3))
+            )
+        )
+        _selectedDays = State(initialValue: recommendedDays)
+        _startDate = State(initialValue: Self.initialStartDate(for: recommendedDays))
+    }
+
+    var body: some View {
+        NavigationStack {
+            ZStack {
+                FFColors.background.ignoresSafeArea()
+                ScrollView {
+                    VStack(spacing: FFSpacing.md) {
+                        FFCard {
+                            VStack(alignment: .leading, spacing: FFSpacing.xs) {
+                                Text("Настроим расписание")
+                                    .font(FFTypography.h2)
+                                    .foregroundStyle(FFColors.textPrimary)
+                                Text("Выберите дни недели. Мы равномерно разложим все тренировки программы по календарю.")
+                                    .font(FFTypography.body)
+                                    .foregroundStyle(FFColors.textSecondary)
+                            }
+                        }
+
+                        FFCard {
+                            VStack(alignment: .leading, spacing: FFSpacing.sm) {
+                                Text("Дни тренировок")
+                                    .font(FFTypography.body.weight(.semibold))
+                                    .foregroundStyle(FFColors.textPrimary)
+                                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: FFSpacing.xs), count: 4), spacing: FFSpacing.xs) {
+                                    ForEach(ProgramScheduleWeekday.allCases) { day in
+                                        weekdayChip(day)
+                                    }
+                                }
+                                Text(daySelectionHint)
+                                    .font(FFTypography.caption)
+                                    .foregroundStyle(FFColors.textSecondary)
+                            }
+                        }
+
+                        FFCard {
+                            VStack(alignment: .leading, spacing: FFSpacing.sm) {
+                                Text("Дата старта")
+                                    .font(FFTypography.body.weight(.semibold))
+                                    .foregroundStyle(FFColors.textPrimary)
+                                DatePicker(
+                                    "Начать с",
+                                    selection: $startDate,
+                                    in: Calendar.current.startOfDay(for: Date())...,
+                                    displayedComponents: .date
+                                )
+                                .datePickerStyle(.graphical)
+                                .tint(FFColors.accent)
+                            }
+                        }
+
+                        FFCard {
+                            VStack(alignment: .leading, spacing: FFSpacing.sm) {
+                                Text("Предпросмотр")
+                                    .font(FFTypography.body.weight(.semibold))
+                                    .foregroundStyle(FFColors.textPrimary)
+                                ForEach(Array(previewRows.enumerated()), id: \.offset) { _, row in
+                                    VStack(alignment: .leading, spacing: FFSpacing.xxs) {
+                                        Text(row.dateText)
+                                            .font(FFTypography.caption.weight(.semibold))
+                                            .foregroundStyle(FFColors.accent)
+                                        Text(row.title)
+                                            .font(FFTypography.body)
+                                            .foregroundStyle(FFColors.textPrimary)
+                                    }
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .padding(.bottom, FFSpacing.xxs)
+                                }
+                            }
+                        }
+
+                        FFButton(
+                            title: "Сохранить в план",
+                            variant: selectedDays.isEmpty ? .disabled : .primary,
+                            action: {
+                                onApply(startDate, selectedDays)
+                            },
+                        )
+                    }
+                    .padding(.horizontal, FFSpacing.md)
+                    .padding(.vertical, FFSpacing.md)
+                }
+            }
+            .navigationTitle("План программы")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button(action: onClose) {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 14, weight: .semibold))
+                    }
+                    .accessibilityLabel("Закрыть")
+                }
+            }
+        }
+        .presentationDetents([.large])
+    }
+
+    private func weekdayChip(_ day: ProgramScheduleWeekday) -> some View {
+        let isSelected = selectedDays.contains(day)
+        return Button {
+            if isSelected {
+                selectedDays.remove(day)
+            } else {
+                selectedDays.insert(day)
+            }
+        } label: {
+            Text(day.shortTitle)
+                .font(FFTypography.body.weight(.semibold))
+                .foregroundStyle(isSelected ? FFColors.background : FFColors.textPrimary)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, FFSpacing.sm)
+                .background(isSelected ? FFColors.accent : FFColors.surface)
+                .clipShape(RoundedRectangle(cornerRadius: FFTheme.Radius.control))
+                .overlay {
+                    RoundedRectangle(cornerRadius: FFTheme.Radius.control)
+                        .stroke(isSelected ? FFColors.accent : FFColors.gray700, lineWidth: 1)
+                }
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var previewRows: [(dateText: String, title: String)] {
+        let dates = scheduledDates.prefix(min(route.plannableWorkouts.count, 4))
+        return Array(zip(dates, route.plannableWorkouts.prefix(4))).map { date, workout in
+            (
+                date.formatted(date: .abbreviated, time: .omitted),
+                "День \(workout.dayOrder) • \(workout.title)"
+            )
+        }
+    }
+
+    private var scheduledDates: [Date] {
+        guard !selectedDays.isEmpty else { return [] }
+        var result: [Date] = []
+        var cursor = max(Calendar.current.startOfDay(for: startDate), Calendar.current.startOfDay(for: Date()))
+        while result.count < route.plannableWorkouts.count, result.count < 12 {
+            if let weekday = ProgramScheduleWeekday.from(date: cursor, calendar: Calendar.current),
+               selectedDays.contains(weekday)
+            {
+                result.append(cursor)
+            }
+            guard let next = Calendar.current.date(byAdding: .day, value: 1, to: cursor) else { break }
+            cursor = next
+        }
+        return result
+    }
+
+    private var daySelectionHint: String {
+        if selectedDays.isEmpty {
+            return "Выберите хотя бы один день недели."
+        }
+        let selected = selectedDays.count
+        let recommended = route.frequencyPerWeek ?? max(1, min(route.plannableWorkouts.count, 3))
+        if selected == recommended {
+            return "Выбран рекомендованный ритм: \(selected) \(selected == 1 ? "день" : "дня") в неделю."
+        }
+        return "Сейчас выбрано \(selected) \(selected == 1 ? "день" : "дня") в неделю."
+    }
+
+    private static func initialStartDate(for weekdays: Set<ProgramScheduleWeekday>) -> Date {
+        let today = Calendar.current.startOfDay(for: Date())
+        var cursor = today
+        for _ in 0 ..< 14 {
+            if let weekday = ProgramScheduleWeekday.from(date: cursor, calendar: Calendar.current),
+               weekdays.contains(weekday)
+            {
+                return cursor
+            }
+            guard let next = Calendar.current.date(byAdding: .day, value: 1, to: cursor) else { break }
+            cursor = next
+        }
+        return today
     }
 }
 

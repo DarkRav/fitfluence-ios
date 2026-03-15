@@ -24,6 +24,7 @@ struct WorkoutDetailsModel: Codable, Equatable, Sendable, Identifiable {
 struct WorkoutExercise: Codable, Equatable, Sendable, Identifiable {
     let id: String
     let name: String
+    let description: String?
     let sets: Int
     let repsMin: Int?
     let repsMax: Int?
@@ -31,6 +32,36 @@ struct WorkoutExercise: Codable, Equatable, Sendable, Identifiable {
     let restSeconds: Int?
     let notes: String?
     let orderIndex: Int
+    let isBodyweight: Bool
+    let media: [ContentMedia]?
+
+    init(
+        id: String,
+        name: String,
+        description: String? = nil,
+        sets: Int,
+        repsMin: Int?,
+        repsMax: Int?,
+        targetRpe: Int?,
+        restSeconds: Int?,
+        notes: String?,
+        orderIndex: Int,
+        isBodyweight: Bool = false,
+        media: [ContentMedia]? = nil,
+    ) {
+        self.id = id
+        self.name = name
+        self.description = description
+        self.sets = sets
+        self.repsMin = repsMin
+        self.repsMax = repsMax
+        self.targetRpe = targetRpe
+        self.restSeconds = restSeconds
+        self.notes = notes
+        self.orderIndex = orderIndex
+        self.isBodyweight = isBodyweight
+        self.media = media
+    }
 }
 
 protocol WorkoutsClientProtocol: Sendable {
@@ -91,6 +122,9 @@ struct WorkoutsClient: WorkoutsClientProtocol {
                     WorkoutExercise(
                         id: exercise.id,
                         name: exercise.exercise.name,
+                        description: exercise.exercise.description?
+                            .trimmingCharacters(in: .whitespacesAndNewlines)
+                            .nilIfEmpty,
                         sets: exercise.sets,
                         repsMin: exercise.repsMin,
                         repsMax: exercise.repsMax,
@@ -98,6 +132,8 @@ struct WorkoutsClient: WorkoutsClientProtocol {
                         restSeconds: exercise.restSeconds,
                         notes: exercise.notes,
                         orderIndex: exercise.orderIndex ?? index,
+                        isBodyweight: exercise.exercise.isBodyweight ?? false,
+                        media: exercise.exercise.media,
                     )
                 }
                 .sorted(by: { $0.orderIndex < $1.orderIndex })
@@ -128,6 +164,12 @@ struct WorkoutsClient: WorkoutsClientProtocol {
         }
         let estimatedSeconds = totalSets * 90 + restSeconds
         return max(10, estimatedSeconds / 60)
+    }
+}
+
+private extension String {
+    var nilIfEmpty: String? {
+        isEmpty ? nil : self
     }
 }
 

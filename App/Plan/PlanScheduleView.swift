@@ -15,6 +15,7 @@ final class PlanScheduleViewModel {
         let day: Date
         let title: String
         let sourceTitle: String
+        let programTitle: String?
         let source: WorkoutSource
         let sourceKind: SourceKind
         let status: TrainingDayStatus
@@ -89,11 +90,11 @@ final class PlanScheduleViewModel {
 
         let previousMonth = calendar.date(byAdding: .month, value: -1, to: selectedMonth) ?? selectedMonth
         let nextMonth = calendar.date(byAdding: .month, value: 1, to: selectedMonth) ?? selectedMonth
-        let enrollmentId = await resolveActiveEnrollmentId()
+        let activeEnrollment = await resolveActiveEnrollmentProgress()
 
-        async let previousPlans = plansForMonth(previousMonth, enrollmentId: enrollmentId)
-        async let selectedPlans = plansForMonth(selectedMonth, enrollmentId: enrollmentId)
-        async let nextPlans = plansForMonth(nextMonth, enrollmentId: enrollmentId)
+        async let previousPlans = plansForMonth(previousMonth, activeEnrollment: activeEnrollment)
+        async let selectedPlans = plansForMonth(selectedMonth, activeEnrollment: activeEnrollment)
+        async let nextPlans = plansForMonth(nextMonth, activeEnrollment: activeEnrollment)
 
         let prevMonthPlans = await previousPlans
         monthPlans = await selectedPlans
@@ -135,6 +136,13 @@ final class PlanScheduleViewModel {
     func jumpToToday() async {
         selectedMonth = calendar.startOfDay(for: Date())
         selectedDay = calendar.startOfDay(for: Date())
+        await reload()
+    }
+
+    func focus(on day: Date) async {
+        let normalizedDay = calendar.startOfDay(for: day)
+        selectedMonth = calendar.dateInterval(of: .month, for: normalizedDay)?.start ?? normalizedDay
+        selectedDay = normalizedDay
         await reload()
     }
 
@@ -200,6 +208,7 @@ final class PlanScheduleViewModel {
                 day: calendar.startOfDay(for: plan.day),
                 title: plan.title,
                 sourceTitle: sourceTitle(for: plan, kind: kind),
+                programTitle: plan.programTitle,
                 source: plan.source,
                 sourceKind: kind,
                 status: plan.status,
@@ -263,7 +272,10 @@ final class PlanScheduleViewModel {
     private func sourceTitle(for plan: TrainingDayPlan, kind: SourceKind) -> String {
         switch kind {
         case .program:
-            return "Программа: активная"
+            if let programTitle = plan.programTitle?.trimmedNilIfEmpty {
+                return "Программа: \(programTitle)"
+            }
+            return "Программа"
         case .manual:
             switch plan.source {
             case .template:
@@ -282,6 +294,7 @@ final class PlanScheduleViewModel {
             title: "Быстрая тренировка",
             source: .freestyle,
             programId: nil,
+            programTitle: nil,
             workoutId: "quick-\(UUID().uuidString)",
             status: .planned,
             workoutDetails: nil,
@@ -294,6 +307,7 @@ final class PlanScheduleViewModel {
             title: workout.title,
             source: .freestyle,
             programId: nil,
+            programTitle: nil,
             workoutId: workout.id,
             status: .planned,
             workoutDetails: workout,
@@ -307,6 +321,7 @@ final class PlanScheduleViewModel {
             title: template.name,
             source: .template,
             programId: nil,
+            programTitle: nil,
             workoutId: template.id,
             status: .planned,
             workoutDetails: mappedWorkout,
@@ -339,6 +354,7 @@ final class PlanScheduleViewModel {
             title: resolvedRecord.workoutTitle,
             source: resolvedRecord.source,
             programId: resolvedRecord.programId,
+            programTitle: nil,
             workoutId: resolvedRecord.workoutId,
             status: .planned,
             workoutDetails: cachedDetails,
@@ -447,6 +463,7 @@ final class PlanScheduleViewModel {
             title: item.title,
             source: item.source,
             programId: item.programId,
+            programTitle: item.programTitle,
             workoutId: item.workoutId,
             status: .planned,
             workoutDetails: item.workoutDetails,
@@ -459,6 +476,7 @@ final class PlanScheduleViewModel {
             title: item.title,
             source: item.source,
             programId: item.programId,
+            programTitle: item.programTitle,
             workoutId: item.workoutId,
             status: .planned,
             workoutDetails: item.workoutDetails,
@@ -483,6 +501,7 @@ final class PlanScheduleViewModel {
             source: item.source,
             status: item.status,
             programId: item.programId,
+            programTitle: item.programTitle,
             workoutDetails: item.workoutDetails,
         )
         await reload()
@@ -508,6 +527,7 @@ final class PlanScheduleViewModel {
         title: String,
         source: WorkoutSource,
         programId: String?,
+        programTitle: String?,
         workoutId: String?,
         status: TrainingDayStatus,
         workoutDetails: WorkoutDetailsModel?,
@@ -522,6 +542,7 @@ final class PlanScheduleViewModel {
             day: normalizedDay,
             status: status,
             programId: programId,
+            programTitle: programTitle?.trimmedNilIfEmpty,
             workoutId: workoutId,
             title: resolvedTitle.isEmpty ? "Тренировка" : resolvedTitle,
             source: source,
@@ -538,6 +559,7 @@ final class PlanScheduleViewModel {
             day: calendar.startOfDay(for: item.day),
             status: status,
             programId: item.programId,
+            programTitle: item.programTitle,
             workoutId: item.workoutId,
             title: item.title,
             source: item.source,
@@ -613,6 +635,11 @@ final class PlanScheduleViewModel {
         return true
     }
 
+    func canDeletePlannedWorkout(_ item: DayScheduleItem) -> Bool {
+        guard item.status == .planned else { return false }
+        return item.sourceKind == .manual
+    }
+
     func canRepeat(_ item: DayScheduleItem) -> Bool {
         item.status == .completed && item.sourceKind == .manual
     }
@@ -640,6 +667,7 @@ final class PlanScheduleViewModel {
             day: calendar.startOfDay(for: item.day),
             status: item.status,
             programId: item.programId,
+            programTitle: item.programTitle,
             workoutId: item.workoutId ?? workout.id,
             title: resolvedTitle.isEmpty ? item.title : resolvedTitle,
             source: item.source,
@@ -712,13 +740,13 @@ final class PlanScheduleViewModel {
         return first.title
     }
 
-    private func resolveActiveEnrollmentId() async -> String? {
+    private func resolveActiveEnrollmentProgress() async -> ActiveEnrollmentProgressResponse? {
         if let cached = await cacheStore.get(
             cacheKeys.activeEnrollment,
             as: ActiveEnrollmentProgressResponse.self,
             namespace: userSub,
         ) {
-            return cached.enrollmentId
+            return cached
         }
 
         guard networkMonitor.currentStatus, let athleteTrainingClient else {
@@ -731,24 +759,27 @@ final class PlanScheduleViewModel {
         }
 
         await cacheStore.set(cacheKeys.activeEnrollment, value: progress, namespace: userSub, ttl: 60 * 5)
-        return progress.enrollmentId
+        return progress
     }
 
-    private func plansForMonth(_ month: Date, enrollmentId: String?) async -> [TrainingDayPlan] {
+    private func plansForMonth(_ month: Date, activeEnrollment: ActiveEnrollmentProgressResponse?) async -> [TrainingDayPlan] {
         let localPlans = await trainingStore.plans(userSub: userSub, month: month)
         let cacheKey = cacheKeys.month(monthKey(for: month))
         var resolved = localPlans
 
-        if let cached = await cacheStore.get(cacheKey, as: [TrainingDayPlan].self, namespace: userSub),
-           !cached.isEmpty
+        if let cached = await cacheStore.get(cacheKey, as: [TrainingDayPlan].self, namespace: userSub)
         {
-            resolved = merge(local: localPlans, remote: cached)
+            let cachedRemotePlans = cachedRemotePlansOnly(cached)
+            if !cachedRemotePlans.isEmpty {
+                resolved = merge(local: localPlans, remote: cachedRemotePlans)
+            }
         }
 
         guard networkMonitor.currentStatus, let athleteTrainingClient else {
             return resolved
         }
 
+        let enrollmentId = activeEnrollment?.enrollmentId
         async let calendarResult = athleteTrainingClient.calendar(month: monthKey(for: month))
         async let scheduleResult: Result<AthleteEnrollmentScheduleResponse, APIError> = {
             guard let enrollmentId else { return .failure(.invalidURL) }
@@ -758,23 +789,31 @@ final class PlanScheduleViewModel {
         var remotePlans: [TrainingDayPlan] = []
 
         if case let .success(calendarResponse) = await calendarResult {
-            remotePlans.append(contentsOf: mapWorkouts(calendarResponse.workouts, month: month))
+            remotePlans.append(contentsOf: mapWorkouts(calendarResponse.workouts, month: month, activeEnrollment: activeEnrollment))
         }
 
         if case let .success(scheduleResponse) = await scheduleResult {
-            remotePlans.append(contentsOf: mapWorkouts(scheduleResponse.workouts, month: month))
+            remotePlans.append(contentsOf: mapWorkouts(scheduleResponse.workouts, month: month, activeEnrollment: activeEnrollment))
         }
 
         remotePlans = deduplicate(remotePlans)
         if !remotePlans.isEmpty {
             resolved = merge(local: localPlans, remote: remotePlans)
-            await cacheStore.set(cacheKey, value: resolved, namespace: userSub, ttl: 60 * 10)
+            await cacheStore.set(cacheKey, value: remotePlans, namespace: userSub, ttl: 60 * 10)
         }
 
         return resolved.sorted { $0.day < $1.day }
     }
 
-    private func mapWorkouts(_ workouts: [AthleteWorkoutInstance], month: Date) -> [TrainingDayPlan] {
+    private func cachedRemotePlansOnly(_ plans: [TrainingDayPlan]) -> [TrainingDayPlan] {
+        plans.filter { $0.id.hasPrefix("remote-") }
+    }
+
+    private func mapWorkouts(
+        _ workouts: [AthleteWorkoutInstance],
+        month: Date,
+        activeEnrollment: ActiveEnrollmentProgressResponse?,
+    ) -> [TrainingDayPlan] {
         guard let monthInterval = calendar.dateInterval(of: .month, for: month) else {
             return []
         }
@@ -792,12 +831,23 @@ final class PlanScheduleViewModel {
                 day: calendar.startOfDay(for: date),
                 status: mapStatus(workout.status),
                 programId: workout.programId?.trimmedNilIfEmpty,
+                programTitle: resolvedProgramTitle(for: workout, activeEnrollment: activeEnrollment),
                 workoutId: workout.id,
                 title: workout.title?.trimmedNilIfEmpty ?? "Тренировка",
                 source: mapSource(workout.source),
                 workoutDetails: nil,
             )
         }
+    }
+
+    private func resolvedProgramTitle(
+        for workout: AthleteWorkoutInstance,
+        activeEnrollment: ActiveEnrollmentProgressResponse?,
+    ) -> String? {
+        let workoutProgramID = workout.programId?.trimmedNilIfEmpty
+        let activeProgramID = activeEnrollment?.programId?.trimmedNilIfEmpty
+        guard workoutProgramID == activeProgramID else { return nil }
+        return activeEnrollment?.programTitle?.trimmedNilIfEmpty
     }
 
     private func merge(local: [TrainingDayPlan], remote: [TrainingDayPlan]) -> [TrainingDayPlan] {
@@ -813,6 +863,13 @@ final class PlanScheduleViewModel {
         var existing = Set(filteredRemote.map(planSignature))
 
         for item in local {
+            if item.source == .program,
+               filteredRemote.contains(where: { remote in
+                   isRemoteEquivalent(remote: remote, toLocalProgramPlan: item)
+               })
+            {
+                continue
+            }
             let key = planSignature(item)
             guard !existing.contains(key) else { continue }
             existing.insert(key)
@@ -820,6 +877,20 @@ final class PlanScheduleViewModel {
         }
 
         return merged.sorted { $0.day < $1.day }
+    }
+
+    private func isRemoteEquivalent(remote: TrainingDayPlan, toLocalProgramPlan local: TrainingDayPlan) -> Bool {
+        guard remote.id.hasPrefix("remote-"), remote.source == .program, local.source == .program else {
+            return false
+        }
+        guard calendar.startOfDay(for: remote.day) == calendar.startOfDay(for: local.day) else {
+            return false
+        }
+        guard remote.programId?.trimmedNilIfEmpty == local.programId?.trimmedNilIfEmpty else {
+            return false
+        }
+        return remote.title.trimmingCharacters(in: .whitespacesAndNewlines)
+            .caseInsensitiveCompare(local.title.trimmingCharacters(in: .whitespacesAndNewlines)) == .orderedSame
     }
 
     private func deduplicate(_ plans: [TrainingDayPlan]) -> [TrainingDayPlan] {
@@ -914,7 +985,7 @@ final class PlanScheduleViewModel {
             }
         }
 
-        if let enrollmentId = await resolveActiveEnrollmentId(),
+        if let enrollmentId = await resolveActiveEnrollmentProgress()?.enrollmentId,
            case let .success(scheduleResponse) = await athleteTrainingClient.enrollmentSchedule(enrollmentId: enrollmentId)
         {
             for workout in scheduleResponse.workouts {
@@ -1077,9 +1148,26 @@ struct PlanScheduleScreen: View {
         let workoutDetails: WorkoutDetailsModel
     }
 
+    private enum AlertFlow: Identifiable {
+        case delete(PlanScheduleViewModel.DayScheduleItem)
+        case skip(PlanScheduleViewModel.DayScheduleItem)
+        case pastSchedule
+
+        var id: String {
+            switch self {
+            case let .delete(item):
+                "delete-\(item.id)"
+            case let .skip(item):
+                "skip-\(item.id)"
+            case .pastSchedule:
+                "past-schedule"
+            }
+        }
+    }
+
     @State var viewModel: PlanScheduleViewModel
     let onOpenProgramWorkout: (_ programId: String, _ workoutId: String) -> Void
-    let onOpenPresetWorkout: (_ workout: WorkoutDetailsModel, _ source: WorkoutSource) -> Void
+    let onOpenPresetWorkout: (_ workout: WorkoutDetailsModel, _ source: WorkoutSource, _ programId: String?) -> Void
     let onOpenQuickWorkoutBuilder: () -> Void
     let onOpenCompletedWorkout: (_ record: CompletedWorkoutRecord) -> Void
 
@@ -1091,15 +1179,13 @@ struct PlanScheduleScreen: View {
     @State private var dateActionFlow: DateActionFlow?
     @State private var workoutDetailsFlow: WorkoutDetailsFlow?
     @State private var editManualWorkoutFlow: EditManualWorkoutFlow?
-    @State private var deleteItem: PlanScheduleViewModel.DayScheduleItem?
-    @State private var skipItem: PlanScheduleViewModel.DayScheduleItem?
+    @State private var alertFlow: AlertFlow?
     @State private var isQuickScheduleBuilderPresented = false
-    @State private var isPastScheduleAlertPresented = false
 
     init(
         viewModel: PlanScheduleViewModel,
         onOpenProgramWorkout: @escaping (_ programId: String, _ workoutId: String) -> Void = { _, _ in },
-        onOpenPresetWorkout: @escaping (_ workout: WorkoutDetailsModel, _ source: WorkoutSource) -> Void = { _, _ in },
+        onOpenPresetWorkout: @escaping (_ workout: WorkoutDetailsModel, _ source: WorkoutSource, _ programId: String?) -> Void = { _, _, _ in },
         onOpenQuickWorkoutBuilder: @escaping () -> Void = {},
         onOpenCompletedWorkout: @escaping (_ record: CompletedWorkoutRecord) -> Void = { _ in },
     ) {
@@ -1129,6 +1215,12 @@ struct PlanScheduleScreen: View {
         }
         .task {
             await viewModel.onAppear()
+            await applyPendingPlanFocusIfNeeded()
+        }
+        .onAppear {
+            Task {
+                await applyPendingPlanFocusIfNeeded()
+            }
         }
         .sheet(isPresented: $isScheduleDialogPresented) {
             PlanScheduleConfigurationSheet(
@@ -1168,6 +1260,7 @@ struct PlanScheduleScreen: View {
         .sheet(isPresented: $isTemplatePickerPresented) {
             PlanTemplatePickerSheet(
                 templates: scheduleTemplates,
+                loadTemplates: { await viewModel.templates() },
                 onPick: { template in
                     guard let day = scheduleTargetDay else { return }
                     isTemplatePickerPresented = false
@@ -1229,36 +1322,39 @@ struct PlanScheduleScreen: View {
                 }
             }
         }
-        .alert(item: $deleteItem) { item in
-            Alert(
-                title: Text("Удалить тренировку?"),
-                message: Text("Тренировка «\(item.title)» будет удалена из плана."),
-                primaryButton: .destructive(Text("Удалить")) {
-                    Task { await viewModel.deletePlan(item) }
-                },
-                secondaryButton: .cancel(),
-            )
-        }
-        .alert(item: $skipItem) { item in
-            Alert(
-                title: Text("Отметить как пропущенную?"),
-                message: Text("Тренировка «\(item.title)» останется в истории как пропущенная."),
-                primaryButton: .destructive(Text("Пропустить")) {
-                    Task {
-                        if item.status == .inProgress {
-                            await viewModel.cancelInProgress(item)
-                        } else {
-                            await viewModel.markSkipped(item)
+        .alert(item: $alertFlow) { flow in
+            switch flow {
+            case let .delete(item):
+                Alert(
+                    title: Text("Удалить тренировку?"),
+                    message: Text("Тренировка «\(item.title)» будет удалена из плана."),
+                    primaryButton: .destructive(Text("Удалить")) {
+                        Task { await viewModel.deletePlan(item) }
+                    },
+                    secondaryButton: .cancel(),
+                )
+            case let .skip(item):
+                Alert(
+                    title: Text("Отметить как пропущенную?"),
+                    message: Text("Тренировка «\(item.title)» останется в истории как пропущенная."),
+                    primaryButton: .destructive(Text("Пропустить")) {
+                        Task {
+                            if item.status == .inProgress {
+                                await viewModel.cancelInProgress(item)
+                            } else {
+                                await viewModel.markSkipped(item)
+                            }
                         }
-                    }
-                },
-                secondaryButton: .cancel(),
-            )
-        }
-        .alert("Нельзя запланировать тренировку", isPresented: $isPastScheduleAlertPresented) {
-            Button("Понятно", role: .cancel) {}
-        } message: {
-            Text("Планирование доступно только на сегодня и будущие даты.")
+                    },
+                    secondaryButton: .cancel(),
+                )
+            case .pastSchedule:
+                Alert(
+                    title: Text("Нельзя запланировать тренировку"),
+                    message: Text("Планирование доступно только на сегодня и будущие даты."),
+                    dismissButton: .cancel(Text("Понятно")),
+                )
+            }
         }
     }
 
@@ -1688,18 +1784,18 @@ struct PlanScheduleScreen: View {
                     mode: .move,
                 )
             }
-            if item.sourceKind == .program {
-                Button("Пропустить", role: .destructive) {
-                    skipItem = item
+            if viewModel.canDeletePlannedWorkout(item) {
+                Button("Удалить", role: .destructive) {
+                    presentDeleteConfirmation(for: item)
                 }
             } else {
-                Button("Удалить", role: .destructive) {
-                    deleteItem = item
+                Button("Пропустить", role: .destructive) {
+                    presentSkipConfirmation(for: item)
                 }
             }
         case .inProgress:
             Button("Отменить", role: .destructive) {
-                skipItem = item
+                presentSkipConfirmation(for: item)
             }
         case .completed:
             if viewModel.canRepeat(item) {
@@ -1765,7 +1861,7 @@ struct PlanScheduleScreen: View {
     private func openScheduleDialog(for day: Date) {
         let normalized = Calendar.current.startOfDay(for: day)
         guard viewModel.canSchedule(on: normalized) else {
-            isPastScheduleAlertPresented = true
+            alertFlow = .pastSchedule
             return
         }
         scheduleTargetDay = normalized
@@ -1846,6 +1942,17 @@ struct PlanScheduleScreen: View {
         }
     }
 
+    private func applyPendingPlanFocusIfNeeded() async {
+        guard let requestedDay = await MainActor.run(body: { PlanNavigationCoordinator.shared.consumePendingDay() }) else {
+            return
+        }
+        await viewModel.focus(on: requestedDay)
+    }
+
+    private func isLocalProgramTemplate(_ item: PlanScheduleViewModel.DayScheduleItem) -> Bool {
+        item.source == .program && !item.planId.hasPrefix("remote-") && item.workoutDetails != nil
+    }
+
     private func handleOpenWorkout(
         _ item: PlanScheduleViewModel.DayScheduleItem,
         preferDetailsForFutureDate: Bool,
@@ -1857,6 +1964,20 @@ struct PlanScheduleScreen: View {
 
         switch item.source {
         case .program:
+            if isLocalProgramTemplate(item) {
+                Task {
+                    if let details = await viewModel.resolveWorkoutDetails(for: item) {
+                        await MainActor.run {
+                            onOpenPresetWorkout(details, .program, item.programId)
+                        }
+                    } else {
+                        await MainActor.run {
+                            presentDetails(item)
+                        }
+                    }
+                }
+                return
+            }
             guard let programId = item.programId?.trimmedNilIfEmpty,
                   let workoutId = item.workoutId?.trimmedNilIfEmpty
             else {
@@ -1869,7 +1990,7 @@ struct PlanScheduleScreen: View {
             Task {
                 if let details = await viewModel.resolveWorkoutDetails(for: item) {
                     await MainActor.run {
-                        onOpenPresetWorkout(details, .freestyle)
+                        onOpenPresetWorkout(details, .freestyle, nil)
                     }
                 } else {
                     await MainActor.run {
@@ -1882,7 +2003,7 @@ struct PlanScheduleScreen: View {
             Task {
                 if let templateWorkout = await viewModel.resolveWorkoutDetails(for: item) {
                     await MainActor.run {
-                        onOpenPresetWorkout(templateWorkout, .template)
+                        onOpenPresetWorkout(templateWorkout, .template, nil)
                     }
                 } else {
                     await MainActor.run {
@@ -1893,9 +2014,27 @@ struct PlanScheduleScreen: View {
         }
     }
 
+    private func presentDeleteConfirmation(for item: PlanScheduleViewModel.DayScheduleItem) {
+        Task { @MainActor in
+            await Task.yield()
+            alertFlow = .delete(item)
+        }
+    }
+
+    private func presentSkipConfirmation(for item: PlanScheduleViewModel.DayScheduleItem) {
+        Task { @MainActor in
+            await Task.yield()
+            alertFlow = .skip(item)
+        }
+    }
+
     private func handleOpenResult(_ item: PlanScheduleViewModel.DayScheduleItem) {
         switch item.source {
         case .program:
+            if isLocalProgramTemplate(item) {
+                presentDetails(item)
+                return
+            }
             guard let programId = item.programId?.trimmedNilIfEmpty,
                   let workoutId = item.workoutId?.trimmedNilIfEmpty
             else {
@@ -1936,7 +2075,7 @@ struct PlanScheduleScreen: View {
             Task {
                 if let details = await viewModel.resolveWorkoutDetails(for: item) {
                     await MainActor.run {
-                        onOpenPresetWorkout(details, .freestyle)
+                        onOpenPresetWorkout(details, .freestyle, nil)
                     }
                 } else {
                     await MainActor.run {
@@ -2101,14 +2240,30 @@ private struct PlanScheduleConfigurationSheet: View {
 
 private struct PlanTemplatePickerSheet: View {
     let templates: [WorkoutTemplateDraft]
+    let loadTemplates: () async -> [WorkoutTemplateDraft]
     let onPick: (WorkoutTemplateDraft) -> Void
     @Environment(\.dismiss) private var dismiss
+    @State private var resolvedTemplates: [WorkoutTemplateDraft]
+    @State private var isLoading = false
+
+    init(
+        templates: [WorkoutTemplateDraft],
+        loadTemplates: @escaping () async -> [WorkoutTemplateDraft],
+        onPick: @escaping (WorkoutTemplateDraft) -> Void,
+    ) {
+        self.templates = templates
+        self.loadTemplates = loadTemplates
+        self.onPick = onPick
+        _resolvedTemplates = State(initialValue: templates)
+    }
 
     var body: some View {
         NavigationStack {
             ZStack {
                 FFColors.background.ignoresSafeArea()
-                if templates.isEmpty {
+                if isLoading, resolvedTemplates.isEmpty {
+                    FFScreenSpinner()
+                } else if resolvedTemplates.isEmpty {
                     FFEmptyState(
                         title: "Шаблонов пока нет",
                         message: "Создайте шаблон во вкладке «Тренировка», затем он появится здесь.",
@@ -2117,7 +2272,7 @@ private struct PlanTemplatePickerSheet: View {
                 } else {
                     ScrollView {
                         VStack(spacing: FFSpacing.sm) {
-                            ForEach(templates) { template in
+                            ForEach(resolvedTemplates) { template in
                                 Button {
                                     onPick(template)
                                 } label: {
@@ -2144,8 +2299,19 @@ private struct PlanTemplatePickerSheet: View {
                     .accessibilityLabel("Закрыть")
                 }
             }
+            .task {
+                await reloadTemplates()
+            }
         }
         .presentationDetents([.medium, .large])
+    }
+
+    @MainActor
+    private func reloadTemplates() async {
+        isLoading = true
+        let latest = await loadTemplates()
+        resolvedTemplates = latest
+        isLoading = false
     }
 
     private func infoRow(template: WorkoutTemplateDraft) -> some View {

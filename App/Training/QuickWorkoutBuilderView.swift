@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 struct QuickWorkoutBuilderView: View {
     struct DraftExercise: Identifiable, Equatable {
@@ -113,6 +114,7 @@ struct QuickWorkoutBuilderView: View {
                     }
                 }
             }
+            .scrollDismissesKeyboard(.interactively)
             .padding(.horizontal, FFSpacing.md)
             .padding(.vertical, FFSpacing.md)
             .safeAreaInset(edge: .bottom) {
@@ -140,8 +142,20 @@ struct QuickWorkoutBuilderView: View {
                 .font(FFTypography.body.weight(.semibold))
                 .foregroundStyle(selected.isEmpty ? FFColors.gray500 : FFColors.accent)
             }
+            ToolbarItemGroup(placement: .keyboard) {
+                Spacer()
+                Button("Готово") {
+                    dismissKeyboard()
+                }
+                .font(FFTypography.body.weight(.semibold))
+            }
         }
         .tint(FFColors.accent)
+        .onChange(of: searchQuery) { _, newValue in
+            if newValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                dismissKeyboard()
+            }
+        }
     }
 
     private var filteredLibrary: [DraftExercise] {
@@ -152,11 +166,25 @@ struct QuickWorkoutBuilderView: View {
 
     private var bottomActionBar: some View {
         VStack(spacing: FFSpacing.xs) {
-            FFButton(title: selected.isEmpty ? "Добавьте упражнение" : submitTitle, variant: .primary) {
-                start()
+            if selected.isEmpty {
+                Text("Выберите упражнение из каталога, чтобы начать тренировку.")
+                    .font(FFTypography.caption)
+                    .foregroundStyle(FFColors.textSecondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, FFSpacing.sm)
+                    .padding(.vertical, FFSpacing.sm)
+                    .background(FFColors.surface)
+                    .clipShape(RoundedRectangle(cornerRadius: FFTheme.Radius.control))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: FFTheme.Radius.control)
+                            .stroke(FFColors.gray700.opacity(0.8), lineWidth: 1)
+                    }
+            } else {
+                FFButton(title: submitTitle, variant: .primary) {
+                    start()
+                }
+                .accessibilityLabel(submitTitle)
             }
-            .disabled(selected.isEmpty)
-            .accessibilityLabel(selected.isEmpty ? "Добавьте упражнение" : submitTitle)
         }
         .padding(.horizontal, FFSpacing.md)
         .padding(.top, FFSpacing.xs)
@@ -359,6 +387,10 @@ struct QuickWorkoutBuilderView: View {
 
     private func exerciseDescription(sets: Int, repsMin: Int, repsMax: Int, restSeconds: Int) -> String {
         "\(sets) подхода • \(repsMin)-\(repsMax) повторов • отдых \(restSeconds) сек"
+    }
+
+    private func dismissKeyboard() {
+        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
     }
 
     private func start() {

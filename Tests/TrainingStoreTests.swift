@@ -84,6 +84,146 @@ final class TrainingStoreTests: XCTestCase {
         XCTAssertEqual(afterDeleteU2.count, 1)
     }
 
+    @MainActor
+    func testPlanViewModelSeesTemplateSavedByAnotherStoreInstance() async throws {
+        let suite = "fitfluence.tests.training.templates.plan.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        let writerStore = LocalTrainingStore(defaults: defaults)
+        let readerStore = LocalTrainingStore(defaults: defaults)
+        let template = WorkoutTemplateDraft(
+            id: "t-plan",
+            userSub: "u1",
+            name: "Plan Visible Template",
+            exercises: [
+                TemplateExerciseDraft(id: "ex1", name: "Жим лёжа", sets: 4, repsMin: 5, repsMax: 8, restSeconds: 120),
+            ],
+            updatedAt: Date(),
+        )
+
+        await writerStore.saveTemplate(template)
+
+        let viewModel = PlanScheduleViewModel(
+            userSub: "u1",
+            trainingStore: readerStore,
+            athleteTrainingClient: nil,
+            cacheStore: MemoryCacheStore(),
+            networkMonitor: StaticNetworkMonitor(currentStatus: false),
+            calendar: .current,
+        )
+
+        let templates = await viewModel.templates()
+
+        XCTAssertTrue(templates.contains(where: { $0.id == "t-plan" && $0.name == "Plan Visible Template" }))
+    }
+
+    @MainActor
+    func testPlanViewModelDeleteTemplatePlanDoesNotRestoreFromLegacyMonthCache() async throws {
+        let suite = "fitfluence.tests.training.plan.delete-template-cache.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        let calendar = Calendar.current
+        let today = calendar.startOfDay(for: Date())
+        let store = LocalTrainingStore(defaults: defaults, calendar: calendar)
+        let cacheStore = MemoryCacheStore()
+
+        let localTemplatePlan = TrainingDayPlan(
+            id: "local-template-plan",
+            userSub: "u1",
+            day: today,
+            status: .planned,
+            programId: nil,
+            programTitle: nil,
+            workoutId: "template-upper-lower",
+            title: "Верх / Низ",
+            source: .template,
+            workoutDetails: nil,
+        )
+        let remoteProgramPlan = TrainingDayPlan(
+            id: "remote-workout-1",
+            userSub: "u1",
+            day: today,
+            status: .planned,
+            programId: "program-1",
+            programTitle: "Сила 8 недель",
+            workoutId: "workout-1",
+            title: "День 1",
+            source: .program,
+            workoutDetails: nil,
+        )
+
+        await store.schedule(localTemplatePlan)
+        await cacheStore.set(
+            "athlete.plan.month.\(monthKey(for: today, calendar: calendar))",
+            value: [remoteProgramPlan, localTemplatePlan],
+            namespace: "u1",
+            ttl: 60 * 10,
+        )
+
+        let viewModel = PlanScheduleViewModel(
+            userSub: "u1",
+            trainingStore: store,
+            athleteTrainingClient: nil,
+            cacheStore: cacheStore,
+            networkMonitor: StaticNetworkMonitor(currentStatus: false),
+            calendar: calendar,
+        )
+
+        await viewModel.onAppear()
+        let item = try XCTUnwrap(
+            viewModel.dayItems(for: today).first(where: { $0.planId == "local-template-plan" })
+        )
+
+        await viewModel.deletePlan(item)
+
+        let remainingItems = viewModel.dayItems(for: today)
+        XCTAssertFalse(remainingItems.contains(where: { $0.planId == "local-template-plan" }))
+        XCTAssertTrue(remainingItems.contains(where: { $0.planId == "remote-workout-1" }))
+    }
+
+    @MainActor
+    func testPlanViewModelShowsRealProgramTitleForLocalProgramPlan() async throws {
+        let suite = "fitfluence.tests.training.plan.program-title.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        let calendar = Calendar.current
+        let today = calendar.startOfDay(for: Date())
+        let store = LocalTrainingStore(defaults: defaults, calendar: calendar)
+
+        let localProgramPlan = TrainingDayPlan(
+            id: "local-program-plan",
+            userSub: "u1",
+            day: today,
+            status: .planned,
+            programId: "program-1",
+            programTitle: "Сила 8 недель",
+            workoutId: "workout-1",
+            title: "День 1",
+            source: .program,
+            workoutDetails: nil,
+        )
+
+        await store.schedule(localProgramPlan)
+
+        let viewModel = PlanScheduleViewModel(
+            userSub: "u1",
+            trainingStore: store,
+            athleteTrainingClient: nil,
+            cacheStore: MemoryCacheStore(),
+            networkMonitor: StaticNetworkMonitor(currentStatus: false),
+            calendar: calendar,
+        )
+
+        await viewModel.onAppear()
+
+        let item = try XCTUnwrap(viewModel.dayItems(for: today).first)
+        XCTAssertEqual(item.programTitle, "Сила 8 недель")
+        XCTAssertEqual(item.sourceTitle, "Программа: Сила 8 недель")
+    }
+
     func testProgressInsightEnginePrioritizesMissedWorkouts() {
         let context = ProgressInsightContext(
             workouts7d: 4,
@@ -116,6 +256,7 @@ final class TrainingStoreTests: XCTestCase {
             day: today,
             status: .planned,
             programId: "program-1",
+            programTitle: "Сила 8 недель",
             workoutId: "workout-1",
             title: "День A",
             source: .program,
@@ -136,6 +277,7 @@ final class TrainingStoreTests: XCTestCase {
             source: .program,
             status: .planned,
             programId: "program-1",
+            programTitle: "Сила 8 недель",
             workoutDetails: nil,
         )
 
@@ -171,6 +313,7 @@ final class TrainingStoreTests: XCTestCase {
             day: today,
             status: .planned,
             programId: nil,
+            programTitle: nil,
             workoutId: "repeat-target",
             title: "Повтор 1",
             source: .freestyle,
@@ -182,6 +325,7 @@ final class TrainingStoreTests: XCTestCase {
             day: today,
             status: .planned,
             programId: nil,
+            programTitle: nil,
             workoutId: "repeat-target",
             title: "Повтор 2",
             source: .freestyle,
@@ -232,5 +376,14 @@ final class TrainingStoreTests: XCTestCase {
 
         XCTAssertEqual(insight.action, .startNextWorkout)
         XCTAssertEqual(insight.ctaTitle, "Начать следующую тренировку")
+    }
+
+    private func monthKey(for date: Date, calendar: Calendar) -> String {
+        let formatter = DateFormatter()
+        formatter.calendar = calendar
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = calendar.timeZone
+        formatter.dateFormat = "yyyy-MM"
+        return formatter.string(from: date)
     }
 }

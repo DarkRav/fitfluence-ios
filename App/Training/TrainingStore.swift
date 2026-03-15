@@ -41,6 +41,7 @@ struct TrainingDayPlan: Codable, Equatable, Sendable, Identifiable {
     let day: Date
     let status: TrainingDayStatus
     let programId: String?
+    let programTitle: String?
     let workoutId: String?
     let title: String
     let source: WorkoutSource
@@ -98,6 +99,7 @@ protocol TrainingStore: Sendable {
         source: WorkoutSource,
         status: TrainingDayStatus,
         programId: String?,
+        programTitle: String?,
         workoutDetails: WorkoutDetailsModel?,
     ) async
     func plans(userSub: String, month: Date) async -> [TrainingDayPlan]
@@ -125,6 +127,7 @@ extension TrainingStore {
         source _: WorkoutSource,
         status _: TrainingDayStatus,
         programId _: String?,
+        programTitle _: String?,
         workoutDetails _: WorkoutDetailsModel?,
     ) async {}
 }
@@ -154,6 +157,7 @@ actor LocalTrainingStore: TrainingStore {
             day: startOfDay(record.finishedAt),
             status: .completed,
             programId: record.programId,
+            programTitle: nil,
             workoutId: record.workoutId,
             title: record.workoutTitle,
             source: record.source,
@@ -238,6 +242,7 @@ actor LocalTrainingStore: TrainingStore {
         source: WorkoutSource,
         status: TrainingDayStatus,
         programId: String?,
+        programTitle: String?,
         workoutDetails: WorkoutDetailsModel?,
     ) async {
         let normalizedFromDay = startOfDay(day)
@@ -260,6 +265,7 @@ actor LocalTrainingStore: TrainingStore {
             day: normalizedTargetDay,
             status: status,
             programId: programId,
+            programTitle: programTitle,
             workoutId: workoutId,
             title: normalizedTitle.isEmpty ? "Тренировка" : normalizedTitle,
             source: source,

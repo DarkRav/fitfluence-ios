@@ -268,6 +268,52 @@ final class CatalogAndProgramDetailsFeatureTests: XCTestCase {
         XCTAssertEqual(viewModel.selectedWorkout?.workoutId, "workout-2")
     }
 
+    func testProgramDetailsScheduleProgramWorkoutsCreatesLocalPlan() async {
+        let suiteName = "ProgramDetailsScheduleTests-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        let trainingStore = LocalTrainingStore(defaults: defaults)
+        defer {
+            defaults.removePersistentDomain(forName: suiteName)
+        }
+
+        let mockClient = MockProgramsClient(
+            listResults: [],
+            detailsResults: [.success(sampleDetailsWithWorkouts)],
+            startResults: [],
+        )
+
+        let viewModel = ProgramDetailsViewModel(
+            programId: "program-1",
+            userSub: "u1",
+            programsClient: mockClient,
+            cacheStore: MemoryCacheStore(),
+            networkMonitor: StaticNetworkMonitor(currentStatus: true),
+            trainingStore: trainingStore,
+        )
+
+        await viewModel.onAppear()
+
+        let startDate = Calendar.current.date(from: DateComponents(year: 2026, month: 3, day: 16))!
+        let firstDay = await viewModel.scheduleProgramWorkouts(
+            startDate: startDate,
+            weekdays: [.monday, .wednesday, .friday],
+        )
+
+        XCTAssertEqual(firstDay, startDate)
+
+        let monthPlans = await trainingStore.plans(userSub: "u1", month: startDate)
+        let scheduled = monthPlans
+            .filter { $0.programId == "program-1" }
+            .sorted { $0.day < $1.day }
+
+        XCTAssertEqual(scheduled.count, 3)
+        XCTAssertEqual(scheduled.map(\.title), ["День 1", "День 2", "День 3"])
+        XCTAssertEqual(scheduled.map(\.source), [.program, .program, .program])
+        XCTAssertEqual(scheduled.map(\.workoutId), ["w1", "w2", "w3"])
+        XCTAssertEqual(scheduled.map(\.programTitle), ["Программа", "Программа", "Программа"])
+        XCTAssertTrue(scheduled.allSatisfy { $0.workoutDetails != nil })
+    }
+
     private func samplePage(title: String) -> PagedProgramResponse {
         PagedProgramResponse(
             content: [
@@ -336,6 +382,67 @@ final class CatalogAndProgramDetailsFeatureTests: XCTestCase {
             updatedAt: nil,
             versions: nil,
             workouts: nil,
+        )
+    }
+
+    private var sampleDetailsWithWorkouts: ProgramDetails {
+        ProgramDetails(
+            id: "program-1",
+            title: "Программа",
+            description: "Описание",
+            status: .published,
+            isFeatured: false,
+            influencer: nil,
+            cover: nil,
+            media: nil,
+            goals: [],
+            currentPublishedVersion: ProgramVersionSummary(
+                id: "ver-1",
+                versionNumber: 1,
+                status: .published,
+                publishedAt: nil,
+                level: nil,
+                frequencyPerWeek: 3,
+                requirements: nil,
+            ),
+            createdAt: nil,
+            updatedAt: nil,
+            versions: nil,
+            workouts: [
+                makeWorkoutTemplate(id: "w1", dayOrder: 1, title: "День 1"),
+                makeWorkoutTemplate(id: "w2", dayOrder: 2, title: "День 2"),
+                makeWorkoutTemplate(id: "w3", dayOrder: 3, title: "День 3"),
+            ],
+        )
+    }
+
+    private func makeWorkoutTemplate(id: String, dayOrder: Int, title: String) -> WorkoutTemplate {
+        WorkoutTemplate(
+            id: id,
+            dayOrder: dayOrder,
+            title: title,
+            coachNote: nil,
+            exercises: [
+                ExerciseTemplate(
+                    id: "ex-\(id)",
+                    exercise: ExerciseSummary(
+                        id: "exercise-\(id)",
+                        code: nil,
+                        name: "Присед",
+                        description: nil,
+                        isBodyweight: false,
+                        media: nil,
+                    ),
+                    sets: 4,
+                    repsMin: 5,
+                    repsMax: 8,
+                    targetRpe: nil,
+                    restSeconds: 120,
+                    notes: nil,
+                    orderIndex: 0,
+                ),
+            ],
+            media: nil,
         )
     }
 }

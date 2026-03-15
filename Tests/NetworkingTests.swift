@@ -179,6 +179,113 @@ final class NetworkingTests: XCTestCase {
         XCTAssertEqual(decoded.entries.first?.volume, 400)
     }
 
+    func testActiveEnrollmentProgress404MapsToEmptyProgress() async {
+        MockURLProtocol.requestHandler = { request in
+            let response = try HTTPURLResponse(
+                url: XCTUnwrap(request.url),
+                statusCode: 404,
+                httpVersion: nil,
+                headerFields: nil,
+            )!
+            return (response, Data("{}".utf8))
+        }
+
+        let apiClient = APIClient(httpClient: makeHTTPClient())
+        let result = await apiClient.activeEnrollmentProgress()
+
+        switch result {
+        case let .success(progress):
+            XCTAssertEqual(progress, .empty)
+        case let .failure(error):
+            XCTFail("Expected empty progress, got error: \(error)")
+        }
+    }
+
+    func testActiveEnrollmentProgressEmptyListMapsToEmptyProgress() async {
+        MockURLProtocol.requestHandler = { request in
+            let response = try HTTPURLResponse(
+                url: XCTUnwrap(request.url),
+                statusCode: 200,
+                httpVersion: nil,
+                headerFields: nil,
+            )!
+            return (response, Data("[]".utf8))
+        }
+
+        let apiClient = APIClient(httpClient: makeHTTPClient())
+        let result = await apiClient.activeEnrollmentProgress()
+
+        switch result {
+        case let .success(progress):
+            XCTAssertEqual(progress, .empty)
+        case let .failure(error):
+            XCTFail("Expected empty progress, got error: \(error)")
+        }
+    }
+
+    func testAthleteWorkoutDetailsMappingPreservesExerciseDetails() {
+        let media = ContentMedia(
+            id: "media-1",
+            type: .video,
+            url: "/media/pull-up.mp4",
+            mimeType: "video/mp4",
+            tags: nil,
+            createdAt: nil,
+            ownerType: nil,
+            ownerId: nil,
+            ownerDisplayName: nil,
+        )
+        let response = AthleteWorkoutDetailsResponse(
+            workout: AthleteWorkoutInstance(
+                id: "workout-1",
+                enrollmentId: nil,
+                workoutTemplateId: nil,
+                title: "Workout",
+                status: .planned,
+                source: .program,
+                scheduledDate: nil,
+                startedAt: nil,
+                completedAt: nil,
+                durationSeconds: nil,
+                notes: nil,
+                programId: nil,
+            ),
+            exercises: [
+                AthleteExerciseExecution(
+                    id: "exec-1",
+                    workoutInstanceId: "workout-1",
+                    exerciseTemplateId: nil,
+                    workoutPlanId: nil,
+                    exerciseId: "exercise-1",
+                    orderIndex: 0,
+                    notes: nil,
+                    plannedSets: 3,
+                    plannedRepsMin: 8,
+                    plannedRepsMax: 10,
+                    plannedTargetRpe: nil,
+                    plannedRestSeconds: 90,
+                    plannedNotes: nil,
+                    progressionPolicyId: nil,
+                    exercise: AthleteExerciseBrief(
+                        id: "exercise-1",
+                        code: "pull-up",
+                        name: "Подтягивания",
+                        description: "Держите корпус стабильно и тянитесь грудью к перекладине.",
+                        isBodyweight: true,
+                        media: [media],
+                    ),
+                    sets: nil,
+                ),
+            ],
+        )
+
+        let mapped = response.asWorkoutDetailsModel()
+
+        XCTAssertEqual(mapped.exercises.first?.isBodyweight, true)
+        XCTAssertEqual(mapped.exercises.first?.description, "Держите корпус стабильно и тянитесь грудью к перекладине.")
+        XCTAssertEqual(mapped.exercises.first?.media?.first?.id, "media-1")
+    }
+
     private func makeHTTPClient() -> HTTPClient {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [MockURLProtocol.self]

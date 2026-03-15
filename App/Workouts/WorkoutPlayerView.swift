@@ -1,7 +1,9 @@
+import AVKit
 import Foundation
 import Observation
 import SwiftUI
 import UIKit
+import UserNotifications
 
 enum SyncStatusKind: String, Codable, Equatable, Sendable {
     case synced
@@ -270,22 +272,54 @@ struct HistoryBottomSheet: View {
 
 @Observable
 final class RestTimerModel {
+    static let shared = RestTimerModel(notificationsEnabled: true)
+
+    private static let notificationIdentifier = "fitfluence.rest.timer"
+
     private var task: Task<Void, Never>?
+    private var completionMessageTask: Task<Void, Never>?
     private var initialSeconds = 0
     private var finishDate: Date?
     private var pausedSeconds: Int?
+    private let notificationCenter = UNUserNotificationCenter.current()
+    private let notificationsEnabled: Bool
 
     var isVisible = false
     var isRunning = false
     var remainingSeconds = 0
     var onCompleted: (() -> Void)?
+    var workoutId: String?
+    var workoutTitle: String?
+    var exerciseName: String?
+    var completionMessage: String?
+    var timerSoundEnabled = ProfileSettings.default.timerSoundEnabled
+
+    init(notificationsEnabled: Bool = false) {
+        self.notificationsEnabled = notificationsEnabled
+    }
 
     deinit {
         task?.cancel()
+        completionMessageTask?.cancel()
     }
 
     func start(seconds: Int) {
         start(seconds: seconds, updateInitial: true)
+    }
+
+    func setContext(
+        workoutId: String,
+        workoutTitle: String,
+        exerciseName: String?,
+        timerSoundEnabled: Bool,
+    ) {
+        self.workoutId = workoutId
+        self.workoutTitle = workoutTitle
+        self.exerciseName = exerciseName
+        self.timerSoundEnabled = timerSoundEnabled
+        if isVisible, isRunning {
+            scheduleCompletionNotification()
+        }
     }
 
     func pauseOrResume() {
@@ -295,6 +329,7 @@ final class RestTimerModel {
             finishDate = nil
             task?.cancel()
             task = nil
+            cancelCompletionNotification()
         } else {
             let resumeValue = pausedSeconds ?? remainingSeconds
             guard resumeValue > 0 else { return }
@@ -313,6 +348,7 @@ final class RestTimerModel {
             let base = finishDate ?? Date().addingTimeInterval(Double(remainingSeconds))
             finishDate = base.addingTimeInterval(Double(seconds))
             recalculateRemaining()
+            scheduleCompletionNotification()
         } else {
             let next = max(0, (pausedSeconds ?? remainingSeconds) + seconds)
             pausedSeconds = next
@@ -337,6 +373,22 @@ final class RestTimerModel {
         isVisible = false
         isRunning = false
         remainingSeconds = 0
+        completionMessageTask?.cancel()
+        cancelCompletionNotification()
+    }
+
+    func clearIfMatches(workoutId: String) {
+        guard self.workoutId == workoutId else { return }
+        skip()
+        self.workoutId = nil
+        workoutTitle = nil
+        exerciseName = nil
+        completionMessage = nil
+    }
+
+    func dismissCompletionMessage() {
+        completionMessageTask?.cancel()
+        completionMessage = nil
     }
 
     func handleWillEnterForeground() {
@@ -344,6 +396,7 @@ final class RestTimerModel {
         recalculateRemaining()
         if remainingSeconds > 0 {
             scheduleTicker()
+            scheduleCompletionNotification()
         }
     }
 
@@ -358,7 +411,10 @@ final class RestTimerModel {
         remainingSeconds = seconds
         isVisible = true
         isRunning = true
+        completionMessageTask?.cancel()
+        completionMessage = nil
         scheduleTicker()
+        scheduleCompletionNotification()
     }
 
     private func scheduleTicker() {
@@ -391,7 +447,75 @@ final class RestTimerModel {
         isVisible = false
         isRunning = false
         remainingSeconds = 0
+        cancelCompletionNotification()
+        if let exerciseName, !exerciseName.isEmpty {
+            completionMessage = "Отдых завершён: \(exerciseName)"
+        } else {
+            completionMessage = "Отдых завершён. Можно возвращаться к подходу."
+        }
+        completionMessageTask?.cancel()
+        completionMessageTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(10))
+            await MainActor.run {
+                self?.completionMessage = nil
+            }
+        }
         onCompleted?()
+    }
+
+    private func scheduleCompletionNotification() {
+        guard notificationsEnabled else { return }
+        guard isVisible, isRunning, remainingSeconds > 0 else {
+            cancelCompletionNotification()
+            return
+        }
+
+        Task {
+            let settings = await notificationCenter.notificationSettings()
+            let isAuthorized = switch settings.authorizationStatus {
+            case .authorized, .provisional, .ephemeral:
+                true
+            case .notDetermined:
+                (try? await notificationCenter.requestAuthorization(options: [.alert, .sound])) ?? false
+            case .denied:
+                false
+            @unknown default:
+                false
+            }
+
+            guard isAuthorized else { return }
+
+            let content = UNMutableNotificationContent()
+            content.title = "Отдых завершён"
+            if let exerciseName, !exerciseName.isEmpty {
+                content.body = "Пора вернуться к упражнению: \(exerciseName)"
+            } else if let workoutTitle, !workoutTitle.isEmpty {
+                content.body = "Пора вернуться к тренировке: \(workoutTitle)"
+            } else {
+                content.body = "Можно начинать следующий подход."
+            }
+            if timerSoundEnabled {
+                content.sound = .default
+            }
+
+            let trigger = UNTimeIntervalNotificationTrigger(
+                timeInterval: max(1, Double(remainingSeconds)),
+                repeats: false,
+            )
+            let request = UNNotificationRequest(
+                identifier: Self.notificationIdentifier,
+                content: content,
+                trigger: trigger,
+            )
+
+            notificationCenter.removePendingNotificationRequests(withIdentifiers: [Self.notificationIdentifier])
+            try? await notificationCenter.add(request)
+        }
+    }
+
+    private func cancelCompletionNotification() {
+        guard notificationsEnabled else { return }
+        notificationCenter.removePendingNotificationRequests(withIdentifiers: [Self.notificationIdentifier])
     }
 }
 
@@ -441,6 +565,7 @@ final class WorkoutPlayerViewModel {
     private let executionContext: WorkoutExecutionContext?
     private let syncCoordinator: SyncCoordinator
     private let profileSettingsStore: ProfileSettingsStore
+    let restTimer: RestTimerModel
 
     private var autoAdvanceUndoTask: Task<Void, Never>?
     private var networkObserverTask: Task<Void, Never>?
@@ -451,10 +576,12 @@ final class WorkoutPlayerViewModel {
     private var startedExerciseEvents: Set<String> = []
     private var weightStep: Double = ProfileSettings.default.weightStep
     private var defaultRestSeconds: Int = ProfileSettings.default.defaultRestSeconds
+    private var timerSoundEnabledValue = ProfileSettings.default.timerSoundEnabled
 
-    var restTimer = RestTimerModel()
     var isLoading = false
     var isFinishEarlyConfirmationPresented = false
+    var isFinishConfirmationPresented = false
+    var isSubmittingFinish = false
     var isFinished = false
     var toastMessage: String?
     var completionSummary: CompletionSummary?
@@ -482,6 +609,7 @@ final class WorkoutPlayerViewModel {
         executionContext: WorkoutExecutionContext? = nil,
         syncCoordinator: SyncCoordinator = .shared,
         profileSettingsStore: ProfileSettingsStore = LocalProfileSettingsStore(),
+        restTimer: RestTimerModel = RestTimerModel(),
     ) {
         self.userSub = userSub
         self.programId = programId
@@ -494,6 +622,7 @@ final class WorkoutPlayerViewModel {
         self.executionContext = executionContext
         self.syncCoordinator = syncCoordinator
         self.profileSettingsStore = profileSettingsStore
+        self.restTimer = restTimer
 
         restTimer.onCompleted = { [weak self] in
             self?.toastMessage = "Отдых завершён. Можно начинать следующий подход."
@@ -535,6 +664,10 @@ final class WorkoutPlayerViewModel {
 
     var primaryBottomTitle: String {
         isLastExercise ? "Завершить тренировку" : "Следующее упражнение"
+    }
+
+    var isPrimaryBottomActionEnabled: Bool {
+        !isSubmittingFinish && !isFinished
     }
 
     var progressItems: [ExerciseProgressItem] {
@@ -600,15 +733,28 @@ final class WorkoutPlayerViewModel {
         return exerciseState.sets.indices.last
     }
 
+    var canUseQuickCopyAction: Bool {
+        guard let quickActionSetIndex else { return false }
+        return canCopyPreviousSet(setIndex: quickActionSetIndex)
+    }
+
+    var canSkipCurrentExercise: Bool {
+        workout.exercises.count > 1
+    }
+
     var quickActionSetTitle: String {
-        if let quickActionSetIndex {
-            return "Подход \(quickActionSetIndex + 1)"
+        guard let quickActionSetIndex, quickActionSetIndex > 0 else {
+            return "Из предыдущего подхода"
         }
-        return "Текущий подход"
+        return "Из подхода \(quickActionSetIndex)"
     }
 
     var weightStepLabel: String {
         formatStep(weightStep, suffix: "кг")
+    }
+
+    var currentExerciseIsBodyweight: Bool {
+        currentExercise?.isBodyweight == true
     }
 
     func onAppear() async {
@@ -616,6 +762,7 @@ final class WorkoutPlayerViewModel {
         let settings = await profileSettingsStore.load(userSub: userSub)
         weightStep = max(0.5, settings.weightStep)
         defaultRestSeconds = max(15, settings.defaultRestSeconds)
+        timerSoundEnabledValue = settings.timerSoundEnabled
         session = await sessionManager.loadOrCreateSession(
             userSub: userSub,
             programId: programId,
@@ -871,15 +1018,33 @@ final class WorkoutPlayerViewModel {
         await copyPreviousSet(setIndex: setIndex)
     }
 
+    func canCopyPreviousSet(setIndex: Int) -> Bool {
+        guard let exerciseState = currentExerciseState,
+              exerciseState.sets.indices.contains(setIndex),
+              setIndex > 0
+        else {
+            return false
+        }
+        return !exerciseState.sets[setIndex].isCompleted
+    }
+
     func primaryBottomAction() async {
         if isLastExercise {
-            await finish()
+            isFinishConfirmationPresented = true
         } else {
             await nextExercise()
         }
     }
 
+    func confirmFinish() async {
+        guard !isSubmittingFinish, !isFinished else { return }
+        isSubmittingFinish = true
+        defer { isSubmittingFinish = false }
+        await finish()
+    }
+
     func finish() async {
+        guard !isFinished else { return }
         guard let session else { return }
         let completedExercises = session.exercises.count(where: { exercise in
             !exercise.isSkipped && exercise.sets.contains(where: \.isCompleted)
@@ -906,7 +1071,18 @@ final class WorkoutPlayerViewModel {
             volume: volume,
         )
         await sessionManager.finish(session)
+        restTimer.clearIfMatches(workoutId: workout.id)
+        isFinishConfirmationPresented = false
+        isFinishEarlyConfirmationPresented = false
         isFinished = true
+        NotificationCenter.default.post(
+            name: .fitfluenceWorkoutDidComplete,
+            object: nil,
+            userInfo: [
+                "programId": programId,
+                "workoutId": workout.id,
+            ],
+        )
         ClientAnalytics.track(
             .workoutFinished,
             properties: [
@@ -918,6 +1094,12 @@ final class WorkoutPlayerViewModel {
 
     private func ensureCurrentExerciseContext() async {
         guard let exercise = currentExercise else { return }
+        restTimer.setContext(
+            workoutId: workout.id,
+            workoutTitle: workout.title,
+            exerciseName: exercise.name,
+            timerSoundEnabled: timerSoundEnabled,
+        )
         await ensureInsightsLoaded(for: exercise.id)
         await applySmartDefaultsIfNeeded(for: exercise)
         focusedSetIndex = firstUncompletedSetIndex(in: currentExerciseState) ?? 0
@@ -1347,6 +1529,10 @@ final class WorkoutPlayerViewModel {
         return String(format: "%.1f", value)
     }
 
+    private var timerSoundEnabled: Bool {
+        timerSoundEnabledValue
+    }
+
     private func formatStep(_ value: Double, suffix: String) -> String {
         if value.rounded(.towardZero) == value {
             return "\(Int(value)) \(suffix)"
@@ -1399,13 +1585,14 @@ struct WorkoutPlayerViewV2: View {
 
     @State private var isRestTimerExpanded = false
     @State private var isJumpListPresented = false
+    @State private var isExerciseDetailsPresented = false
 
     var body: some View {
         ZStack {
             FFColors.background.ignoresSafeArea()
 
             if viewModel.isLoading {
-                FFLoadingState(title: "Открываем тренировку")
+                FFScreenSpinner()
             } else {
                 ScrollViewReader { proxy in
                     ScrollView {
@@ -1437,10 +1624,18 @@ struct WorkoutPlayerViewV2: View {
         .alert("Завершить раньше?", isPresented: $viewModel.isFinishEarlyConfirmationPresented) {
             Button("Отмена", role: .cancel) {}
             Button("Завершить", role: .destructive) {
-                Task { await viewModel.finish() }
+                Task { await viewModel.confirmFinish() }
             }
         } message: {
             Text("Текущий прогресс сохранится в историю тренировки.")
+        }
+        .alert("Завершить тренировку?", isPresented: $viewModel.isFinishConfirmationPresented) {
+            Button("Продолжить тренировку", role: .cancel) {}
+            Button("Завершить", role: .destructive) {
+                Task { await viewModel.confirmFinish() }
+            }
+        } message: {
+            Text("Тренировка будет завершена, а текущий прогресс сохранится в историю.")
         }
         .onChange(of: viewModel.isFinished) { _, isFinished in
             if isFinished, let summary = viewModel.completionSummary {
@@ -1470,6 +1665,11 @@ struct WorkoutPlayerViewV2: View {
                     isJumpListPresented = false
                 },
             )
+        }
+        .sheet(isPresented: $isExerciseDetailsPresented) {
+            if let exercise = viewModel.currentExercise {
+                ExerciseDetailsSheet(exercise: exercise)
+            }
         }
         .onChange(of: isJumpListPresented) { _, isPresented in
             viewModel.setJumpNavigationActive(isPresented)
@@ -1598,6 +1798,10 @@ struct WorkoutPlayerViewV2: View {
                     }
 
                     HStack(spacing: FFSpacing.xs) {
+                        compactActionButton(title: "Детали", systemImage: "info.circle") {
+                            isExerciseDetailsPresented = true
+                        }
+
                         if viewModel.canUseLastPerformance {
                             compactActionButton(title: "Заполнить как в прошлый раз", systemImage: "arrow.down.circle.fill") {
                                 Task { await viewModel.useLastPerformance() }
@@ -1619,7 +1823,11 @@ struct WorkoutPlayerViewV2: View {
                 Text("Подходы")
                     .font(FFTypography.h2)
                     .foregroundStyle(FFColors.textPrimary)
-                Text("Подтвердите подход. Дальше приложение подскажет следующий шаг автоматически.")
+                Text(
+                    viewModel.currentExerciseIsBodyweight
+                        ? "Это упражнение с собственным весом, поэтому вводить вес не нужно."
+                        : "Подтвердите подход. Дальше приложение подскажет следующий шаг автоматически.",
+                )
                     .font(FFTypography.caption)
                     .foregroundStyle(FFColors.textSecondary)
 
@@ -1628,6 +1836,8 @@ struct WorkoutPlayerViewV2: View {
                         SetRowView(
                             index: index,
                             set: set,
+                            isBodyweight: viewModel.currentExerciseIsBodyweight,
+                            showsCopyAction: viewModel.canCopyPreviousSet(setIndex: index),
                             weightStepLabel: viewModel.weightStepLabel,
                             isFocused: viewModel.focusedSetIndex == index,
                             onToggleComplete: { Task { await viewModel.toggleSetComplete(setIndex: index) } },
@@ -1660,6 +1870,8 @@ struct WorkoutPlayerViewV2: View {
         FFCard(padding: FFSpacing.sm) {
             VStack(spacing: FFSpacing.xs) {
                 QuickActionsBar(
+                    showsCopyAction: viewModel.canUseQuickCopyAction,
+                    showsSkipAction: viewModel.canSkipCurrentExercise,
                     copyTitle: "Скопировать",
                     copySubtitle: viewModel.quickActionSetTitle,
                     onCopy: { Task { await viewModel.copyPreviousSetQuickAction() } },
@@ -1696,6 +1908,8 @@ struct WorkoutPlayerViewV2: View {
                 bottomActionButton(title: viewModel.primaryBottomTitle, variant: .primary) {
                     Task { await viewModel.primaryBottomAction() }
                 }
+                .disabled(!viewModel.isPrimaryBottomActionEnabled)
+                .opacity(viewModel.isPrimaryBottomActionEnabled ? 1 : 0.55)
             }
         }
         .padding(.horizontal, FFSpacing.md)
@@ -1876,6 +2090,8 @@ private struct WorkoutExerciseJumpListSheet: View {
 private struct SetRowView: View {
     let index: Int
     let set: SessionSetState
+    let isBodyweight: Bool
+    let showsCopyAction: Bool
     let weightStepLabel: String
     let isFocused: Bool
     let onToggleComplete: () -> Void
@@ -1904,25 +2120,29 @@ private struct SetRowView: View {
                 Spacer(minLength: FFSpacing.xs)
 
                 if set.isCompleted {
-                    FFBadge(status: .completed)
+                    completedSetBadge
                 }
 
-                Button("Копировать") {
-                    onCopy()
+                if showsCopyAction {
+                    Button("Копировать") {
+                        onCopy()
+                    }
+                    .font(FFTypography.caption.weight(.semibold))
+                    .foregroundStyle(FFColors.accent)
+                    .frame(minHeight: 44)
                 }
-                .font(FFTypography.caption.weight(.semibold))
-                .foregroundStyle(FFColors.accent)
-                .frame(minHeight: 44)
             }
 
             HStack(spacing: FFSpacing.sm) {
-                metricStepper(
-                    title: "Вес",
-                    value: set.weightText.isEmpty ? "0" : set.weightText,
-                    stepText: weightStepLabel,
-                    onMinus: onDecreaseWeight,
-                    onPlus: onIncreaseWeight,
-                )
+                if !isBodyweight {
+                    metricStepper(
+                        title: "Вес",
+                        value: set.weightText.isEmpty ? "0" : set.weightText,
+                        stepText: weightStepLabel,
+                        onMinus: onDecreaseWeight,
+                        onPlus: onIncreaseWeight,
+                    )
+                }
                 metricStepper(
                     title: "Повторы",
                     value: set.repsText.isEmpty ? "0" : set.repsText,
@@ -1939,6 +2159,18 @@ private struct SetRowView: View {
             RoundedRectangle(cornerRadius: FFTheme.Radius.control)
                 .stroke(isFocused ? FFColors.primary : FFColors.gray700, lineWidth: isFocused ? 1.6 : 1)
         }
+    }
+
+    private var completedSetBadge: some View {
+        Text("Завершен")
+            .font(FFTypography.caption.weight(.semibold))
+            .lineLimit(1)
+            .foregroundStyle(FFColors.background)
+            .padding(.horizontal, FFSpacing.sm)
+            .padding(.vertical, FFSpacing.xs)
+            .background(FFColors.primary)
+            .clipShape(Capsule())
+            .fixedSize(horizontal: true, vertical: false)
     }
 
     private func metricStepper(
@@ -1987,6 +2219,8 @@ private struct SetRowView: View {
 }
 
 private struct QuickActionsBar: View {
+    let showsCopyAction: Bool
+    let showsSkipAction: Bool
     let copyTitle: String
     let copySubtitle: String
     let onCopy: () -> Void
@@ -1995,18 +2229,22 @@ private struct QuickActionsBar: View {
 
     var body: some View {
         HStack(spacing: FFSpacing.xs) {
-            compactButton(
-                title: copyTitle,
-                subtitle: copySubtitle,
-                systemImage: "doc.on.doc",
-                action: onCopy,
-            )
-            compactButton(
-                title: "Пропустить",
-                subtitle: nil,
-                systemImage: "forward.fill",
-                action: onSkipExercise,
-            )
+            if showsCopyAction {
+                compactButton(
+                    title: copyTitle,
+                    subtitle: copySubtitle,
+                    systemImage: "doc.on.doc",
+                    action: onCopy,
+                )
+            }
+            if showsSkipAction {
+                compactButton(
+                    title: "Пропустить",
+                    subtitle: nil,
+                    systemImage: "forward.fill",
+                    action: onSkipExercise,
+                )
+            }
             compactButton(
                 title: "Отменить",
                 subtitle: nil,
@@ -2051,6 +2289,193 @@ private struct QuickActionsBar: View {
     }
 }
 
+private struct ExerciseDetailsSheet: View {
+    let exercise: WorkoutExercise
+    @Environment(\.dismiss) private var dismiss
+    private let environment = AppEnvironment.from()
+
+    private var resolvedMedia: [ResolvedExerciseMedia] {
+        (exercise.media ?? []).compactMap { item in
+            guard let url = item.resolvedURL(baseURL: environment.backendBaseURL) else { return nil }
+            return ResolvedExerciseMedia(id: item.id, type: item.type, url: url)
+        }
+    }
+
+    var body: some View {
+        NavigationStack {
+            ZStack {
+                FFColors.background.ignoresSafeArea()
+
+                ScrollView {
+                    VStack(spacing: FFSpacing.md) {
+                        FFCard {
+                            VStack(alignment: .leading, spacing: FFSpacing.xs) {
+                                Text(exercise.name)
+                                    .font(FFTypography.h2)
+                                    .foregroundStyle(FFColors.textPrimary)
+                                Text(exerciseSummary)
+                                    .font(FFTypography.body)
+                                    .foregroundStyle(FFColors.textSecondary)
+                            }
+                        }
+
+                        if let description = exercise.description {
+                            detailsBlock(title: "Об упражнении", text: description)
+                        }
+
+                        if let notes = exercise.notes {
+                            detailsBlock(title: "Подсказка тренера", text: notes)
+                        }
+
+                        if !resolvedMedia.isEmpty {
+                            FFCard {
+                                VStack(alignment: .leading, spacing: FFSpacing.sm) {
+                                    Text("Медиа")
+                                        .font(FFTypography.h2)
+                                        .foregroundStyle(FFColors.textPrimary)
+
+                                    ForEach(resolvedMedia) { item in
+                                        ExerciseMediaCard(media: item)
+                                    }
+                                }
+                            }
+                        }
+
+                        if exercise.description == nil, exercise.notes == nil, resolvedMedia.isEmpty {
+                            FFEmptyState(
+                                title: "Подробности скоро появятся",
+                                message: "Для этого упражнения пока не добавлены описание и медиа.",
+                            )
+                        }
+                    }
+                    .padding(.horizontal, FFSpacing.md)
+                    .padding(.vertical, FFSpacing.md)
+                }
+            }
+            .navigationTitle("Детали упражнения")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Закрыть") {
+                        dismiss()
+                    }
+                }
+            }
+        }
+        .presentationDetents([.medium, .large])
+    }
+
+    private var exerciseSummary: String {
+        let reps = if let min = exercise.repsMin, let max = exercise.repsMax {
+            "\(min)-\(max)"
+        } else if let min = exercise.repsMin {
+            "\(min)"
+        } else {
+            "по самочувствию"
+        }
+        let rest = exercise.restSeconds.map { "\($0) сек" } ?? "без таймера"
+        let load = exercise.isBodyweight ? "с собственным весом" : "с отягощением"
+        return "\(exercise.sets) подходов • \(reps) повторов • отдых \(rest) • \(load)"
+    }
+
+    private func detailsBlock(title: String, text: String) -> some View {
+        FFCard {
+            VStack(alignment: .leading, spacing: FFSpacing.xs) {
+                Text(title)
+                    .font(FFTypography.h2)
+                    .foregroundStyle(FFColors.textPrimary)
+                Text(text)
+                    .font(FFTypography.body)
+                    .foregroundStyle(FFColors.textSecondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+    }
+}
+
+private struct ResolvedExerciseMedia: Identifiable {
+    let id: String
+    let type: ContentMediaType
+    let url: URL
+}
+
+private struct ExerciseMediaCard: View {
+    let media: ResolvedExerciseMedia
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: FFSpacing.xs) {
+            switch media.type {
+            case .image:
+                AsyncImage(url: media.url) { phase in
+                    switch phase {
+                    case let .success(image):
+                        image
+                            .resizable()
+                            .scaledToFill()
+                    case .failure:
+                        mediaPlaceholder(systemImage: "photo", title: "Изображение недоступно")
+                    case .empty:
+                        ZStack {
+                            FFColors.surface
+                            ProgressView()
+                                .tint(FFColors.accent)
+                        }
+                    @unknown default:
+                        mediaPlaceholder(systemImage: "photo", title: "Изображение недоступно")
+                    }
+                }
+                .frame(height: 220)
+                .frame(maxWidth: .infinity)
+                .clipped()
+                .clipShape(RoundedRectangle(cornerRadius: FFTheme.Radius.control))
+
+            case .video:
+                ExerciseVideoCard(url: media.url)
+            }
+
+            Link(destination: media.url) {
+                Label("Открыть медиа", systemImage: media.type == .video ? "play.rectangle" : "arrow.up.right.square")
+                    .font(FFTypography.caption.weight(.semibold))
+                    .foregroundStyle(FFColors.accent)
+            }
+        }
+    }
+
+    private func mediaPlaceholder(systemImage: String, title: String) -> some View {
+        ZStack {
+            FFColors.surface
+            VStack(spacing: FFSpacing.xs) {
+                Image(systemName: systemImage)
+                    .font(.system(size: 24, weight: .semibold))
+                    .foregroundStyle(FFColors.textSecondary)
+                Text(title)
+                    .font(FFTypography.caption)
+                    .foregroundStyle(FFColors.textSecondary)
+            }
+        }
+        .clipShape(RoundedRectangle(cornerRadius: FFTheme.Radius.control))
+    }
+}
+
+private struct ExerciseVideoCard: View {
+    let url: URL
+    @State private var player: AVPlayer
+
+    init(url: URL) {
+        self.url = url
+        _player = State(initialValue: AVPlayer(url: url))
+    }
+
+    var body: some View {
+        VideoPlayer(player: player)
+            .frame(height: 220)
+            .clipShape(RoundedRectangle(cornerRadius: FFTheme.Radius.control))
+            .onDisappear {
+                player.pause()
+            }
+    }
+}
+
 private struct RestTimerBanner: View {
     let remainingSeconds: Int
     let isRunning: Bool
@@ -2064,38 +2489,9 @@ private struct RestTimerBanner: View {
         VStack(spacing: FFSpacing.xs) {
             FFCard(padding: FFSpacing.sm) {
                 VStack(spacing: FFSpacing.xs) {
-                    HStack(spacing: FFSpacing.xs) {
-                        Label("Отдых", systemImage: "timer")
-                            .font(FFTypography.caption.weight(.semibold))
-                            .foregroundStyle(FFColors.textSecondary)
-
-                        Spacer(minLength: FFSpacing.xs)
-
-                        Text(formattedTime(remainingSeconds))
-                            .font(.system(size: 22, weight: .bold, design: .rounded))
-                            .monospacedDigit()
-                            .foregroundStyle(FFColors.textPrimary)
-
-                        capsuleButton(title: isRunning ? "Пауза" : "Продолжить", tint: FFColors.gray700, action: onPauseResume)
-                        capsuleButton(title: "Пропустить", tint: FFColors.danger, action: onSkip)
-
-                        Button {
-                            withAnimation(.easeInOut(duration: 0.2)) {
-                                isExpanded.toggle()
-                            }
-                        } label: {
-                            Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
-                                .font(.system(size: 12, weight: .bold))
-                                .foregroundStyle(FFColors.textSecondary)
-                                .frame(width: 30, height: 30)
-                                .background(FFColors.surface)
-                                .clipShape(Circle())
-                                .overlay {
-                                    Circle()
-                                        .stroke(FFColors.gray700, lineWidth: 1)
-                                }
-                        }
-                        .buttonStyle(.plain)
+                    ViewThatFits(in: .horizontal) {
+                        regularHeaderRow
+                        compactHeaderLayout
                     }
 
                     if isExpanded {
@@ -2116,11 +2512,81 @@ private struct RestTimerBanner: View {
         .background(FFColors.background.opacity(0.96))
     }
 
+    private var regularHeaderRow: some View {
+        HStack(spacing: FFSpacing.xs) {
+            titleLabel
+
+            Spacer(minLength: FFSpacing.xs)
+
+            timeValue
+
+            capsuleButton(title: isRunning ? "Пауза" : "Продолжить", tint: FFColors.gray700, action: onPauseResume)
+            capsuleButton(title: "Пропустить", tint: FFColors.danger, action: onSkip)
+            expandButton
+        }
+    }
+
+    private var compactHeaderLayout: some View {
+        VStack(spacing: FFSpacing.xs) {
+            HStack(spacing: FFSpacing.xs) {
+                titleLabel
+                Spacer(minLength: FFSpacing.xs)
+                timeValue
+                expandButton
+            }
+
+            HStack(spacing: FFSpacing.xs) {
+                capsuleButton(title: isRunning ? "Пауза" : "Продолжить", tint: FFColors.gray700, action: onPauseResume)
+                capsuleButton(title: "Пропустить", tint: FFColors.danger, action: onSkip)
+            }
+        }
+    }
+
+    private var titleLabel: some View {
+        Label("Отдых", systemImage: "timer")
+            .font(FFTypography.caption.weight(.semibold))
+            .foregroundStyle(FFColors.textSecondary)
+            .lineLimit(1)
+            .fixedSize(horizontal: true, vertical: false)
+            .layoutPriority(1)
+    }
+
+    private var timeValue: some View {
+        Text(formattedTime(remainingSeconds))
+            .font(.system(size: 22, weight: .bold, design: .rounded))
+            .monospacedDigit()
+            .foregroundStyle(FFColors.textPrimary)
+            .lineLimit(1)
+            .fixedSize(horizontal: true, vertical: false)
+    }
+
+    private var expandButton: some View {
+        Button {
+            withAnimation(.easeInOut(duration: 0.2)) {
+                isExpanded.toggle()
+            }
+        } label: {
+            Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
+                .font(.system(size: 12, weight: .bold))
+                .foregroundStyle(FFColors.textSecondary)
+                .frame(width: 30, height: 30)
+                .background(FFColors.surface)
+                .clipShape(Circle())
+                .overlay {
+                    Circle()
+                        .stroke(FFColors.gray700, lineWidth: 1)
+                }
+        }
+        .buttonStyle(.plain)
+    }
+
     private func capsuleButton(title: String, tint: Color, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Text(title)
                 .font(FFTypography.caption.weight(.semibold))
                 .foregroundStyle(FFColors.textPrimary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
                 .padding(.horizontal, FFSpacing.xs)
                 .frame(minHeight: 36)
                 .background(tint)

@@ -1,6 +1,49 @@
 import ComposableArchitecture
 import SwiftUI
 
+extension Notification.Name {
+    static let fitfluenceWorkoutDidComplete = Notification.Name("fitfluence.workout.didComplete")
+}
+
+enum AthleteShellTab: String, CaseIterable, Hashable, Sendable {
+    case today
+    case plan
+    case progress
+    case profile
+
+    static let defaultTab: Self = .today
+
+    var title: String {
+        switch self {
+        case .today:
+            "Сегодня"
+        case .plan:
+            "План"
+        case .progress:
+            "Прогресс"
+        case .profile:
+            "Профиль"
+        }
+    }
+
+    var navigationTitle: String {
+        title
+    }
+
+    var systemImage: String {
+        switch self {
+        case .today:
+            "figure.run"
+        case .plan:
+            "calendar"
+        case .progress:
+            "chart.line.uptrend.xyaxis"
+        case .profile:
+            "person.crop.circle"
+        }
+    }
+}
+
 struct RootView: View {
     let store: StoreOf<RootFeature>
     let environment: AppEnvironment
@@ -23,16 +66,14 @@ struct RootView: View {
                         }
 
                     case .authenticating:
-                        FFLoadingState(title: "Проверяем сессию")
-                            .padding(.horizontal, FFSpacing.md)
+                        FFScreenSpinner()
 
                     case .needsOnboarding:
                         if let onboardingStore = store.scope(state: \.onboarding, action: \.onboarding) {
                             OnboardingView(store: onboardingStore)
                                 .padding(.horizontal, FFSpacing.md)
                         } else {
-                            FFLoadingState(title: "Подготавливаем профиль")
-                                .padding(.horizontal, FFSpacing.md)
+                            FFScreenSpinner()
                         }
 
                     case let .authenticated(userContext):
@@ -134,34 +175,30 @@ private struct AthleteShellView: View {
     let isOnline: Bool
     let onLogout: () -> Void
 
-    @State private var selectedTab: ShellTab = .training
+    @State private var selectedTab: AthleteShellTab = .defaultTab
     @State private var resumeSession: ActiveWorkoutSession?
     @State private var resumeSessionTitle: String?
     @State private var pendingResumeRequest: ActiveWorkoutSession?
     @State private var isTrainingFlowPresented = false
-
-    enum ShellTab: Hashable {
-        case training
-        case catalog
-        case plan
-        case progress
-        case profile
-    }
+    @State private var restTimer = RestTimerModel.shared
+    @State private var suppressedCompletedSessionIDs: Set<String> = []
 
     var body: some View {
         VStack(spacing: 0) {
             if let session = resumeSession, shouldShowResumeBanner {
                 WorkoutInProgressBanner(
                     workoutName: resumeSessionTitle,
-                    detailsText: nil,
+                    detailsText: resumeBannerDetailsText,
+                    iconSystemName: resumeBannerIconName,
                     onContinue: {
+                        restTimer.dismissCompletionMessage()
                         ClientAnalytics.track(
                             .workoutContinueButtonTapped,
                             properties: ["source": "other_tab_banner"],
                         )
                         pendingResumeRequest = session
-                        if selectedTab != .training {
-                            selectedTab = .training
+                        if selectedTab != .today {
+                            selectedTab = .today
                         }
                     },
                 )
@@ -174,10 +211,11 @@ private struct AthleteShellView: View {
             TabView(selection: $selectedTab) {
                 NavigationStack {
                     TrainingTabContent(
+                        store: store,
+                        environment: environment,
                         userSub: me.subject ?? "anonymous",
                         apiClient: apiClient,
                         onOpenPlan: { selectedTab = .plan },
-                        onOpenCatalog: { selectedTab = .catalog },
                         resumeSessionRequest: $pendingResumeRequest,
                         onResumeHandled: {
                             pendingResumeRequest = nil
@@ -189,46 +227,28 @@ private struct AthleteShellView: View {
                             isTrainingFlowPresented = isPresented
                         },
                     )
-                    .navigationTitle("Тренировка")
+                    .navigationTitle(AthleteShellTab.today.navigationTitle)
                     .navigationBarTitleDisplayMode(.inline)
                     .navigationBarBackButtonHidden(true)
                 }
                 .tabItem {
-                    Label("Тренировка", systemImage: "dumbbell.fill")
+                    Label(AthleteShellTab.today.title, systemImage: AthleteShellTab.today.systemImage)
                 }
-                .tag(ShellTab.training)
-
-                NavigationStack {
-                    CatalogTabContent(
-                        store: store,
-                        environment: environment,
-                        apiClient: apiClient,
-                        userSub: me.subject ?? "anonymous",
-                        onOpenPlanTab: { selectedTab = .plan },
-                        onOpenWorkoutHubTab: { selectedTab = .training },
-                    )
-                    .navigationTitle("Каталог")
-                    .navigationBarTitleDisplayMode(.inline)
-                    .navigationBarBackButtonHidden(true)
-                }
-                .tabItem {
-                    Label("Каталог", systemImage: "square.grid.2x2")
-                }
-                .tag(ShellTab.catalog)
+                .tag(AthleteShellTab.today)
 
                 NavigationStack {
                     PlanTabContent(
                         apiClient: apiClient,
                         userSub: me.subject ?? "anonymous",
                     )
-                    .navigationTitle("План")
+                    .navigationTitle(AthleteShellTab.plan.navigationTitle)
                     .navigationBarTitleDisplayMode(.inline)
                     .navigationBarBackButtonHidden(true)
                 }
                 .tabItem {
-                    Label("План", systemImage: "calendar")
+                    Label(AthleteShellTab.plan.title, systemImage: AthleteShellTab.plan.systemImage)
                 }
-                .tag(ShellTab.plan)
+                .tag(AthleteShellTab.plan)
 
                 NavigationStack {
                     TrainingInsightsView(
@@ -238,16 +258,16 @@ private struct AthleteShellView: View {
                         ),
                         isOnline: isOnline,
                         onOpenPlan: { selectedTab = .plan },
-                        onStartNextWorkout: { selectedTab = .training },
+                        onStartNextWorkout: { selectedTab = .today },
                     )
-                    .navigationTitle("Прогресс")
+                    .navigationTitle(AthleteShellTab.progress.navigationTitle)
                     .navigationBarTitleDisplayMode(.inline)
                     .navigationBarBackButtonHidden(true)
                 }
                 .tabItem {
-                    Label("Прогресс", systemImage: "chart.line.uptrend.xyaxis")
+                    Label(AthleteShellTab.progress.title, systemImage: AthleteShellTab.progress.systemImage)
                 }
-                .tag(ShellTab.progress)
+                .tag(AthleteShellTab.progress)
 
                 NavigationStack {
                     ProfileTabView(
@@ -257,14 +277,14 @@ private struct AthleteShellView: View {
                         apiClient: apiClient,
                         onLogout: onLogout,
                     )
-                    .navigationTitle("Профиль")
+                    .navigationTitle(AthleteShellTab.profile.navigationTitle)
                     .navigationBarTitleDisplayMode(.inline)
                     .navigationBarBackButtonHidden(true)
                 }
                 .tabItem {
-                    Label("Профиль", systemImage: "person.crop.circle")
+                    Label(AthleteShellTab.profile.title, systemImage: AthleteShellTab.profile.systemImage)
                 }
-                .tag(ShellTab.profile)
+                .tag(AthleteShellTab.profile)
             }
         }
         .animation(.easeInOut(duration: 0.18), value: resumeSession?.workoutId)
@@ -279,13 +299,34 @@ private struct AthleteShellView: View {
                 await refreshResumeSession()
             }
         }
+        .onReceive(NotificationCenter.default.publisher(for: .fitfluenceWorkoutDidComplete)) { notification in
+            handleWorkoutDidComplete(notification)
+        }
     }
 
     private var shouldShowResumeBanner: Bool {
-        if selectedTab != .training {
+        if selectedTab != .today {
             return true
         }
         return !isTrainingFlowPresented
+    }
+
+    private var resumeBannerDetailsText: String? {
+        if restTimer.isVisible {
+            let time = formatRestTimer(restTimer.remainingSeconds)
+            if let exerciseName = normalized(restTimer.exerciseName) {
+                return "Отдых: \(time) • \(exerciseName)"
+            }
+            return "Отдых: \(time)"
+        }
+        return normalized(restTimer.completionMessage)
+    }
+
+    private var resumeBannerIconName: String {
+        if restTimer.isVisible || normalized(restTimer.completionMessage) != nil {
+            return "timer"
+        }
+        return "figure.strengthtraining.traditional"
     }
 
     private func refreshResumeSession() async {
@@ -313,6 +354,12 @@ private struct AthleteShellView: View {
             }
         }
 
+        if let latest, suppressedCompletedSessionIDs.contains(sessionMarker(for: latest)) {
+            resumeSession = nil
+            resumeSessionTitle = nil
+            return
+        }
+
         resumeSession = latest
         guard let latest else {
             resumeSessionTitle = nil
@@ -326,6 +373,17 @@ private struct AthleteShellView: View {
             resumeStore: resumeStore,
             remoteWorkoutTitle: remoteWorkoutTitle,
         )
+    }
+
+    private func formatRestTimer(_ totalSeconds: Int) -> String {
+        let value = max(0, totalSeconds)
+        return String(format: "%02d:%02d", value / 60, value % 60)
+    }
+
+    private func normalized(_ value: String?) -> String? {
+        guard let value else { return nil }
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
     }
 
     private func resolveResumeWorkoutTitle(
@@ -365,9 +423,34 @@ private struct AthleteShellView: View {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? nil : trimmed
     }
+
+    private func handleWorkoutDidComplete(_ notification: Notification) {
+        guard let workoutId = notification.userInfo?["workoutId"] as? String,
+              let programId = notification.userInfo?["programId"] as? String
+        else {
+            return
+        }
+
+        let marker = sessionMarker(programId: programId, workoutId: workoutId)
+        suppressedCompletedSessionIDs.insert(marker)
+        pendingResumeRequest = nil
+
+        if let resumeSession, sessionMarker(for: resumeSession) == marker {
+            self.resumeSession = nil
+            resumeSessionTitle = nil
+        }
+    }
+
+    private func sessionMarker(for session: ActiveWorkoutSession) -> String {
+        sessionMarker(programId: session.programId, workoutId: session.workoutId)
+    }
+
+    private func sessionMarker(programId: String, workoutId: String) -> String {
+        "\(programId)::\(workoutId)"
+    }
 }
 
-private struct ProgramWorkoutRoute: Identifiable, Hashable {
+struct ProgramWorkoutRoute: Identifiable, Hashable {
     let programId: String
     let workoutId: String
 
@@ -376,12 +459,13 @@ private struct ProgramWorkoutRoute: Identifiable, Hashable {
     }
 }
 
-private struct PresetWorkoutRoute: Identifiable {
+struct PresetWorkoutRoute: Identifiable, Equatable {
+    let programId: String?
     let workout: WorkoutDetailsModel
     let source: WorkoutSource
 
     var id: String {
-        "\(source.rawValue)::\(workout.id)"
+        "\(programId ?? source.rawValue)::\(source.rawValue)::\(workout.id)"
     }
 }
 
@@ -393,28 +477,42 @@ private struct RecentWorkoutDetailsRoute: Identifiable {
     }
 }
 
-private enum RepeatWorkoutTemplateFallback {
+enum RepeatWorkoutTemplateFallback {
     case quickBuilder
     case templateLibrary
 }
 
-private enum RepeatWorkoutNavigationTarget {
+enum RepeatWorkoutNavigationTarget: Equatable {
     case program(ProgramWorkoutRoute)
+    case preset(PresetWorkoutRoute)
     case quickBuilder
     case templateLibrary
 }
 
-private func resolveRepeatWorkoutTarget(
+func resolveRepeatWorkoutTarget(
     for record: CompletedWorkoutRecord,
+    progressStore: any WorkoutProgressStore = LocalWorkoutProgressStore(),
     templateFallback: RepeatWorkoutTemplateFallback,
-) -> RepeatWorkoutNavigationTarget {
+) async -> RepeatWorkoutNavigationTarget {
+    let storedWorkout = await progressStore.load(
+        userSub: record.userSub,
+        programId: record.programId,
+        workoutId: record.workoutId
+    )?.workoutDetails
+
     switch record.source {
     case .program:
         if UUID(uuidString: record.programId) != nil {
             return .program(ProgramWorkoutRoute(programId: record.programId, workoutId: record.workoutId))
         }
+        if let storedWorkout {
+            return .preset(PresetWorkoutRoute(programId: record.programId, workout: storedWorkout, source: .program))
+        }
         return .quickBuilder
     case .template:
+        if let storedWorkout {
+            return .preset(PresetWorkoutRoute(programId: nil, workout: storedWorkout, source: .template))
+        }
         switch templateFallback {
         case .quickBuilder:
             return .quickBuilder
@@ -422,6 +520,9 @@ private func resolveRepeatWorkoutTarget(
             return .templateLibrary
         }
     case .freestyle:
+        if let storedWorkout {
+            return .preset(PresetWorkoutRoute(programId: nil, workout: storedWorkout, source: .freestyle))
+        }
         return .quickBuilder
     }
 }
@@ -456,8 +557,8 @@ private struct PlanTabContent: View {
             onOpenProgramWorkout: { programId, workoutId in
                 programWorkoutRoute = ProgramWorkoutRoute(programId: programId, workoutId: workoutId)
             },
-            onOpenPresetWorkout: { workout, source in
-                presetWorkoutRoute = PresetWorkoutRoute(workout: workout, source: source)
+            onOpenPresetWorkout: { workout, source, programId in
+                presetWorkoutRoute = PresetWorkoutRoute(programId: programId, workout: workout, source: source)
             },
             onOpenQuickWorkoutBuilder: {
                 isQuickBuilderPresented = true
@@ -466,50 +567,54 @@ private struct PlanTabContent: View {
                 recentWorkoutDetailsRoute = RecentWorkoutDetailsRoute(record: record)
             },
         )
-            .navigationDestination(item: $programWorkoutRoute) { route in
-                WorkoutLaunchView(
-                    userSub: userSub,
-                    programId: route.programId,
-                    workoutId: route.workoutId,
-                    apiClient: apiClient,
-                    onOpenPlan: {},
-                )
-                .navigationBarBackButtonHidden(false)
-            }
-            .navigationDestination(item: $presetWorkoutRoute) { route in
-                WorkoutLaunchView(
-                    userSub: userSub,
-                    programId: route.source.rawValue,
-                    workoutId: route.workout.id,
-                    apiClient: apiClient,
-                    presetWorkout: route.workout,
-                    source: route.source,
-                    onOpenPlan: {},
-                )
-                .navigationBarBackButtonHidden(false)
-            }
-            .navigationDestination(item: $recentWorkoutDetailsRoute) { route in
-                RecentWorkoutDetailsView(
-                    record: route.record,
-                    onRepeat: {
-                        openRepeatWorkout(route.record)
-                    },
-                )
-                .navigationBarBackButtonHidden(false)
-            }
-            .fullScreenCover(isPresented: $isQuickBuilderPresented) {
-                NavigationStack {
-                    QuickWorkoutBuilderView { workout in
-                        presetWorkoutRoute = PresetWorkoutRoute(workout: workout, source: .freestyle)
+        .navigationDestination(item: $programWorkoutRoute) { route in
+            WorkoutLaunchView(
+                userSub: userSub,
+                programId: route.programId,
+                workoutId: route.workoutId,
+                apiClient: apiClient,
+                onOpenPlan: {},
+            )
+            .navigationBarBackButtonHidden(false)
+        }
+        .navigationDestination(item: $presetWorkoutRoute) { route in
+            WorkoutLaunchView(
+                userSub: userSub,
+                programId: route.programId ?? route.source.rawValue,
+                workoutId: route.workout.id,
+                apiClient: apiClient,
+                presetWorkout: route.workout,
+                source: route.source,
+                onOpenPlan: {},
+            )
+            .navigationBarBackButtonHidden(false)
+        }
+        .navigationDestination(item: $recentWorkoutDetailsRoute) { route in
+            RecentWorkoutDetailsView(
+                record: route.record,
+                onRepeat: {
+                    Task {
+                        await openRepeatWorkout(route.record)
                     }
                 }
+            )
+            .navigationBarBackButtonHidden(false)
+        }
+        .fullScreenCover(isPresented: $isQuickBuilderPresented) {
+            NavigationStack {
+                QuickWorkoutBuilderView { workout in
+                    presetWorkoutRoute = PresetWorkoutRoute(programId: nil, workout: workout, source: .freestyle)
+                }
             }
+        }
     }
 
-    private func openRepeatWorkout(_ record: CompletedWorkoutRecord) {
-        switch resolveRepeatWorkoutTarget(for: record, templateFallback: .quickBuilder) {
+    private func openRepeatWorkout(_ record: CompletedWorkoutRecord) async {
+        switch await resolveRepeatWorkoutTarget(for: record, templateFallback: .quickBuilder) {
         case let .program(route):
             programWorkoutRoute = route
+        case let .preset(route):
+            presetWorkoutRoute = route
         case .quickBuilder:
             isQuickBuilderPresented = true
         case .templateLibrary:
@@ -725,8 +830,7 @@ struct WorkoutLaunchView: View {
     var body: some View {
         Group {
             if isLoading {
-                FFLoadingState(title: "Открываем тренировку")
-                    .padding(.horizontal, FFSpacing.md)
+                FFScreenSpinner()
             } else if routeState == .requiresStart, let details {
                 plannedWorkoutState(details: details)
             } else if routeState == .completed, let summary = readOnlySummary {
@@ -754,6 +858,7 @@ struct WorkoutLaunchView: View {
                         athleteTrainingClient: apiClient as? AthleteTrainingClientProtocol,
                         networkMonitor: NetworkMonitor(),
                         executionContext: executionContext,
+                        restTimer: RestTimerModel.shared,
                     ),
                     onExit: {
                         isExitConfirmationPresented = true
@@ -861,12 +966,29 @@ struct WorkoutLaunchView: View {
         let cacheKey = "workout.details:\(programId):\(workoutId)"
         let contextCacheKey = "workout.execution.context:\(programId):\(workoutId)"
         let athleteTrainingClient = apiClient as? AthleteTrainingClientProtocol
+        let localSnapshot = await progressStore.load(
+            userSub: userSub,
+            programId: programId,
+            workoutId: workoutId,
+        )
 
         if let presetWorkout {
             details = presetWorkout
             error = nil
             routeState = .resume
             await cacheStore.set(cacheKey, value: presetWorkout, namespace: userSub, ttl: 60 * 60 * 24)
+            return
+        }
+
+        if let localSnapshot,
+           localSnapshot.status == .completed,
+           let restored = localSnapshot.workoutDetails
+        {
+            details = restored
+            error = nil
+            routeState = .completed
+            readOnlySummary = await buildLocalCompletedSummary(from: localSnapshot, fallbackTitle: restored.title)
+            await cacheStore.set(cacheKey, value: restored, namespace: userSub, ttl: 60 * 60 * 24)
             return
         }
 
@@ -935,11 +1057,7 @@ struct WorkoutLaunchView: View {
             ) {
                 executionContext = cachedContext
             }
-        } else if let snapshot = await progressStore.load(
-            userSub: userSub,
-            programId: programId,
-            workoutId: workoutId,
-        ),
+        } else if let snapshot = localSnapshot,
             let restored = snapshot.workoutDetails
         {
             details = restored
@@ -1103,6 +1221,7 @@ struct WorkoutLaunchView: View {
             abandonedAt: Date(),
         )
 
+        RestTimerModel.shared.clearIfMatches(workoutId: workoutId)
         dismiss()
         onBackToWorkoutHub?()
     }
@@ -1174,6 +1293,43 @@ struct WorkoutLaunchView: View {
             nextWorkout: nextWorkout,
             hasNewPersonalRecord: hasNewPersonalRecord,
             personalRecordHighlights: personalRecordHighlights,
+        )
+    }
+
+    private func buildLocalCompletedSummary(
+        from snapshot: WorkoutProgressSnapshot,
+        fallbackTitle: String,
+    ) async -> WorkoutSummaryState {
+        let completedSets = snapshot.exercises.values.flatMap(\.sets).filter(\.isCompleted)
+        let derivedSetCount = completedSets.count
+        let derivedReps = completedSets.reduce(0) { partial, set in
+            partial + max(0, Int(Double(set.repsText) ?? 0))
+        }
+        let derivedVolume = completedSets.reduce(0.0) { partial, set in
+            let reps = Double(set.repsText) ?? 0
+            let weight = Double(set.weightText) ?? 0
+            return partial + reps * weight
+        }
+        let derivedDuration = max(
+            0,
+            Int(snapshot.lastUpdated.timeIntervalSince(snapshot.startedAt ?? snapshot.lastUpdated)),
+        )
+
+        let matchingRecord = await LocalTrainingStore()
+            .history(userSub: userSub, source: nil, limit: 20)
+            .first(where: { $0.programId == programId && $0.workoutId == workoutId })
+
+        return WorkoutSummaryState(
+            id: "local-completed-\(workoutId)",
+            workoutTitle: matchingRecord?.workoutTitle ?? fallbackTitle,
+            durationSeconds: matchingRecord?.durationSeconds ?? derivedDuration,
+            totalSets: matchingRecord?.completedSets ?? derivedSetCount,
+            totalReps: derivedReps,
+            volume: matchingRecord?.volume ?? derivedVolume,
+            comparison: nil,
+            nextWorkout: nil,
+            hasNewPersonalRecord: false,
+            personalRecordHighlights: [],
         )
     }
 
@@ -1507,10 +1663,11 @@ struct WorkoutSummaryView: View {
 }
 
 private struct TrainingTabContent: View {
+    let store: StoreOf<RootFeature>
+    let environment: AppEnvironment
     let userSub: String
     let apiClient: APIClientProtocol?
     let onOpenPlan: () -> Void
-    let onOpenCatalog: () -> Void
     @Binding var resumeSessionRequest: ActiveWorkoutSession?
     let onResumeHandled: () -> Void
     let onRoutePresentationChanged: (Bool) -> Void
@@ -1520,6 +1677,7 @@ private struct TrainingTabContent: View {
     @State private var programHistoryRoute: ProgramHistoryRoute?
     @State private var presetWorkoutRoute: PresetWorkoutRoute?
     @State private var recentWorkoutDetailsRoute: RecentWorkoutDetailsRoute?
+    @State private var catalogRoute: CatalogRoute?
     @State private var isQuickBuilderPresented = false
     @State private var isTemplateLibraryPresented = false
     @State private var activePresentationMarkers: Set<String> = []
@@ -1531,6 +1689,10 @@ private struct TrainingTabContent: View {
         var id: String {
             programId
         }
+    }
+
+    private struct CatalogRoute: Identifiable, Hashable {
+        let id = UUID()
     }
 
     var body: some View {
@@ -1545,6 +1707,13 @@ private struct TrainingTabContent: View {
             onOpenRemoteWorkout: { route in
                 programWorkoutRoute = ProgramWorkoutRoute(programId: route.programId, workoutId: route.workoutId)
             },
+            onOpenPresetWorkout: { target in
+                presetWorkoutRoute = PresetWorkoutRoute(
+                    programId: target.programId,
+                    workout: target.workout,
+                    source: target.source,
+                )
+            },
             onStartQuickWorkout: {
                 isQuickBuilderPresented = true
             },
@@ -1552,13 +1721,19 @@ private struct TrainingTabContent: View {
                 isTemplateLibraryPresented = true
             },
             onRepeatWorkout: { record in
-                openRepeatWorkout(record)
+                Task {
+                    await openRepeatWorkout(record)
+                }
             },
             onOpenRecentWorkout: { record in
                 recentWorkoutDetailsRoute = RecentWorkoutDetailsRoute(record: record)
             },
+            onOpenPlan: {
+                PlanNavigationCoordinator.shared.request(day: Date())
+                onOpenPlan()
+            },
             onOpenCatalog: {
-                onOpenCatalog()
+                catalogRoute = CatalogRoute()
             },
             onOpenProgramHistory: { programId, programTitle in
                 programHistoryRoute = ProgramHistoryRoute(programId: programId, programTitle: programTitle)
@@ -1600,7 +1775,7 @@ private struct TrainingTabContent: View {
         .navigationDestination(item: $presetWorkoutRoute) { route in
             WorkoutLaunchView(
                 userSub: userSub,
-                programId: route.source.rawValue,
+                programId: route.programId ?? route.source.rawValue,
                 workoutId: route.workout.id,
                 apiClient: apiClient,
                 presetWorkout: route.workout,
@@ -1613,6 +1788,30 @@ private struct TrainingTabContent: View {
             }
             .onDisappear {
                 updatePresentationMarker("preset:\(route.id)", isPresented: false)
+            }
+        }
+        .navigationDestination(item: $catalogRoute) { route in
+            CatalogTabContent(
+                store: store,
+                environment: environment,
+                apiClient: apiClient,
+                userSub: userSub,
+                onOpenPlanTab: {
+                    catalogRoute = nil
+                    PlanNavigationCoordinator.shared.request(day: Date())
+                    onOpenPlan()
+                },
+                onOpenWorkoutHubTab: {
+                    catalogRoute = nil
+                },
+            )
+            .navigationTitle("Программы")
+            .navigationBarBackButtonHidden(false)
+            .onAppear {
+                updatePresentationMarker("catalog:\(route.id.uuidString)", isPresented: true)
+            }
+            .onDisappear {
+                updatePresentationMarker("catalog:\(route.id.uuidString)", isPresented: false)
             }
         }
         .navigationDestination(item: $programHistoryRoute) { route in
@@ -1642,7 +1841,9 @@ private struct TrainingTabContent: View {
             RecentWorkoutDetailsView(
                 record: route.record,
                 onRepeat: {
-                    openRepeatWorkout(route.record)
+                    Task {
+                        await openRepeatWorkout(route.record)
+                    }
                 },
             )
             .navigationBarBackButtonHidden(false)
@@ -1656,7 +1857,7 @@ private struct TrainingTabContent: View {
         .fullScreenCover(isPresented: $isQuickBuilderPresented) {
             NavigationStack {
                 QuickWorkoutBuilderView { workout in
-                    presetWorkoutRoute = PresetWorkoutRoute(workout: workout, source: .freestyle)
+                    presetWorkoutRoute = PresetWorkoutRoute(programId: nil, workout: workout, source: .freestyle)
                 }
             }
             .onAppear {
@@ -1671,7 +1872,7 @@ private struct TrainingTabContent: View {
                 TemplateLibraryView(
                     viewModel: TemplateLibraryViewModel(userSub: userSub),
                     onStartTemplate: { workout in
-                        presetWorkoutRoute = PresetWorkoutRoute(workout: workout, source: .template)
+                        presetWorkoutRoute = PresetWorkoutRoute(programId: nil, workout: workout, source: .template)
                     },
                 )
             }
@@ -1707,6 +1908,7 @@ private struct TrainingTabContent: View {
             || programHistoryRoute != nil
             || presetWorkoutRoute != nil
             || recentWorkoutDetailsRoute != nil
+            || catalogRoute != nil
             || isQuickBuilderPresented
             || isTemplateLibraryPresented
     }
@@ -1726,10 +1928,12 @@ private struct TrainingTabContent: View {
         onResumeHandled()
     }
 
-    private func openRepeatWorkout(_ record: CompletedWorkoutRecord) {
-        switch resolveRepeatWorkoutTarget(for: record, templateFallback: .templateLibrary) {
+    private func openRepeatWorkout(_ record: CompletedWorkoutRecord) async {
+        switch await resolveRepeatWorkoutTarget(for: record, templateFallback: .templateLibrary) {
         case let .program(route):
             programWorkoutRoute = route
+        case let .preset(route):
+            presetWorkoutRoute = route
         case .quickBuilder:
             isQuickBuilderPresented = true
         case .templateLibrary:

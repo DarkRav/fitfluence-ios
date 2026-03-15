@@ -1,10 +1,10 @@
 import SwiftUI
 
 struct QuickActionsSection: View {
-    let canRepeatLast: Bool
-    let onQuickWorkout: () -> Void
+    let onStartEmptyWorkout: () -> Void
+    let onBrowsePrograms: () -> Void
+    let onOpenPlan: () -> Void
     let onOpenTemplates: () -> Void
-    let onRepeatLast: () -> Void
 
     private let columns = [
         GridItem(.flexible(), spacing: 8),
@@ -15,33 +15,44 @@ struct QuickActionsSection: View {
     var body: some View {
         WorkoutCardContainer(cornerRadius: 22, padding: 16) {
             VStack(alignment: .leading, spacing: 10) {
-                Text("Быстрые действия")
+                Text("Другие действия")
                     .font(.headline.weight(.semibold))
                     .foregroundStyle(FFColors.textPrimary)
 
                 LazyVGrid(columns: columns, spacing: 8) {
                     QuickActionCard(
-                        title: "Быстрая тренировка",
-                        subtitle: "без программы",
+                        title: "Пустая тренировка",
+                        subtitle: "ручной старт",
                         systemImage: "bolt.fill",
-                        action: onQuickWorkout,
+                        action: onStartEmptyWorkout,
                     )
 
                     QuickActionCard(
-                        title: "Шаблоны",
-                        subtitle: "ваши сохранённые",
-                        systemImage: "square.stack.3d.up.fill",
-                        action: onOpenTemplates,
+                        title: "Программы",
+                        subtitle: "от атлетов",
+                        systemImage: "figure.strengthtraining.traditional",
+                        action: onBrowsePrograms,
                     )
 
                     QuickActionCard(
-                        title: "Повторить последнюю",
-                        subtitle: "последняя тренировка",
-                        systemImage: "arrow.uturn.backward.circle.fill",
-                        isEnabled: canRepeatLast,
-                        action: onRepeatLast,
+                        title: "План",
+                        subtitle: "сегодня и дальше",
+                        systemImage: "calendar",
+                        action: onOpenPlan,
                     )
                 }
+
+                Button(action: onOpenTemplates) {
+                    HStack(spacing: 8) {
+                        Image(systemName: "square.stack.3d.up.fill")
+                            .font(.system(size: 14, weight: .semibold))
+                        Text("Открыть шаблоны")
+                            .font(FFTypography.caption.weight(.semibold))
+                    }
+                    .foregroundStyle(FFColors.textSecondary)
+                    .padding(.top, 2)
+                }
+                .buttonStyle(.plain)
             }
         }
     }

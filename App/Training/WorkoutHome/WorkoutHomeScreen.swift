@@ -5,10 +5,12 @@ struct WorkoutHomeScreen: View {
 
     let onContinueSession: (ActiveWorkoutSession) -> Void
     let onOpenRemoteWorkout: (WorkoutHomeViewModel.RemoteWorkoutTarget) -> Void
+    let onOpenPresetWorkout: (WorkoutHomeViewModel.PresetWorkoutTarget) -> Void
     let onStartQuickWorkout: () -> Void
     let onOpenTemplates: () -> Void
     let onRepeatWorkout: (CompletedWorkoutRecord) -> Void
     let onOpenRecentWorkout: (CompletedWorkoutRecord) -> Void
+    let onOpenPlan: () -> Void
     let onOpenCatalog: () -> Void
     let onOpenProgramHistory: (_ programId: String, _ programTitle: String) -> Void
 
@@ -21,11 +23,35 @@ struct WorkoutHomeScreen: View {
                     offlineBanner
                 }
 
-                if !viewModel.hasResumeWorkout {
+                if let resumeWorkout = viewModel.resumeWorkout {
+                    ResumeWorkoutCard(
+                        workoutName: resumeWorkout.workoutName,
+                        metricsText: resumeWorkout.metricsText,
+                        onContinue: runResumeWorkout,
+                    )
+                } else if let todayWorkout = viewModel.todayWorkout {
+                    TodayWorkoutCard(
+                        title: todayWorkout.title,
+                        subtitle: todayWorkout.subtitle,
+                        detailText: todayWorkout.detailText,
+                        buttonTitle: todayWorkout.buttonTitle,
+                        syncStatus: viewModel.syncIndicator,
+                        showsCacheTag: viewModel.isShowingCachedData,
+                        onStartWorkout: runTodayWorkout,
+                    )
+                } else {
                     StartWorkoutCard(
                         isLoading: false,
+                        syncStatus: viewModel.syncIndicator,
+                        showsCacheTag: viewModel.isShowingCachedData,
                         onStartWorkout: runStartWorkout,
                     )
+                }
+
+                if viewModel.hasResumeWorkout,
+                   (viewModel.syncIndicator != .synced || viewModel.isShowingCachedData)
+                {
+                    syncStatusCard
                 }
 
                 if let progress = viewModel.programProgress,
@@ -46,19 +72,19 @@ struct WorkoutHomeScreen: View {
                 }
 
                 QuickActionsSection(
-                    canRepeatLast: viewModel.lastCompleted != nil,
-                    onQuickWorkout: {
+                    onStartEmptyWorkout: {
                         ClientAnalytics.track(.workoutQuickButtonTapped)
                         onStartQuickWorkout()
+                    },
+                    onBrowsePrograms: {
+                        onOpenCatalog()
+                    },
+                    onOpenPlan: {
+                        onOpenPlan()
                     },
                     onOpenTemplates: {
                         ClientAnalytics.track(.workoutTemplatesButtonTapped)
                         onOpenTemplates()
-                    },
-                    onRepeatLast: {
-                        guard let lastCompleted = viewModel.lastCompleted else { return }
-                        ClientAnalytics.track(.workoutRepeatLastButtonTapped)
-                        onRepeatWorkout(lastCompleted)
                     },
                 )
 
@@ -98,6 +124,45 @@ struct WorkoutHomeScreen: View {
 
                 Spacer(minLength: 4)
             }
+        }
+    }
+
+    private var syncStatusCard: some View {
+        WorkoutCardContainer(cornerRadius: 18, padding: 12) {
+            SyncStatusIndicator(
+                status: viewModel.syncIndicator,
+                showsCacheTag: viewModel.isShowingCachedData,
+            )
+        }
+    }
+
+    private func runResumeWorkout() {
+        guard let resumeWorkout = viewModel.resumeWorkout else { return }
+
+        switch resumeWorkout.source {
+        case let .local(session):
+            onContinueSession(session)
+        case let .remote(target):
+            onOpenRemoteWorkout(target)
+        }
+    }
+
+    private func runTodayWorkout() {
+        guard let todayWorkout = viewModel.todayWorkout else {
+            onOpenPlan()
+            return
+        }
+
+        guard let launchTarget = todayWorkout.launchTarget else {
+            onOpenPlan()
+            return
+        }
+
+        switch launchTarget {
+        case let .remote(target):
+            onOpenRemoteWorkout(target)
+        case let .preset(target):
+            onOpenPresetWorkout(target)
         }
     }
 
@@ -153,10 +218,12 @@ struct WorkoutHomeScreen: View {
             viewModel: WorkoutHomeViewModel(userSub: "preview"),
             onContinueSession: { _ in },
             onOpenRemoteWorkout: { _ in },
+            onOpenPresetWorkout: { _ in },
             onStartQuickWorkout: {},
             onOpenTemplates: {},
             onRepeatWorkout: { _ in },
             onOpenRecentWorkout: { _ in },
+            onOpenPlan: {},
             onOpenCatalog: {},
             onOpenProgramHistory: { _, _ in },
         )

@@ -202,6 +202,230 @@ final class WorkoutsFeatureAndProgressStoreTests: XCTestCase {
         XCTAssertEqual(viewModel.currentExerciseState?.sets.first?.rpeText, "8")
     }
 
+    func testWorkoutPlayerViewModelMarksBodyweightExercise() async {
+        let progressStore = MockWorkoutProgressStore(statuses: [:])
+        let sessionManager = WorkoutSessionManager(progressStore: progressStore)
+        let workout = WorkoutDetailsModel(
+            id: "w-bodyweight",
+            title: "Bodyweight",
+            dayOrder: 1,
+            coachNote: nil,
+            exercises: [
+                WorkoutExercise(
+                    id: "ex-bw",
+                    name: "Подтягивания",
+                    sets: 3,
+                    repsMin: 6,
+                    repsMax: 8,
+                    targetRpe: nil,
+                    restSeconds: 90,
+                    notes: nil,
+                    orderIndex: 0,
+                    isBodyweight: true,
+                ),
+            ],
+        )
+
+        let viewModel = WorkoutPlayerViewModel(
+            userSub: "u1",
+            programId: "p1",
+            workout: workout,
+            sessionManager: sessionManager,
+        )
+
+        await viewModel.onAppear()
+
+        XCTAssertTrue(viewModel.currentExerciseIsBodyweight)
+    }
+
+    func testWorkoutPlayerViewModelHidesSkipForSingleExerciseWorkout() async {
+        let progressStore = MockWorkoutProgressStore(statuses: [:])
+        let sessionManager = WorkoutSessionManager(progressStore: progressStore)
+        let singleExerciseWorkout = WorkoutDetailsModel(
+            id: "w-single",
+            title: "Одиночное упражнение",
+            dayOrder: 1,
+            coachNote: nil,
+            exercises: [
+                WorkoutExercise(
+                    id: "ex-1",
+                    name: "Планка",
+                    sets: 3,
+                    repsMin: nil,
+                    repsMax: nil,
+                    targetRpe: nil,
+                    restSeconds: 60,
+                    notes: nil,
+                    orderIndex: 0,
+                ),
+            ],
+        )
+
+        let viewModel = WorkoutPlayerViewModel(
+            userSub: "u1",
+            programId: "p1",
+            workout: singleExerciseWorkout,
+            sessionManager: sessionManager,
+        )
+
+        await viewModel.onAppear()
+
+        XCTAssertFalse(viewModel.canSkipCurrentExercise)
+    }
+
+    func testWorkoutPlayerQuickCopyAvailableOnlyForIncompleteSetsAfterFirst() async {
+        let progressStore = MockWorkoutProgressStore(statuses: [:])
+        let sessionManager = WorkoutSessionManager(progressStore: progressStore)
+        let viewModel = WorkoutPlayerViewModel(
+            userSub: "u1",
+            programId: "p1",
+            workout: sampleWorkoutDetails,
+            sessionManager: sessionManager,
+        )
+
+        await viewModel.onAppear()
+
+        XCTAssertFalse(viewModel.canCopyPreviousSet(setIndex: 0))
+        XCTAssertFalse(viewModel.canUseQuickCopyAction)
+
+        await viewModel.toggleSetComplete(setIndex: 0)
+
+        XCTAssertTrue(viewModel.canCopyPreviousSet(setIndex: 1))
+        XCTAssertTrue(viewModel.canUseQuickCopyAction)
+        XCTAssertEqual(viewModel.quickActionSetTitle, "Из подхода 1")
+
+        await viewModel.toggleSetComplete(setIndex: 1)
+
+        XCTAssertFalse(viewModel.canCopyPreviousSet(setIndex: 1))
+        XCTAssertFalse(viewModel.canUseQuickCopyAction)
+    }
+
+    func testWorkoutPlayerViewModelPreservesInjectedRestTimerAcrossReentry() async {
+        let progressStore = MockWorkoutProgressStore(statuses: [:])
+        let sessionManager = WorkoutSessionManager(progressStore: progressStore)
+        let restTimer = RestTimerModel()
+
+        let firstViewModel = WorkoutPlayerViewModel(
+            userSub: "u1",
+            programId: "p1",
+            workout: sampleWorkoutDetails,
+            sessionManager: sessionManager,
+            restTimer: restTimer,
+        )
+
+        await firstViewModel.onAppear()
+        await firstViewModel.toggleSetComplete(setIndex: 0)
+
+        XCTAssertTrue(restTimer.isVisible)
+        XCTAssertEqual(restTimer.workoutId, "w1")
+        XCTAssertEqual(restTimer.exerciseName, "Присед")
+
+        let secondViewModel = WorkoutPlayerViewModel(
+            userSub: "u1",
+            programId: "p1",
+            workout: sampleWorkoutDetails,
+            sessionManager: sessionManager,
+            restTimer: restTimer,
+        )
+
+        await secondViewModel.onAppear()
+
+        XCTAssertTrue(secondViewModel.restTimer.isVisible)
+        XCTAssertEqual(secondViewModel.restTimer.workoutId, "w1")
+        XCTAssertEqual(secondViewModel.restTimer.exerciseName, "Присед")
+    }
+
+    func testWorkoutPlayerViewModelFinishClearsRestTimerForCurrentWorkout() async {
+        let progressStore = MockWorkoutProgressStore(statuses: [:])
+        let sessionManager = WorkoutSessionManager(progressStore: progressStore)
+        let restTimer = RestTimerModel()
+        let viewModel = WorkoutPlayerViewModel(
+            userSub: "u1",
+            programId: "p1",
+            workout: sampleWorkoutDetails,
+            sessionManager: sessionManager,
+            restTimer: restTimer,
+        )
+
+        await viewModel.onAppear()
+        await viewModel.toggleSetComplete(setIndex: 0)
+        XCTAssertTrue(restTimer.isVisible)
+
+        await viewModel.finish()
+
+        XCTAssertFalse(restTimer.isVisible)
+        XCTAssertNil(restTimer.workoutId)
+        XCTAssertNil(restTimer.exerciseName)
+        XCTAssertNil(restTimer.completionMessage)
+    }
+
+    func testWorkoutPlayerPrimaryActionShowsFinishConfirmationOnLastExercise() async {
+        let progressStore = MockWorkoutProgressStore(statuses: [:])
+        let sessionManager = WorkoutSessionManager(progressStore: progressStore)
+        let viewModel = WorkoutPlayerViewModel(
+            userSub: "u1",
+            programId: "p1",
+            workout: sampleWorkoutDetails,
+            sessionManager: sessionManager,
+        )
+
+        await viewModel.onAppear()
+
+        XCTAssertTrue(viewModel.isLastExercise)
+        XCTAssertFalse(viewModel.isFinishConfirmationPresented)
+
+        await viewModel.primaryBottomAction()
+
+        XCTAssertTrue(viewModel.isFinishConfirmationPresented)
+        XCTAssertFalse(viewModel.isFinished)
+    }
+
+    func testWorkoutPlayerConfirmFinishIsIdempotent() async {
+        let progressStore = MockWorkoutProgressStore(statuses: [:])
+        let sessionManager = WorkoutSessionManager(progressStore: progressStore)
+        let viewModel = WorkoutPlayerViewModel(
+            userSub: "u1",
+            programId: "p1",
+            workout: sampleWorkoutDetails,
+            sessionManager: sessionManager,
+        )
+
+        await viewModel.onAppear()
+        viewModel.isFinishConfirmationPresented = true
+
+        await viewModel.confirmFinish()
+        let firstSummary = viewModel.completionSummary
+
+        await viewModel.confirmFinish()
+
+        XCTAssertTrue(viewModel.isFinished)
+        XCTAssertEqual(viewModel.completionSummary, firstSummary)
+        XCTAssertFalse(viewModel.isFinishConfirmationPresented)
+        XCTAssertFalse(viewModel.isSubmittingFinish)
+    }
+
+    func testWorkoutPlayerFinishPostsCompletionNotification() async {
+        let progressStore = MockWorkoutProgressStore(statuses: [:])
+        let sessionManager = WorkoutSessionManager(progressStore: progressStore)
+        let viewModel = WorkoutPlayerViewModel(
+            userSub: "u1",
+            programId: "p1",
+            workout: sampleWorkoutDetails,
+            sessionManager: sessionManager,
+        )
+
+        await viewModel.onAppear()
+
+        let stream = NotificationCenter.default.notifications(named: .fitfluenceWorkoutDidComplete)
+        let notificationTask = Task { await stream.first(where: { _ in true }) }
+
+        await viewModel.finish()
+
+        let notification = await notificationTask.value
+        XCTAssertEqual(notification?.userInfo?["programId"] as? String, "p1")
+        XCTAssertEqual(notification?.userInfo?["workoutId"] as? String, "w1")
+    }
+
     func testWorkoutPlayerViewModelAutoAdvanceAndUndoSnackbar() async {
         let progressStore = MockWorkoutProgressStore(statuses: [:])
         let sessionManager = WorkoutSessionManager(progressStore: progressStore)
@@ -363,6 +587,75 @@ final class WorkoutsFeatureAndProgressStoreTests: XCTestCase {
             exercises: [:],
         )
         XCTAssertEqual(completed, .completed)
+    }
+
+    func testAthleteShellTabsMakeTodayDefaultEntryPoint() {
+        XCTAssertEqual(AthleteShellTab.defaultTab, .today)
+        XCTAssertEqual(AthleteShellTab.allCases, [.today, .plan, .progress, .profile])
+        XCTAssertEqual(
+            AthleteShellTab.allCases.map(\.title),
+            ["Сегодня", "План", "Прогресс", "Профиль"],
+        )
+    }
+
+    func testWorkoutHomePrimaryActionPrefersResumeThenTodayThenGenericStart() {
+        let viewModel = WorkoutHomeViewModel(userSub: "u1")
+        let remoteTarget = WorkoutHomeViewModel.RemoteWorkoutTarget(
+            programId: "program-1",
+            workoutId: "workout-1",
+            title: "День 1",
+        )
+
+        viewModel.startWorkoutTarget = remoteTarget
+        viewModel.todayWorkout = WorkoutHomeViewModel.TodayWorkout(
+            title: "День 1",
+            subtitle: "Сегодня • Сила 8 недель",
+            detailText: "Запланирована • программа",
+            status: .planned,
+            source: .program,
+            launchTarget: .remote(remoteTarget),
+        )
+
+        XCTAssertEqual(viewModel.primaryActionKind, .startToday)
+
+        viewModel.resumeWorkout = WorkoutHomeViewModel.ResumeWorkout(
+            source: .local(
+                ActiveWorkoutSession(
+                    userSub: "u1",
+                    programId: "program-1",
+                    workoutId: "workout-1",
+                    source: .program,
+                    status: .inProgress,
+                    currentExerciseIndex: 1,
+                    lastUpdated: Date(),
+                ),
+            ),
+            workoutName: "День 1",
+            completedExercisesCount: 1,
+            totalExercisesCount: 5,
+            startedAt: Date(),
+        )
+
+        XCTAssertEqual(viewModel.primaryActionKind, .resume)
+
+        viewModel.resumeWorkout = nil
+        XCTAssertEqual(viewModel.primaryActionKind, .startToday)
+
+        viewModel.todayWorkout = nil
+        XCTAssertEqual(viewModel.primaryActionKind, .startWorkout)
+    }
+
+    func testTodayWorkoutWithoutLaunchTargetFallsBackToPlanCTA() {
+        let todayWorkout = WorkoutHomeViewModel.TodayWorkout(
+            title: "День 2",
+            subtitle: "Сегодня • По программе",
+            detailText: "Запланирована • программа",
+            status: .planned,
+            source: .program,
+            launchTarget: nil,
+        )
+
+        XCTAssertEqual(todayWorkout.buttonTitle, "Открыть план")
     }
 
     func testActiveEnrollmentResolutionPrefersCurrentInProgressInvariant() {

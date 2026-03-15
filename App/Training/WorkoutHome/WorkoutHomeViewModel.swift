@@ -31,6 +31,36 @@ final class WorkoutHomeViewModel {
         }
     }
 
+    struct PresetWorkoutTarget: Equatable {
+        let workout: WorkoutDetailsModel
+        let source: WorkoutSource
+        let programId: String?
+    }
+
+    struct TodayWorkout: Equatable {
+        enum LaunchTarget: Equatable {
+            case remote(RemoteWorkoutTarget)
+            case preset(PresetWorkoutTarget)
+        }
+
+        let title: String
+        let subtitle: String
+        let detailText: String
+        let status: TrainingDayStatus
+        let source: WorkoutSource
+        let launchTarget: LaunchTarget?
+
+        var buttonTitle: String {
+            launchTarget == nil ? "Открыть план" : "Начать тренировку на сегодня"
+        }
+    }
+
+    enum PrimaryActionKind: Equatable {
+        case resume
+        case startToday
+        case startWorkout
+    }
+
     struct ProgramProgress: Equatable {
         let programId: String
         let title: String
@@ -80,6 +110,7 @@ final class WorkoutHomeViewModel {
     var isShowingCachedData = false
     var isOffline = false
     var resumeWorkout: ResumeWorkout?
+    var todayWorkout: TodayWorkout?
     var startWorkoutTarget: RemoteWorkoutTarget?
     var programProgress: ProgramProgress?
     var recentWorkouts: [CompletedWorkoutRecord] = []
@@ -92,9 +123,23 @@ final class WorkoutHomeViewModel {
         resumeWorkout != nil
     }
 
+    var hasTodayWorkout: Bool {
+        todayWorkout != nil
+    }
+
     var hasActiveProgram: Bool {
         guard let programProgress else { return false }
         return shouldShowProgramProgress(programProgress)
+    }
+
+    var primaryActionKind: PrimaryActionKind {
+        if hasResumeWorkout {
+            return .resume
+        }
+        if hasTodayWorkout {
+            return .startToday
+        }
+        return .startWorkout
     }
 
     var isProgramCompleted: Bool {
@@ -108,6 +153,8 @@ final class WorkoutHomeViewModel {
     private var localResumeCandidate: ResumeWorkout?
     private var remoteResumeCandidate: ResumeWorkout?
     private var serverInProgressWorkout: RemoteWorkoutTarget?
+    private var localTodayCandidates: [TodayWorkout] = []
+    private var remoteTodayCandidates: [TodayWorkout] = []
 
     init(
         userSub: String,
@@ -140,6 +187,7 @@ final class WorkoutHomeViewModel {
 
         isLoading = true
         isOffline = !networkMonitor.currentStatus
+        remoteTodayCandidates = []
 
         await syncCoordinator.activate(namespace: userSub)
         await loadLocalContext()
@@ -182,6 +230,7 @@ final class WorkoutHomeViewModel {
     private func loadLocalContext() async {
         async let active = progressStore.latestActiveSession(userSub: userSub)
         async let history = trainingStore.history(userSub: userSub, source: nil, limit: 8)
+        async let monthPlans = trainingStore.plans(userSub: userSub, month: Date())
         let storedResume = await resumeStore.latest(userSub: userSub)
 
         if let activeCandidate = await active,
@@ -228,7 +277,9 @@ final class WorkoutHomeViewModel {
         let allHistory = await history
         recentWorkouts = allHistory
         lastCompleted = allHistory.first
+        localTodayCandidates = await resolveLocalTodayCandidates(from: await monthPlans)
         rebuildResume()
+        rebuildTodayWorkout()
     }
 
     private func loadCachedRemoteContext() async {
@@ -372,19 +423,20 @@ final class WorkoutHomeViewModel {
     }
 
     private func apply(calendar response: AthleteCalendarResponse) async {
-        guard serverInProgressWorkout == nil,
-              let inProgress = response.workouts.first(where: { $0.status == .inProgress })
-        else {
-            return
+        if serverInProgressWorkout == nil,
+           let inProgress = response.workouts.first(where: { $0.status == .inProgress })
+        {
+            serverInProgressWorkout = RemoteWorkoutTarget(
+                programId: inProgress.programId?.trimmedNilIfEmpty ?? "program",
+                workoutId: inProgress.id,
+                title: inProgress.title?.trimmedNilIfEmpty ?? "Текущая тренировка",
+            )
+
+            await updateRemoteResumeCandidate()
         }
 
-        serverInProgressWorkout = RemoteWorkoutTarget(
-            programId: inProgress.programId?.trimmedNilIfEmpty ?? "program",
-            workoutId: inProgress.id,
-            title: inProgress.title?.trimmedNilIfEmpty ?? "Текущая тренировка",
-        )
-
-        await updateRemoteResumeCandidate()
+        remoteTodayCandidates = resolveRemoteTodayCandidates(from: response.workouts)
+        rebuildTodayWorkout()
     }
 
     private func updateRemoteResumeCandidate() async {
@@ -430,6 +482,10 @@ final class WorkoutHomeViewModel {
 
     private func rebuildResume() {
         resumeWorkout = localResumeCandidate ?? remoteResumeCandidate
+    }
+
+    private func rebuildTodayWorkout() {
+        todayWorkout = selectBestTodayWorkout(from: localTodayCandidates + remoteTodayCandidates)
     }
 
     private func finalizeStates() {
@@ -558,12 +614,260 @@ final class WorkoutHomeViewModel {
         return elapsed < completedProgramVisibilityDays
     }
 
+    private func resolveLocalTodayCandidates(from plans: [TrainingDayPlan]) async -> [TodayWorkout] {
+        let today = calendar.startOfDay(for: Date())
+        var resolved: [TodayWorkout] = []
+
+        for plan in plans where calendar.isDate(plan.day, inSameDayAs: today) {
+            guard let status = todayWorkoutStatus(for: plan.status) else { continue }
+
+            let launchTarget = await resolveLaunchTarget(for: plan)
+            resolved.append(
+                TodayWorkout(
+                    title: plan.title,
+                    subtitle: localTodaySubtitle(for: plan),
+                    detailText: statusDetailText(status, source: plan.source),
+                    status: status,
+                    source: plan.source,
+                    launchTarget: launchTarget,
+                ),
+            )
+        }
+
+        return resolved
+    }
+
+    private func resolveRemoteTodayCandidates(from workouts: [AthleteWorkoutInstance]) -> [TodayWorkout] {
+        let today = calendar.startOfDay(for: Date())
+
+        return workouts.compactMap { workout in
+            guard let scheduledAt = parseScheduledDate(workout.scheduledDate ?? workout.startedAt ?? workout.completedAt),
+                  calendar.isDate(calendar.startOfDay(for: scheduledAt), inSameDayAs: today),
+                  let status = todayWorkoutStatus(for: mapStatus(workout.status))
+            else {
+                return nil
+            }
+
+            let title = workout.title?.trimmedNilIfEmpty ?? "Тренировка"
+            let programId = workout.programId?.trimmedNilIfEmpty ?? programProgress?.programId ?? "program"
+            let programTitle = resolveProgramTitle(for: workout)
+
+            return TodayWorkout(
+                title: title,
+                subtitle: programTitle.map { "Сегодня • \($0)" } ?? "Сегодня • По программе",
+                detailText: statusDetailText(status, source: .program),
+                status: status,
+                source: .program,
+                launchTarget: .remote(
+                    RemoteWorkoutTarget(
+                        programId: programId,
+                        workoutId: workout.id,
+                        title: title,
+                    ),
+                ),
+            )
+        }
+    }
+
+    private func selectBestTodayWorkout(from candidates: [TodayWorkout]) -> TodayWorkout? {
+        candidates.max { lhs, rhs in
+            todayWorkoutPriority(lhs) < todayWorkoutPriority(rhs)
+        }
+    }
+
+    private func todayWorkoutPriority(_ candidate: TodayWorkout) -> Int {
+        var score = 0
+        switch candidate.status {
+        case .inProgress:
+            score += 100
+        case .planned:
+            score += 80
+        case .completed:
+            score += 20
+        case .missed, .skipped:
+            score += 10
+        }
+
+        switch candidate.source {
+        case .program:
+            score += 30
+        case .template:
+            score += 20
+        case .freestyle:
+            score += 10
+        }
+
+        if candidate.launchTarget != nil {
+            score += 5
+        }
+
+        return score
+    }
+
+    private func todayWorkoutStatus(for status: TrainingDayStatus) -> TrainingDayStatus? {
+        switch status {
+        case .planned, .inProgress:
+            return status
+        case .completed, .missed, .skipped:
+            return nil
+        }
+    }
+
+    private func localTodaySubtitle(for plan: TrainingDayPlan) -> String {
+        if let programTitle = plan.programTitle?.trimmedNilIfEmpty {
+            return "Сегодня • \(programTitle)"
+        }
+
+        switch plan.source {
+        case .program:
+            return "Сегодня • По программе"
+        case .freestyle:
+            return "Сегодня • Своя тренировка"
+        case .template:
+            return "Сегодня • По шаблону"
+        }
+    }
+
+    private func statusDetailText(_ status: TrainingDayStatus, source: WorkoutSource) -> String {
+        let statusTitle = switch status {
+        case .planned:
+            "Запланирована"
+        case .inProgress:
+            "В процессе"
+        case .completed:
+            "Выполнена"
+        case .missed:
+            "Пропущена"
+        case .skipped:
+            "Пропущена намеренно"
+        }
+
+        let sourceTitle = switch source {
+        case .program:
+            "программа"
+        case .freestyle:
+            "ручной старт"
+        case .template:
+            "шаблон"
+        }
+
+        return "\(statusTitle) • \(sourceTitle)"
+    }
+
+    private func resolveLaunchTarget(for plan: TrainingDayPlan) async -> TodayWorkout.LaunchTarget? {
+        if plan.source == .program,
+           !plan.id.hasPrefix("remote-"),
+           let workoutDetails = plan.workoutDetails
+        {
+            return .preset(
+                PresetWorkoutTarget(
+                    workout: workoutDetails,
+                    source: .program,
+                    programId: plan.programId,
+                ),
+            )
+        }
+
+        if plan.source == .program,
+           let programId = plan.programId?.trimmedNilIfEmpty,
+           let workoutId = plan.workoutId?.trimmedNilIfEmpty
+        {
+            return .remote(
+                RemoteWorkoutTarget(
+                    programId: programId,
+                    workoutId: workoutId,
+                    title: plan.title,
+                ),
+            )
+        }
+
+        guard let workoutDetails = await resolveWorkoutDetails(for: plan) else {
+            return nil
+        }
+
+        return .preset(
+            PresetWorkoutTarget(
+                workout: workoutDetails,
+                source: plan.source,
+                programId: plan.programId,
+            ),
+        )
+    }
+
+    private func resolveWorkoutDetails(for plan: TrainingDayPlan) async -> WorkoutDetailsModel? {
+        if let workoutDetails = plan.workoutDetails {
+            return workoutDetails
+        }
+
+        if let cached = await cacheStore.get(
+            workoutCacheKey(programId: plan.programId, source: plan.source, workoutId: plan.workoutId),
+            as: WorkoutDetailsModel.self,
+            namespace: userSub,
+        ) {
+            return cached
+        }
+
+        if plan.source == .freestyle {
+            return WorkoutDetailsModel(
+                id: plan.workoutId?.trimmedNilIfEmpty ?? "quick-\(UUID().uuidString)",
+                title: plan.title,
+                dayOrder: 0,
+                coachNote: "Быстрая тренировка",
+                exercises: [],
+            )
+        }
+
+        return nil
+    }
+
+    private func resolveProgramTitle(for workout: AthleteWorkoutInstance) -> String? {
+        if let programId = workout.programId?.trimmedNilIfEmpty,
+           programId == programProgress?.programId
+        {
+            return programProgress?.title
+        }
+
+        return programProgress?.title
+    }
+
     private func parseISODate(_ value: String?) -> Date? {
         guard let value = value?.trimmedNilIfEmpty else { return nil }
         if let withFractions = Self.iso8601WithFractions.date(from: value) {
             return withFractions
         }
         return Self.iso8601.date(from: value)
+    }
+
+    private func parseScheduledDate(_ value: String?) -> Date? {
+        guard let value = value?.trimmedNilIfEmpty else { return nil }
+        if let withFractions = Self.iso8601WithFractions.date(from: value) {
+            return withFractions
+        }
+        if let dateTime = Self.iso8601.date(from: value) {
+            return dateTime
+        }
+        return Self.dateOnly.date(from: value)
+    }
+
+    private func mapStatus(_ status: AthleteWorkoutInstanceStatus?) -> TrainingDayStatus {
+        switch status {
+        case .planned:
+            return .planned
+        case .inProgress, .none:
+            return .inProgress
+        case .completed:
+            return .completed
+        case .missed:
+            return .missed
+        case .abandoned:
+            return .skipped
+        }
+    }
+
+    private func workoutCacheKey(programId: String?, source: WorkoutSource, workoutId: String?) -> String {
+        let resolvedProgramID = programId?.trimmedNilIfEmpty ?? source.rawValue
+        let resolvedWorkoutID = workoutId?.trimmedNilIfEmpty ?? "unknown"
+        return "workout.details:\(resolvedProgramID):\(resolvedWorkoutID)"
     }
 
     private func monthKey(for date: Date) -> String {
@@ -597,6 +901,14 @@ final class WorkoutHomeViewModel {
     private static let iso8601: ISO8601DateFormatter = {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime]
+        return formatter
+    }()
+
+    private static let dateOnly: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(secondsFromGMT: 0)
+        formatter.dateFormat = "yyyy-MM-dd"
         return formatter
     }()
 }
