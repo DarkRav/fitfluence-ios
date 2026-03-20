@@ -55,6 +55,8 @@ struct TemplateExerciseDraft: Codable, Equatable, Sendable, Identifiable {
     var repsMin: Int?
     var repsMax: Int?
     var restSeconds: Int?
+    var targetRpe: Int? = nil
+    var notes: String? = nil
 }
 
 struct WorkoutTemplateDraft: Codable, Equatable, Sendable, Identifiable {
@@ -63,6 +65,244 @@ struct WorkoutTemplateDraft: Codable, Equatable, Sendable, Identifiable {
     var name: String
     var exercises: [TemplateExerciseDraft]
     var updatedAt: Date
+}
+
+struct WorkoutCompositionExerciseDraft: Equatable, Sendable, Identifiable {
+    let id: String
+    var name: String
+    var sets: Int
+    var repsMin: Int?
+    var repsMax: Int?
+    var targetRpe: Int?
+    var restSeconds: Int?
+    var notes: String?
+
+    init(
+        id: String,
+        name: String,
+        sets: Int,
+        repsMin: Int?,
+        repsMax: Int?,
+        targetRpe: Int?,
+        restSeconds: Int?,
+        notes: String?,
+    ) {
+        self.id = id
+        self.name = name
+        self.sets = max(1, sets)
+
+        let resolvedRepsMin = repsMin.map { max(1, $0) }
+        let resolvedRepsMax = repsMax.map { max(1, $0) }
+        if let resolvedRepsMin {
+            self.repsMin = resolvedRepsMin
+            self.repsMax = max(resolvedRepsMin, resolvedRepsMax ?? resolvedRepsMin)
+        } else {
+            self.repsMin = nil
+            self.repsMax = resolvedRepsMax
+        }
+
+        self.targetRpe = targetRpe.map { min(10, max(1, $0)) }
+        self.restSeconds = restSeconds.map { max(0, $0) }
+        self.notes = notes?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+    }
+
+    init(catalogItem: ExerciseCatalogItem) {
+        let defaults = catalogItem.draftDefaults ?? .standard
+        self.init(
+            id: catalogItem.id,
+            name: catalogItem.name,
+            sets: defaults.sets,
+            repsMin: defaults.repsMin,
+            repsMax: defaults.repsMax,
+            targetRpe: defaults.targetRpe,
+            restSeconds: defaults.restSeconds,
+            notes: defaults.notes,
+        )
+    }
+
+    init(workoutExercise: WorkoutExercise) {
+        self.init(
+            id: workoutExercise.id,
+            name: workoutExercise.name,
+            sets: workoutExercise.sets,
+            repsMin: workoutExercise.repsMin,
+            repsMax: workoutExercise.repsMax,
+            targetRpe: workoutExercise.targetRpe,
+            restSeconds: workoutExercise.restSeconds,
+            notes: workoutExercise.notes,
+        )
+    }
+
+    init(templateExercise: TemplateExerciseDraft) {
+        self.init(
+            id: templateExercise.id,
+            name: templateExercise.name,
+            sets: templateExercise.sets,
+            repsMin: templateExercise.repsMin,
+            repsMax: templateExercise.repsMax,
+            targetRpe: templateExercise.targetRpe,
+            restSeconds: templateExercise.restSeconds,
+            notes: templateExercise.notes,
+        )
+    }
+
+    var summaryText: String {
+        var parts = ["\(sets) подхода"]
+        if let repsText {
+            parts.append(repsText)
+        }
+        if let restSeconds {
+            parts.append("отдых \(restSeconds) сек")
+        }
+        if let targetRpe {
+            parts.append("RPE \(targetRpe)")
+        }
+        return parts.joined(separator: " • ")
+    }
+
+    var notesPreview: String? {
+        notes?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+    }
+
+    var repsText: String? {
+        switch (repsMin, repsMax) {
+        case let (min?, max?):
+            return min == max ? "\(min) повторов" : "\(min)-\(max) повторов"
+        case let (min?, nil):
+            return "\(min) повторов"
+        case let (nil, max?):
+            return "до \(max) повторов"
+        case (nil, nil):
+            return nil
+        }
+    }
+
+    func asWorkoutExercise(orderIndex: Int) -> WorkoutExercise {
+        WorkoutExercise(
+            id: id,
+            name: name,
+            sets: max(1, sets),
+            repsMin: repsMin,
+            repsMax: repsMax,
+            targetRpe: targetRpe,
+            restSeconds: restSeconds,
+            notes: notesPreview,
+            orderIndex: orderIndex,
+        )
+    }
+
+    func asTemplateExercise() -> TemplateExerciseDraft {
+        TemplateExerciseDraft(
+            id: id,
+            name: name,
+            sets: max(1, sets),
+            repsMin: repsMin,
+            repsMax: repsMax,
+            restSeconds: restSeconds,
+            targetRpe: targetRpe,
+            notes: notesPreview,
+        )
+    }
+}
+
+struct WorkoutCompositionDraft: Equatable, Sendable {
+    var title: String
+    var exercises: [WorkoutCompositionExerciseDraft]
+
+    init(
+        title: String = "",
+        exercises: [WorkoutCompositionExerciseDraft] = [],
+    ) {
+        self.title = title
+        self.exercises = exercises
+    }
+
+    init(workout: WorkoutDetailsModel) {
+        title = workout.title
+        exercises = workout.exercises
+            .sorted(by: { $0.orderIndex < $1.orderIndex })
+            .map(WorkoutCompositionExerciseDraft.init(workoutExercise:))
+    }
+
+    init(template: WorkoutTemplateDraft) {
+        title = template.name
+        exercises = template.exercises.map(WorkoutCompositionExerciseDraft.init(templateExercise:))
+    }
+
+    var normalizedTitle: String? {
+        title.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+    }
+
+    mutating func addExercise(_ exercise: ExerciseCatalogItem) -> Bool {
+        let draft = WorkoutCompositionExerciseDraft(catalogItem: exercise)
+        guard !exercises.contains(where: { $0.id == draft.id }) else { return false }
+        exercises.append(draft)
+        return true
+    }
+
+    mutating func removeExercise(id: String) {
+        exercises.removeAll { $0.id == id }
+    }
+
+    mutating func updateExercise(id: String, mutate: (inout WorkoutCompositionExerciseDraft) -> Void) {
+        guard let index = exercises.firstIndex(where: { $0.id == id }) else { return }
+        var updated = exercises[index]
+        mutate(&updated)
+        exercises[index] = WorkoutCompositionExerciseDraft(
+            id: updated.id,
+            name: updated.name,
+            sets: updated.sets,
+            repsMin: updated.repsMin,
+            repsMax: updated.repsMax,
+            targetRpe: updated.targetRpe,
+            restSeconds: updated.restSeconds,
+            notes: updated.notes,
+        )
+    }
+
+    mutating func reorderExercise(draggedId: String, targetId: String) -> Bool {
+        guard draggedId != targetId,
+              let from = exercises.firstIndex(where: { $0.id == draggedId }),
+              let to = exercises.firstIndex(where: { $0.id == targetId })
+        else { return false }
+
+        let item = exercises.remove(at: from)
+        let destination = from < to ? to - 1 : to
+        exercises.insert(item, at: destination)
+        return true
+    }
+
+    func asWorkoutDetailsModel(
+        workoutID: String,
+        fallbackTitle: String,
+        dayOrder: Int,
+        coachNote: String?,
+    ) -> WorkoutDetailsModel {
+        WorkoutDetailsModel(
+            id: workoutID,
+            title: normalizedTitle ?? fallbackTitle,
+            dayOrder: dayOrder,
+            coachNote: coachNote,
+            exercises: exercises.enumerated().map { index, exercise in
+                exercise.asWorkoutExercise(orderIndex: index)
+            },
+        )
+    }
+
+    func asTemplateDraft(
+        id: String,
+        userSub: String,
+        fallbackTitle: String,
+        updatedAt: Date = Date(),
+    ) -> WorkoutTemplateDraft {
+        WorkoutTemplateDraft(
+            id: id,
+            userSub: userSub,
+            name: normalizedTitle ?? fallbackTitle,
+            exercises: exercises.map { $0.asTemplateExercise() },
+            updatedAt: updatedAt,
+        )
+    }
 }
 
 struct WeeklyTrainingSummary: Equatable, Sendable {
@@ -371,6 +611,246 @@ extension WorkoutDetailsModel {
             dayOrder: 0,
             coachNote: "Быстрая тренировка",
             exercises: exercises,
+        )
+    }
+
+    func asCreateCustomWorkoutRequest(scheduledDate: Date? = nil) -> AthleteCreateCustomWorkoutRequest {
+        AthleteCreateCustomWorkoutRequest(
+            title: title.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty ?? "Тренировка",
+            scheduledDate: scheduledDate.map { Self.customWorkoutScheduleFormatter.string(from: $0) },
+            notes: coachNote?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty,
+            exercises: exercises
+                .sorted(by: { $0.orderIndex < $1.orderIndex })
+                .enumerated()
+                .map { index, exercise in
+                    AthleteCustomWorkoutExerciseDraftRequest(
+                        exerciseId: exercise.id,
+                        orderIndex: index,
+                        sets: max(1, exercise.sets),
+                        repsMin: exercise.repsMin,
+                        repsMax: exercise.repsMax,
+                        targetRpe: exercise.targetRpe,
+                        restSeconds: exercise.restSeconds,
+                        notes: exercise.notes?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty,
+                        progressionPolicyId: nil,
+                    )
+                },
+        )
+    }
+
+    func asUpdateCustomWorkoutRequest(scheduledDate: Date? = nil) -> AthleteUpdateCustomWorkoutRequest {
+        AthleteUpdateCustomWorkoutRequest(
+            title: title.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty,
+            scheduledDate: scheduledDate.map { Self.customWorkoutScheduleFormatter.string(from: $0) },
+            notes: coachNote?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty,
+        )
+    }
+
+    private static let customWorkoutScheduleFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(secondsFromGMT: 0)
+        formatter.dateFormat = "yyyy-MM-dd"
+        return formatter
+    }()
+}
+
+private extension String {
+    var nilIfEmpty: String? {
+        isEmpty ? nil : self
+    }
+}
+
+protocol WorkoutTemplateRepository: Sendable {
+    func templates(userSub: String) async -> [WorkoutTemplateDraft]
+    func saveTemplate(_ template: WorkoutTemplateDraft) async throws -> WorkoutTemplateDraft
+    func deleteTemplate(userSub: String, templateId: String) async throws
+}
+
+struct LocalWorkoutTemplateRepository: WorkoutTemplateRepository {
+    private let trainingStore: any TrainingStore
+
+    init(trainingStore: any TrainingStore = LocalTrainingStore()) {
+        self.trainingStore = trainingStore
+    }
+
+    func templates(userSub: String) async -> [WorkoutTemplateDraft] {
+        await trainingStore.templates(userSub: userSub)
+    }
+
+    func saveTemplate(_ template: WorkoutTemplateDraft) async throws -> WorkoutTemplateDraft {
+        await trainingStore.saveTemplate(template)
+        return template
+    }
+
+    func deleteTemplate(userSub: String, templateId: String) async throws {
+        await trainingStore.deleteTemplate(userSub: userSub, templateId: templateId)
+    }
+}
+
+actor BackendWorkoutTemplateRepository: WorkoutTemplateRepository {
+    private let apiClient: AthleteWorkoutTemplatesAPIClientProtocol?
+    private let cacheStore: any TrainingStore
+    private let remoteFailureCooldown: Duration = .seconds(60)
+    private var remoteFetchStateByUserSub: [String: RemoteFetchState] = [:]
+
+    init(
+        apiClient: AthleteWorkoutTemplatesAPIClientProtocol?,
+        cacheStore: any TrainingStore = LocalTrainingStore(),
+    ) {
+        self.apiClient = apiClient
+        self.cacheStore = cacheStore
+    }
+
+    func templates(userSub: String) async -> [WorkoutTemplateDraft] {
+        guard let apiClient else {
+            return await cacheStore.templates(userSub: userSub)
+        }
+
+        if shouldUseCachedTemplates(for: userSub) {
+            return await cacheStore.templates(userSub: userSub)
+        }
+
+        switch await apiClient.listAthleteWorkoutTemplates() {
+        case let .success(payload):
+            let drafts = payload.map { $0.asDraft(userSub: userSub) }
+            remoteFetchStateByUserSub[userSub] = .healthy(fetchedAt: ContinuousClock.now)
+            await syncCache(drafts, userSub: userSub)
+            return drafts
+        case .failure:
+            remoteFetchStateByUserSub[userSub] = .failed(at: ContinuousClock.now)
+            return await cacheStore.templates(userSub: userSub)
+        }
+    }
+
+    func saveTemplate(_ template: WorkoutTemplateDraft) async throws -> WorkoutTemplateDraft {
+        guard let apiClient else {
+            await cacheStore.saveTemplate(template)
+            return template
+        }
+
+        let result: Result<AthleteWorkoutTemplatePayload, APIError> = if UUID(uuidString: template.id) != nil {
+            await apiClient.updateAthleteWorkoutTemplate(
+                templateId: template.id,
+                request: template.asUpdateRequest,
+            )
+        } else {
+            await apiClient.createAthleteWorkoutTemplate(request: template.asCreateRequest)
+        }
+
+        switch result {
+        case let .success(payload):
+            let saved = payload.asDraft(userSub: template.userSub)
+            await cacheStore.saveTemplate(saved)
+            return saved
+        case let .failure(error):
+            throw error
+        }
+    }
+
+    func deleteTemplate(userSub: String, templateId: String) async throws {
+        guard let apiClient else {
+            await cacheStore.deleteTemplate(userSub: userSub, templateId: templateId)
+            return
+        }
+
+        switch await apiClient.deleteAthleteWorkoutTemplate(templateId: templateId) {
+        case .success:
+            await cacheStore.deleteTemplate(userSub: userSub, templateId: templateId)
+        case let .failure(error):
+            throw error
+        }
+    }
+
+    private func syncCache(_ templates: [WorkoutTemplateDraft], userSub: String) async {
+        let existing = await cacheStore.templates(userSub: userSub)
+        let existingIDs = Set(existing.map(\.id))
+        let incomingIDs = Set(templates.map(\.id))
+
+        for staleID in existingIDs.subtracting(incomingIDs) {
+            await cacheStore.deleteTemplate(userSub: userSub, templateId: staleID)
+        }
+        for template in templates {
+            await cacheStore.saveTemplate(template)
+        }
+    }
+
+    private func shouldUseCachedTemplates(for userSub: String) -> Bool {
+        guard case let .failed(at) = remoteFetchStateByUserSub[userSub] else {
+            return false
+        }
+        return at.duration(to: ContinuousClock.now) < remoteFailureCooldown
+    }
+}
+
+private enum RemoteFetchState: Sendable {
+    case healthy(fetchedAt: ContinuousClock.Instant)
+    case failed(at: ContinuousClock.Instant)
+}
+
+private extension WorkoutTemplateDraft {
+    var asCreateRequest: CreateAthleteWorkoutTemplateRequestBody {
+        CreateAthleteWorkoutTemplateRequestBody(
+            title: name.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty ?? "Тренировка",
+            notes: nil,
+            exercises: exercises.map(\.asTemplateExerciseInput),
+        )
+    }
+
+    var asUpdateRequest: UpdateAthleteWorkoutTemplateRequestBody {
+        UpdateAthleteWorkoutTemplateRequestBody(
+            title: name.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty ?? "Тренировка",
+            notes: nil,
+            exercises: exercises.map(\.asTemplateExerciseInput),
+        )
+    }
+}
+
+private extension TemplateExerciseDraft {
+    var asTemplateExerciseInput: AthleteWorkoutTemplateExerciseInputRequest {
+        AthleteWorkoutTemplateExerciseInputRequest(
+            exerciseId: id,
+            sets: max(1, sets),
+            repsMin: repsMin,
+            repsMax: repsMax,
+            targetRpe: targetRpe,
+            restSeconds: restSeconds,
+            notes: notes?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty,
+            progressionPolicyId: nil,
+        )
+    }
+}
+
+private extension AthleteWorkoutTemplatePayload {
+    func asDraft(userSub: String) -> WorkoutTemplateDraft {
+        WorkoutTemplateDraft(
+            id: id,
+            userSub: userSub,
+            name: title.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty ?? "Тренировка",
+            exercises: exercises.map(\.asDraft),
+            updatedAt: updatedAt.flatMap(Self.iso8601.date(from:)) ?? Date(),
+        )
+    }
+
+    static let iso8601: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter
+    }()
+}
+
+private extension AthleteWorkoutTemplateExercisePayload {
+    var asDraft: TemplateExerciseDraft {
+        TemplateExerciseDraft(
+            id: exercise.id,
+            name: exercise.name,
+            sets: sets,
+            repsMin: repsMin,
+            repsMax: repsMax,
+            restSeconds: restSeconds,
+            targetRpe: targetRpe,
+            notes: notes,
         )
     }
 }

@@ -1,13 +1,13 @@
 import SwiftUI
 
 struct QuickActionsSection: View {
+    let onBuildTodayWorkout: () -> Void
     let onStartEmptyWorkout: () -> Void
     let onBrowsePrograms: () -> Void
     let onOpenPlan: () -> Void
     let onOpenTemplates: () -> Void
 
     private let columns = [
-        GridItem(.flexible(), spacing: 8),
         GridItem(.flexible(), spacing: 8),
         GridItem(.flexible(), spacing: 8),
     ]
@@ -20,6 +20,13 @@ struct QuickActionsSection: View {
                     .foregroundStyle(FFColors.textPrimary)
 
                 LazyVGrid(columns: columns, spacing: 8) {
+                    QuickActionCard(
+                        title: "Собрать на сегодня",
+                        subtitle: "быстрый planning",
+                        systemImage: "target",
+                        action: onBuildTodayWorkout,
+                    )
+
                     QuickActionCard(
                         title: "Пустая тренировка",
                         subtitle: "ручной старт",

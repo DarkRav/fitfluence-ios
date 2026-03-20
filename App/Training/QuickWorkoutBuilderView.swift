@@ -1,45 +1,302 @@
+import Observation
 import SwiftUI
 import UIKit
 
-struct QuickWorkoutBuilderView: View {
-    struct DraftExercise: Identifiable, Equatable {
-        let id: String
-        let name: String
-        var sets: Int
-        var repsMin: Int
-        var repsMax: Int
-        var restSeconds: Int
+@Observable
+@MainActor
+private final class QuickWorkoutBuilderViewModel {
+    enum Mode: Equatable {
+        case todayPlanning
+        case quickStart
+        case plannedQuickWorkout
+        case editWorkout
+        case createTemplate
+        case editTemplate
+
+        var navigationTitle: String {
+            switch self {
+            case .todayPlanning:
+                "Тренировка на сегодня"
+            case .quickStart:
+                "Быстрая тренировка"
+            case .plannedQuickWorkout:
+                "Запланировать тренировку"
+            case .editWorkout:
+                "Редактирование тренировки"
+            case .createTemplate:
+                "Новый шаблон"
+            case .editTemplate:
+                "Редактирование шаблона"
+            }
+        }
+
+        var heroTitle: String {
+            switch self {
+            case .todayPlanning:
+                "Стартовая структура на сегодня"
+            case .quickStart:
+                "Соберите тренировку без хаоса"
+            case .plannedQuickWorkout:
+                "Соберите тренировку для плана"
+            case .editWorkout:
+                "Обновите структуру тренировки"
+            case .createTemplate:
+                "Соберите шаблон для повторного использования"
+            case .editTemplate:
+                "Обновите шаблон"
+            }
+        }
+
+        var heroSubtitle: String {
+            switch self {
+            case .todayPlanning:
+                "Планировщик уже собрал задачу на сегодня. Проверьте стартовую заготовку, поправьте структуру и сразу запускайте."
+            case .quickStart:
+                "Добавьте упражнения через каталог, настройте параметры и сразу запускайте."
+            case .plannedQuickWorkout:
+                "Соберите свободную тренировку с понятной структурой и сохраните её в план."
+            case .editWorkout:
+                "Измените порядок, параметры и состав упражнений без потери структуры."
+            case .createTemplate:
+                "Сохраните заготовку тренировки, которую потом можно быстро запускать и планировать."
+            case .editTemplate:
+                "Приведите шаблон в порядок и сохраните обновлённую структуру."
+            }
+        }
+
+        var titleLabel: String {
+            switch self {
+            case .createTemplate, .editTemplate:
+                "Название шаблона"
+            default:
+                "Название тренировки"
+            }
+        }
+
+        var titlePlaceholder: String {
+            switch self {
+            case .createTemplate, .editTemplate:
+                "Например, Верх тела A"
+            case .todayPlanning:
+                "Например, Спина + плечи"
+            default:
+                "Например, Силовая фуллбоди"
+            }
+        }
+
+        var emptyTitle: String {
+            switch self {
+            case .createTemplate, .editTemplate:
+                "Шаблон пока пуст"
+            case .todayPlanning:
+                "Стартовая заготовка пока пуста"
+            default:
+                "Тренировка пока пустая"
+            }
+        }
+
+        var emptyMessage: String {
+            switch self {
+            case .createTemplate, .editTemplate:
+                "Добавьте первое упражнение через каталог упражнений, чтобы собрать рабочую структуру шаблона."
+            case .todayPlanning:
+                "По текущим параметрам каталог не собрал стартовую структуру. Добавьте упражнения вручную и продолжайте без потери сценария."
+            default:
+                "Добавьте первое упражнение через каталог упражнений и затем настройте параметры прямо в списке."
+            }
+        }
     }
 
+    let mode: Mode
+    let primaryActionTitle: String
+
+    var draft: WorkoutCompositionDraft
+
+    init(
+        mode: Mode,
+        primaryActionTitle: String,
+        draft: WorkoutCompositionDraft,
+    ) {
+        self.mode = mode
+        self.primaryActionTitle = primaryActionTitle
+        self.draft = draft
+    }
+
+    var canSubmit: Bool {
+        !draft.exercises.isEmpty
+    }
+
+    var selectedExerciseIDs: Set<String> {
+        Set(draft.exercises.map(\.id))
+    }
+
+    var exerciseCountText: String {
+        "\(draft.exercises.count) \(exercisePluralForm(for: draft.exercises.count))"
+    }
+
+    var structureSummary: String {
+        let totalSets = draft.exercises.reduce(0) { $0 + max(1, $1.sets) }
+        if draft.exercises.isEmpty {
+            return "Сначала добавьте упражнения, затем настройте подходы, повторы и отдых."
+        }
+
+        return "\(exerciseCountText) • \(totalSets) подходов"
+    }
+
+    var helperText: String? {
+        switch mode {
+        case .todayPlanning:
+            nil
+        case .createTemplate, .editTemplate:
+            "Название используется в библиотеке шаблонов и планировании."
+        default:
+            nil
+        }
+    }
+
+    func addExercise(_ exercise: ExerciseCatalogItem) {
+        _ = draft.addExercise(exercise)
+    }
+
+    func removeExercise(id: String) {
+        draft.removeExercise(id: id)
+    }
+
+    func reorderExercises(draggedId: String, targetId: String) -> Bool {
+        draft.reorderExercise(draggedId: draggedId, targetId: targetId)
+    }
+
+    func updateExercise(id: String, mutate: (inout WorkoutCompositionExerciseDraft) -> Void) {
+        draft.updateExercise(id: id, mutate: mutate)
+    }
+
+    private func exercisePluralForm(for count: Int) -> String {
+        let remainder10 = count % 10
+        let remainder100 = count % 100
+        if remainder10 == 1, remainder100 != 11 {
+            return "упражнение"
+        }
+        if (2 ... 4).contains(remainder10), !(12 ... 14).contains(remainder100) {
+            return "упражнения"
+        }
+        return "упражнений"
+    }
+}
+
+struct QuickWorkoutBuilderView: View {
     @Environment(\.dismiss) private var dismiss
-    @State private var selected: [DraftExercise] = []
-    @State private var searchQuery = ""
-    @State private var workoutTitle = ""
+
+    @State private var viewModel: QuickWorkoutBuilderViewModel
+    @State private var isExercisePickerPresented = false
 
     private let initialWorkout: WorkoutDetailsModel?
-    private let submitTitle: String
-    private let onSubmit: (WorkoutDetailsModel) -> Void
+    private let initialTemplate: WorkoutTemplateDraft?
+    private let planningSeed: TodayWorkoutPlanningDraftSeed?
+    private let templateUserSub: String?
+    private let exerciseCatalogRepository: any ExerciseCatalogRepository
+    private let exercisePickerSuggestionsProvider: any ExercisePickerSuggestionsProviding
+    private let dismissOnSubmit: Bool
+    private let onWorkoutSubmit: ((WorkoutDetailsModel) -> Void)?
+    private let onTemplateSubmit: ((WorkoutTemplateDraft) -> Void)?
 
     init(
         initialWorkout: WorkoutDetailsModel? = nil,
         submitTitle: String = "Начать тренировку",
+        exerciseCatalogRepository: any ExerciseCatalogRepository = BackendExerciseCatalogRepository(
+            apiClient: nil,
+            userSub: nil,
+        ),
+        exercisePickerSuggestionsProvider: any ExercisePickerSuggestionsProviding = EmptyExercisePickerSuggestionsProvider(),
         onStart: @escaping (WorkoutDetailsModel) -> Void,
     ) {
+        let mode: QuickWorkoutBuilderViewModel.Mode = if initialWorkout != nil {
+            .editWorkout
+        } else if submitTitle == "Создать" {
+            .plannedQuickWorkout
+        } else {
+            .quickStart
+        }
+
+        _viewModel = State(
+            initialValue: QuickWorkoutBuilderViewModel(
+                mode: mode,
+                primaryActionTitle: submitTitle,
+                draft: initialWorkout.map(WorkoutCompositionDraft.init(workout:)) ?? WorkoutCompositionDraft(),
+            ),
+        )
         self.initialWorkout = initialWorkout
-        self.submitTitle = submitTitle
-        onSubmit = onStart
-        _selected = State(initialValue: QuickWorkoutBuilderView.makeInitialSelected(initialWorkout))
-        _workoutTitle = State(initialValue: initialWorkout?.title ?? "")
+        initialTemplate = nil
+        planningSeed = nil
+        templateUserSub = nil
+        self.exerciseCatalogRepository = exerciseCatalogRepository
+        self.exercisePickerSuggestionsProvider = exercisePickerSuggestionsProvider
+        dismissOnSubmit = true
+        onWorkoutSubmit = onStart
+        onTemplateSubmit = nil
     }
 
-    private let library: [DraftExercise] = [
-        .init(id: "sq", name: "Присед со штангой", sets: 4, repsMin: 5, repsMax: 8, restSeconds: 120),
-        .init(id: "bp", name: "Жим лёжа", sets: 4, repsMin: 5, repsMax: 8, restSeconds: 120),
-        .init(id: "dl", name: "Тяга штанги", sets: 3, repsMin: 6, repsMax: 10, restSeconds: 90),
-        .init(id: "ohp", name: "Жим стоя", sets: 3, repsMin: 6, repsMax: 10, restSeconds: 90),
-        .init(id: "pull", name: "Подтягивания", sets: 3, repsMin: 6, repsMax: 12, restSeconds: 90),
-        .init(id: "legpress", name: "Жим ногами", sets: 3, repsMin: 10, repsMax: 15, restSeconds: 75),
-    ]
+    init(
+        template: WorkoutTemplateDraft? = nil,
+        userSub: String,
+        submitTitle: String = "Сохранить шаблон",
+        exerciseCatalogRepository: any ExerciseCatalogRepository = BackendExerciseCatalogRepository(
+            apiClient: nil,
+            userSub: nil,
+        ),
+        exercisePickerSuggestionsProvider: any ExercisePickerSuggestionsProviding = EmptyExercisePickerSuggestionsProvider(),
+        onSaveTemplate: @escaping (WorkoutTemplateDraft) -> Void,
+    ) {
+        let mode: QuickWorkoutBuilderViewModel.Mode = if template == nil {
+            .createTemplate
+        } else {
+            .editTemplate
+        }
+
+        _viewModel = State(
+            initialValue: QuickWorkoutBuilderViewModel(
+                mode: mode,
+                primaryActionTitle: submitTitle,
+                draft: template.map(WorkoutCompositionDraft.init(template:)) ?? WorkoutCompositionDraft(),
+            ),
+        )
+        initialWorkout = nil
+        initialTemplate = template
+        planningSeed = nil
+        templateUserSub = userSub
+        self.exerciseCatalogRepository = exerciseCatalogRepository
+        self.exercisePickerSuggestionsProvider = exercisePickerSuggestionsProvider
+        dismissOnSubmit = true
+        onWorkoutSubmit = nil
+        onTemplateSubmit = onSaveTemplate
+    }
+
+    init(
+        planningSeed: TodayWorkoutPlanningDraftSeed,
+        dismissOnSubmit: Bool = true,
+        exerciseCatalogRepository: any ExerciseCatalogRepository = BackendExerciseCatalogRepository(
+            apiClient: nil,
+            userSub: nil,
+        ),
+        exercisePickerSuggestionsProvider: any ExercisePickerSuggestionsProviding = EmptyExercisePickerSuggestionsProvider(),
+        onStart: @escaping (WorkoutDetailsModel) -> Void,
+    ) {
+        _viewModel = State(
+            initialValue: QuickWorkoutBuilderViewModel(
+                mode: .todayPlanning,
+                primaryActionTitle: "Начать тренировку",
+                draft: planningSeed.draft,
+            ),
+        )
+        initialWorkout = nil
+        initialTemplate = nil
+        self.planningSeed = planningSeed
+        templateUserSub = nil
+        self.exerciseCatalogRepository = exerciseCatalogRepository
+        self.exercisePickerSuggestionsProvider = exercisePickerSuggestionsProvider
+        self.dismissOnSubmit = dismissOnSubmit
+        onWorkoutSubmit = onStart
+        onTemplateSubmit = nil
+    }
 
     var body: some View {
         ZStack {
@@ -48,80 +305,18 @@ struct QuickWorkoutBuilderView: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: FFSpacing.md) {
-                    FFCard {
-                        VStack(alignment: .leading, spacing: FFSpacing.xs) {
-                            Text(initialWorkout == nil ? "Соберите тренировку за минуту" : "Обновите тренировку")
-                                .font(FFTypography.h2)
-                                .foregroundStyle(FFColors.textPrimary)
-                            Text("Добавьте упражнения, настройте параметры и сохраните план.")
-                                .font(FFTypography.body)
-                                .foregroundStyle(FFColors.textSecondary)
-                        }
-                    }
-
-                    FFCard {
-                        FFTextField(
-                            label: "Название тренировки",
-                            placeholder: "Например, Круговая 1",
-                            text: $workoutTitle,
-                        )
-                    }
-
-                    FFCard {
-                        FFTextField(
-                            label: "Поиск упражнения",
-                            placeholder: "Например, присед или тяга",
-                            text: $searchQuery,
-                            helperText: "Выберите упражнения для своей сессии",
-                        )
-                    }
-
-                    FFCard {
-                        VStack(alignment: .leading, spacing: FFSpacing.sm) {
-                            Text("Выбранные упражнения")
-                                .font(FFTypography.h2)
-                                .foregroundStyle(FFColors.textPrimary)
-                            Text("Порядок выполнения: сверху вниз")
-                                .font(FFTypography.caption)
-                                .foregroundStyle(FFColors.textSecondary)
-
-                            if selected.isEmpty {
-                                Text("Добавьте хотя бы одно упражнение, чтобы начать тренировку.")
-                                    .font(FFTypography.body)
-                                    .foregroundStyle(FFColors.textSecondary)
-                            } else {
-                                ForEach(Array(selected.enumerated()), id: \.element.id) { index, exercise in
-                                    selectedExerciseRow(index: index, exercise: exercise)
-                                        .dropDestination(for: String.self) { items, _ in
-                                            guard let draggedId = items.first else { return false }
-                                            return reorderSelected(draggedId: draggedId, targetId: exercise.id)
-                                        }
-                                }
-                            }
-                        }
-                    }
-
-                    FFCard {
-                        VStack(alignment: .leading, spacing: FFSpacing.sm) {
-                            Text("Каталог упражнений")
-                                .font(FFTypography.h2)
-                                .foregroundStyle(FFColors.textPrimary)
-
-                            ForEach(filteredLibrary) { exercise in
-                                libraryExerciseRow(exercise)
-                            }
-                        }
-                    }
+                    headerCard
+                    exercisesCard
                 }
+                .padding(.horizontal, FFSpacing.md)
+                .padding(.vertical, FFSpacing.md)
             }
             .scrollDismissesKeyboard(.interactively)
-            .padding(.horizontal, FFSpacing.md)
-            .padding(.vertical, FFSpacing.md)
             .safeAreaInset(edge: .bottom) {
                 bottomActionBar
             }
         }
-        .navigationTitle(initialWorkout == nil ? "Быстрая тренировка" : "Редактирование")
+        .navigationTitle(viewModel.mode.navigationTitle)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarLeading) {
@@ -135,12 +330,12 @@ struct QuickWorkoutBuilderView: View {
                 .accessibilityLabel("Закрыть")
             }
             ToolbarItem(placement: .topBarTrailing) {
-                Button(submitButtonLabel) {
-                    start()
+                Button(toolbarActionTitle) {
+                    submit()
                 }
-                .disabled(selected.isEmpty)
+                .disabled(!viewModel.canSubmit)
                 .font(FFTypography.body.weight(.semibold))
-                .foregroundStyle(selected.isEmpty ? FFColors.gray500 : FFColors.accent)
+                .foregroundStyle(viewModel.canSubmit ? FFColors.accent : FFColors.gray500)
             }
             ToolbarItemGroup(placement: .keyboard) {
                 Spacer()
@@ -151,39 +346,252 @@ struct QuickWorkoutBuilderView: View {
             }
         }
         .tint(FFColors.accent)
-        .onChange(of: searchQuery) { _, newValue in
-            if newValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                dismissKeyboard()
+        .sheet(isPresented: $isExercisePickerPresented) {
+            NavigationStack {
+                ExercisePickerView(
+                    repository: exerciseCatalogRepository,
+                    suggestionsProvider: exercisePickerSuggestionsProvider,
+                    context: exercisePickerContext,
+                    selectedExerciseIDs: viewModel.selectedExerciseIDs,
+                ) { exercise in
+                    viewModel.addExercise(exercise)
+                }
             }
         }
     }
 
-    private var filteredLibrary: [DraftExercise] {
-        let query = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !query.isEmpty else { return library }
-        return library.filter { $0.name.localizedCaseInsensitiveContains(query) }
+    private var headerCard: some View {
+        FFCard {
+            VStack(alignment: .leading, spacing: FFSpacing.sm) {
+                Text(viewModel.mode.heroTitle.uppercased())
+                    .font(FFTypography.caption.weight(.semibold))
+                    .foregroundStyle(FFColors.accent)
+
+                HStack(alignment: .top, spacing: FFSpacing.sm) {
+                    VStack(alignment: .leading, spacing: FFSpacing.xxs) {
+                        Text("Собирайте структуру, а не заполняйте форму.")
+                            .font(FFTypography.h2)
+                            .foregroundStyle(FFColors.textPrimary)
+                        if let subtitle = compactSubtitle {
+                            Text(subtitle)
+                                .font(FFTypography.body)
+                                .foregroundStyle(FFColors.textSecondary)
+                        }
+                    }
+                    Spacer()
+                }
+
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: FFSpacing.xs) {
+                        summaryBadge(title: viewModel.exerciseCountText)
+                        summaryBadge(title: viewModel.structureSummary)
+                        if let planningSeed {
+                            ForEach(planningChips(for: planningSeed), id: \.self) { chip in
+                                summaryBadge(title: chip)
+                            }
+                        }
+                    }
+                }
+
+                FFTextField(
+                    label: viewModel.mode.titleLabel,
+                    placeholder: viewModel.mode.titlePlaceholder,
+                    text: Binding(
+                        get: { viewModel.draft.title },
+                        set: { viewModel.draft.title = $0 },
+                    ),
+                    helperText: viewModel.helperText,
+                )
+            }
+        }
+    }
+
+    private var exercisesCard: some View {
+        FFCard {
+            VStack(alignment: .leading, spacing: FFSpacing.sm) {
+                HStack {
+                    VStack(alignment: .leading, spacing: FFSpacing.xxs) {
+                        Text("Структура тренировки")
+                            .font(FFTypography.h2)
+                            .foregroundStyle(FFColors.textPrimary)
+                        Text(viewModel.draft.exercises.isEmpty ? "Начните с первого упражнения." : "Сверху вниз по порядку.")
+                            .font(FFTypography.caption)
+                            .foregroundStyle(FFColors.textSecondary)
+                    }
+                    Spacer()
+                    Button(viewModel.draft.exercises.isEmpty ? "Выбрать" : "Добавить") {
+                        isExercisePickerPresented = true
+                    }
+                    .font(FFTypography.caption.weight(.semibold))
+                    .foregroundStyle(FFColors.accent)
+                }
+
+                if viewModel.draft.exercises.isEmpty {
+                    emptyStateCard
+                } else {
+                    ForEach(Array(viewModel.draft.exercises.enumerated()), id: \.element.id) { index, exercise in
+                        QuickWorkoutExerciseCard(
+                            index: index,
+                            exercise: exercise,
+                            notes: notesBinding(for: exercise.id),
+                            onRemove: {
+                                viewModel.removeExercise(id: exercise.id)
+                            },
+                            onSetsDecrement: {
+                                viewModel.updateExercise(id: exercise.id) {
+                                    $0.sets = max(1, $0.sets - 1)
+                                }
+                            },
+                            onSetsIncrement: {
+                                viewModel.updateExercise(id: exercise.id) {
+                                    $0.sets = min(12, $0.sets + 1)
+                                }
+                            },
+                            onRepsMinDecrement: {
+                                viewModel.updateExercise(id: exercise.id) {
+                                    let current = max(1, $0.repsMin ?? 8)
+                                    $0.repsMin = max(1, current - 1)
+                                    if let repsMax = $0.repsMax, repsMax < ($0.repsMin ?? repsMax) {
+                                        $0.repsMax = $0.repsMin
+                                    }
+                                }
+                            },
+                            onRepsMinIncrement: {
+                                viewModel.updateExercise(id: exercise.id) {
+                                    let current = $0.repsMin ?? min(8, $0.repsMax ?? 8)
+                                    $0.repsMin = min(30, current + 1)
+                                    if let repsMax = $0.repsMax, repsMax < ($0.repsMin ?? repsMax) {
+                                        $0.repsMax = $0.repsMin
+                                    }
+                                }
+                            },
+                            onRepsMaxDecrement: {
+                                viewModel.updateExercise(id: exercise.id) {
+                                    let minimum = $0.repsMin ?? 1
+                                    let current = $0.repsMax ?? max(minimum, 10)
+                                    $0.repsMax = max(minimum, current - 1)
+                                }
+                            },
+                            onRepsMaxIncrement: {
+                                viewModel.updateExercise(id: exercise.id) {
+                                    let minimum = $0.repsMin ?? 1
+                                    let current = $0.repsMax ?? max(minimum, 10)
+                                    $0.repsMax = min(40, current + 1)
+                                }
+                            },
+                            onRestDecrement: {
+                                viewModel.updateExercise(id: exercise.id) {
+                                    $0.restSeconds = max(0, ($0.restSeconds ?? 90) - 15)
+                                }
+                            },
+                            onRestIncrement: {
+                                viewModel.updateExercise(id: exercise.id) {
+                                    $0.restSeconds = min(600, ($0.restSeconds ?? 90) + 15)
+                                }
+                            },
+                            onRpeDecrement: {
+                                viewModel.updateExercise(id: exercise.id) {
+                                    guard let current = $0.targetRpe else { return }
+                                    $0.targetRpe = current > 1 ? current - 1 : nil
+                                }
+                            },
+                            onRpeIncrement: {
+                                viewModel.updateExercise(id: exercise.id) {
+                                    $0.targetRpe = min(10, ($0.targetRpe ?? 6) + 1)
+                                }
+                            },
+                        )
+                        .dropDestination(for: String.self) { items, _ in
+                            guard let draggedId = items.first else { return false }
+                            return viewModel.reorderExercises(draggedId: draggedId, targetId: exercise.id)
+                        }
+                    }
+                }
+
+                if !viewModel.draft.exercises.isEmpty {
+                    HStack(spacing: FFSpacing.xs) {
+                        Image(systemName: "plus.circle.fill")
+                            .font(.system(size: 16, weight: .semibold))
+                            .foregroundStyle(FFColors.accent)
+                        Button("Добавить ещё упражнение") {
+                            isExercisePickerPresented = true
+                        }
+                        .font(FFTypography.body.weight(.semibold))
+                        .foregroundStyle(FFColors.accent)
+                        Spacer()
+                    }
+                    .padding(.top, FFSpacing.xs)
+                }
+            }
+            .padding(.top, FFSpacing.xs)
+            .background(
+                LinearGradient(
+                    colors: [FFColors.accent.opacity(0.1), .clear],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+            )
+        }
+    }
+
+    private var emptyStateCard: some View {
+        VStack(alignment: .leading, spacing: FFSpacing.sm) {
+            Text("Старт")
+                .font(FFTypography.caption.weight(.semibold))
+                .foregroundStyle(FFColors.accent)
+            Text(viewModel.mode.emptyTitle)
+                .font(FFTypography.body.weight(.semibold))
+                .foregroundStyle(FFColors.textPrimary)
+            Text(emptyStateMessage)
+                .font(FFTypography.caption)
+                .foregroundStyle(FFColors.textSecondary)
+
+            FFButton(title: "Добавить первое упражнение", variant: .secondary) {
+                isExercisePickerPresented = true
+            }
+        }
+        .padding(FFSpacing.md)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            LinearGradient(
+                colors: [
+                    FFColors.accent.opacity(0.12),
+                    FFColors.surface,
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+        )
+        .clipShape(RoundedRectangle(cornerRadius: FFTheme.Radius.control))
+        .overlay {
+            RoundedRectangle(cornerRadius: FFTheme.Radius.control)
+                .stroke(FFColors.gray700, lineWidth: 1)
+        }
     }
 
     private var bottomActionBar: some View {
         VStack(spacing: FFSpacing.xs) {
-            if selected.isEmpty {
-                Text("Выберите упражнение из каталога, чтобы начать тренировку.")
+            if viewModel.canSubmit {
+                HStack(spacing: FFSpacing.sm) {
+                    VStack(alignment: .leading, spacing: FFSpacing.xxs) {
+                        Text(viewModel.primaryActionTitle)
+                            .font(FFTypography.caption.weight(.semibold))
+                            .foregroundStyle(FFColors.textPrimary)
+                        Text(viewModel.structureSummary)
+                            .font(FFTypography.caption)
+                            .foregroundStyle(FFColors.textSecondary)
+                    }
+                    Spacer()
+                }
+
+                FFButton(title: viewModel.primaryActionTitle, variant: .primary) {
+                    submit()
+                }
+            } else {
+                Text("Сначала добавьте первое упражнение. Кнопка уже есть в основном блоке выше.")
                     .font(FFTypography.caption)
                     .foregroundStyle(FFColors.textSecondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, FFSpacing.sm)
-                    .padding(.vertical, FFSpacing.sm)
-                    .background(FFColors.surface)
-                    .clipShape(RoundedRectangle(cornerRadius: FFTheme.Radius.control))
-                    .overlay {
-                        RoundedRectangle(cornerRadius: FFTheme.Radius.control)
-                            .stroke(FFColors.gray700.opacity(0.8), lineWidth: 1)
-                    }
-            } else {
-                FFButton(title: submitTitle, variant: .primary) {
-                    start()
-                }
-                .accessibilityLabel(submitTitle)
             }
         }
         .padding(.horizontal, FFSpacing.md)
@@ -197,158 +605,326 @@ struct QuickWorkoutBuilderView: View {
         }
     }
 
-    private func libraryExerciseRow(_ exercise: DraftExercise) -> some View {
-        let isSelected = selected.contains(where: { $0.id == exercise.id })
-        return Button {
-            toggleExercise(exercise)
-        } label: {
-            HStack(spacing: FFSpacing.sm) {
-                VStack(alignment: .leading, spacing: FFSpacing.xxs) {
-                    Text(exercise.name)
-                        .font(FFTypography.body.weight(.semibold))
-                        .foregroundStyle(FFColors.textPrimary)
-                    Text(exerciseDescription(
-                        sets: exercise.sets,
-                        repsMin: exercise.repsMin,
-                        repsMax: exercise.repsMax,
-                        restSeconds: exercise.restSeconds,
-                    ))
-                    .font(FFTypography.caption)
-                    .foregroundStyle(FFColors.textSecondary)
-                }
-                Spacer(minLength: FFSpacing.sm)
-                Image(systemName: isSelected ? "checkmark.circle.fill" : "plus.circle")
-                    .font(.system(size: 20, weight: .semibold))
-                    .foregroundStyle(isSelected ? FFColors.accent : FFColors.textSecondary)
-                    .frame(width: 44, height: 44)
-            }
-            .padding(.vertical, FFSpacing.xxs)
-            .contentShape(Rectangle())
+    private var toolbarActionTitle: String {
+        switch viewModel.primaryActionTitle {
+        case "Начать тренировку":
+            "Старт"
+        case "Сохранить изменения":
+            "Сохранить"
+        case "Сохранить шаблон":
+            "Сохранить"
+        default:
+            viewModel.primaryActionTitle
         }
-        .buttonStyle(.plain)
-        .accessibilityLabel("\(exercise.name), \(isSelected ? "добавлено" : "добавить")")
     }
 
-    private func selectedExerciseRow(index: Int, exercise: DraftExercise) -> some View {
-        VStack(alignment: .leading, spacing: FFSpacing.xs) {
-            HStack(spacing: FFSpacing.xs) {
+    private func notesBinding(for exerciseID: String) -> Binding<String> {
+        Binding(
+            get: {
+                viewModel.draft.exercises.first(where: { $0.id == exerciseID })?.notes ?? ""
+            },
+            set: { newValue in
+                viewModel.updateExercise(id: exerciseID) {
+                    $0.notes = newValue.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+                }
+            },
+        )
+    }
+
+    private func submit() {
+        guard viewModel.canSubmit else { return }
+
+        if let onWorkoutSubmit {
+            let fallbackTitle = viewModel.mode == .editWorkout
+                ? (initialWorkout?.title ?? "Тренировка")
+                : planningSeed?.suggestedTitle
+                    ?? "Быстрая тренировка • \(Date().formatted(date: .omitted, time: .shortened))"
+            let workout = viewModel.draft.asWorkoutDetailsModel(
+                workoutID: initialWorkout?.id ?? "quick-\(UUID().uuidString)",
+                fallbackTitle: fallbackTitle,
+                dayOrder: initialWorkout?.dayOrder ?? 0,
+                coachNote: initialWorkout?.coachNote ?? planningSeed?.coachNote ?? "Быстрая тренировка",
+            )
+            onWorkoutSubmit(workout)
+            if dismissOnSubmit {
+                dismiss()
+            }
+            return
+        }
+
+        if let onTemplateSubmit, let templateUserSub {
+            let template = viewModel.draft.asTemplateDraft(
+                id: initialTemplate?.id ?? UUID().uuidString,
+                userSub: templateUserSub,
+                fallbackTitle: initialTemplate?.name ?? "Новый шаблон",
+            )
+            onTemplateSubmit(template)
+            if dismissOnSubmit {
+                dismiss()
+            }
+        }
+    }
+
+    private func dismissKeyboard() {
+        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+    }
+
+    private func summaryBadge(title: String) -> some View {
+        Text(title)
+            .font(FFTypography.caption.weight(.semibold))
+            .foregroundStyle(FFColors.textSecondary)
+            .padding(.horizontal, FFSpacing.sm)
+            .padding(.vertical, FFSpacing.xs)
+            .background(FFColors.surface)
+            .clipShape(Capsule())
+    }
+
+    private var compactSubtitle: String? {
+        switch viewModel.mode {
+        case .todayPlanning:
+            return nil
+        case .createTemplate, .editTemplate:
+            return "Соберите структуру и сохраните её как шаблон."
+        default:
+            return nil
+        }
+    }
+
+    private var emptyStateMessage: String {
+        if planningSeed != nil {
+            return "Если стартовая заготовка пустая или неполная, просто доберите упражнения из каталога."
+        }
+        return "Добавьте первое упражнение и настройте структуру по ходу."
+    }
+
+    private func planningChips(for seed: TodayWorkoutPlanningDraftSeed) -> [String] {
+        var chips: [String] = []
+        let muscles = seed.request.targetMuscleGroups
+            .sorted(by: { $0.sortOrder < $1.sortOrder })
+            .prefix(2)
+            .map(\.title)
+            .joined(separator: " + ")
+        if !muscles.isEmpty {
+            chips.append(muscles)
+        }
+        if let duration = seed.request.desiredDurationMinutes {
+            chips.append("\(duration) мин")
+        }
+        if let focus = seed.request.focus {
+            chips.append(focus.title)
+        }
+        return chips
+    }
+
+    private var exercisePickerContext: ExercisePickerViewModel.Context {
+        guard let planningSeed else {
+            return .init()
+        }
+
+        return ExercisePickerViewModel.Context(
+            title: "Контекст тренировки",
+            muscleGroups: planningSeed.request.targetMuscleGroups
+                .sorted(by: { $0.sortOrder < $1.sortOrder }),
+            equipmentIDs: planningSeed.request.availableEquipmentIDs.sorted(),
+            equipmentNames: planningSeed.selectedEquipmentNames,
+        )
+    }
+}
+
+private struct QuickWorkoutExerciseCard: View {
+    let index: Int
+    let exercise: WorkoutCompositionExerciseDraft
+    let notes: Binding<String>
+    let onRemove: () -> Void
+    let onSetsDecrement: () -> Void
+    let onSetsIncrement: () -> Void
+    let onRepsMinDecrement: () -> Void
+    let onRepsMinIncrement: () -> Void
+    let onRepsMaxDecrement: () -> Void
+    let onRepsMaxIncrement: () -> Void
+    let onRestDecrement: () -> Void
+    let onRestIncrement: () -> Void
+    let onRpeDecrement: () -> Void
+    let onRpeIncrement: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: FFSpacing.sm) {
+            HStack(alignment: .top, spacing: FFSpacing.sm) {
                 VStack(alignment: .leading, spacing: FFSpacing.xxs) {
-                    Text("\(index + 1). \(exercise.name)")
-                        .font(FFTypography.body.weight(.semibold))
-                        .foregroundStyle(FFColors.textPrimary)
-                    Text(exerciseDescription(
-                        sets: exercise.sets,
-                        repsMin: exercise.repsMin,
-                        repsMax: exercise.repsMax,
-                        restSeconds: exercise.restSeconds,
-                    ))
-                    .font(FFTypography.caption)
-                    .foregroundStyle(FFColors.textSecondary)
+                    HStack(spacing: FFSpacing.xs) {
+                        Text("Упр. \(index + 1)")
+                            .font(FFTypography.caption.weight(.semibold))
+                            .foregroundStyle(FFColors.background)
+                            .padding(.horizontal, FFSpacing.sm)
+                            .padding(.vertical, 6)
+                            .background(FFColors.accent)
+                            .clipShape(Capsule())
+                        Text(exercise.name)
+                            .font(FFTypography.body.weight(.semibold))
+                            .foregroundStyle(FFColors.textPrimary)
+                    }
+                    Text(exercise.summaryText)
+                        .font(FFTypography.caption)
+                        .foregroundStyle(FFColors.textSecondary)
+                    if let notesPreview = exercise.notesPreview {
+                        Text(notesPreview)
+                            .font(FFTypography.caption)
+                            .foregroundStyle(FFColors.textSecondary)
+                            .lineLimit(2)
+                    }
                 }
                 Spacer()
                 HStack(spacing: FFSpacing.xxs) {
-                    Image(systemName: "line.3.horizontal")
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundStyle(FFColors.textSecondary)
-                        .frame(width: 32, height: 32)
-                        .background(FFColors.surface)
-                        .clipShape(RoundedRectangle(cornerRadius: FFTheme.Radius.control))
-                        .overlay {
-                            RoundedRectangle(cornerRadius: FFTheme.Radius.control)
-                                .stroke(FFColors.gray700, lineWidth: 1)
-                        }
-                        .draggable(exercise.id)
-                        .accessibilityLabel("Перетащите, чтобы изменить порядок упражнения")
-                    smallIconButton(systemName: "trash", tint: FFColors.danger) {
-                        selected.remove(at: index)
-                    }
+                    reorderHandle(id: exercise.id)
+                    iconButton(systemName: "trash", tint: FFColors.danger, action: onRemove)
                 }
             }
 
-            VStack(spacing: FFSpacing.xs) {
-                numericControlRow(
+            LazyVGrid(
+                columns: [
+                    GridItem(.flexible(), spacing: FFSpacing.xs),
+                    GridItem(.flexible(), spacing: FFSpacing.xs),
+                ],
+                spacing: FFSpacing.xs
+            ) {
+                metricTile(
                     title: "Подходы",
-                    value: exercise.sets,
-                    onDecrement: { updateExercise(at: index) { $0.sets = max(1, $0.sets - 1) } },
-                    onIncrement: { updateExercise(at: index) { $0.sets = min(12, $0.sets + 1) } },
+                    value: "\(exercise.sets)",
+                    accent: FFColors.primary,
+                    onDecrement: onSetsDecrement,
+                    onIncrement: onSetsIncrement,
                 )
-                numericControlRow(
-                    title: "Повторы (мин)",
-                    value: exercise.repsMin,
-                    onDecrement: {
-                        updateExercise(at: index) {
-                            $0.repsMin = max(1, $0.repsMin - 1)
-                            if $0.repsMax < $0.repsMin { $0.repsMax = $0.repsMin }
-                        }
-                    },
-                    onIncrement: {
-                        updateExercise(at: index) {
-                            $0.repsMin = min(30, $0.repsMin + 1)
-                            if $0.repsMax < $0.repsMin { $0.repsMax = $0.repsMin }
-                        }
-                    },
+                metricTile(
+                    title: "Повторы мин",
+                    value: exercise.repsMin.map(String.init) ?? "—",
+                    accent: FFColors.accent,
+                    onDecrement: onRepsMinDecrement,
+                    onIncrement: onRepsMinIncrement,
                 )
-                numericControlRow(
-                    title: "Повторы (макс)",
-                    value: exercise.repsMax,
-                    onDecrement: {
-                        updateExercise(at: index) {
-                            $0.repsMax = max($0.repsMin, $0.repsMax - 1)
-                        }
-                    },
-                    onIncrement: {
-                        updateExercise(at: index) {
-                            $0.repsMax = min(40, $0.repsMax + 1)
-                        }
-                    },
+                metricTile(
+                    title: "Повторы макс",
+                    value: exercise.repsMax.map(String.init) ?? "—",
+                    accent: FFColors.accent,
+                    onDecrement: onRepsMaxDecrement,
+                    onIncrement: onRepsMaxIncrement,
                 )
-                numericControlRow(
-                    title: "Отдых (сек)",
-                    value: exercise.restSeconds,
-                    onDecrement: { updateExercise(at: index) { $0.restSeconds = max(0, $0.restSeconds - 15) } },
-                    onIncrement: { updateExercise(at: index) { $0.restSeconds = min(600, $0.restSeconds + 15) } },
+                metricTile(
+                    title: "Отдых",
+                    value: exercise.restSeconds.map { "\($0)с" } ?? "—",
+                    accent: FFColors.primary,
+                    onDecrement: onRestDecrement,
+                    onIncrement: onRestIncrement,
+                )
+                metricTile(
+                    title: "RPE",
+                    value: exercise.targetRpe.map(String.init) ?? "—",
+                    accent: FFColors.accent,
+                    onDecrement: onRpeDecrement,
+                    onIncrement: onRpeIncrement,
                 )
             }
+
+            VStack(alignment: .leading, spacing: FFSpacing.xs) {
+                Text("Заметки")
+                    .font(FFTypography.caption)
+                    .foregroundStyle(FFColors.textSecondary)
+                TextField(
+                    "",
+                    text: notes,
+                    prompt: Text("Техника, пауза, темп, акценты")
+                        .foregroundStyle(FFColors.gray500),
+                    axis: .vertical,
+                )
+                .textInputAutocapitalization(.sentences)
+                .autocorrectionDisabled(false)
+                .lineLimit(1 ... 3)
+                .font(FFTypography.body)
+                .foregroundStyle(FFColors.textPrimary)
+                .padding(.horizontal, FFSpacing.md)
+                .padding(.vertical, FFSpacing.sm)
+                .background(FFColors.background.opacity(0.75))
+                .clipShape(RoundedRectangle(cornerRadius: FFTheme.Radius.control))
+                .overlay {
+                    RoundedRectangle(cornerRadius: FFTheme.Radius.control)
+                        .stroke(FFColors.gray700.opacity(0.9), lineWidth: 1)
+                }
+            }
         }
-        .padding(.vertical, FFSpacing.xs)
-        .overlay(alignment: .bottom) {
-            Rectangle()
-                .fill(FFColors.gray700.opacity(0.5))
-                .frame(height: 1)
-                .offset(y: FFSpacing.xs)
+        .padding(FFSpacing.md)
+        .background(
+            LinearGradient(
+                colors: [
+                    FFColors.surface,
+                    FFColors.surface.opacity(0.92),
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+        )
+        .clipShape(RoundedRectangle(cornerRadius: FFTheme.Radius.card))
+        .overlay {
+            RoundedRectangle(cornerRadius: FFTheme.Radius.card)
+                .stroke(FFColors.gray700.opacity(0.9), lineWidth: 1)
         }
     }
 
-    private func numericControlRow(
+    private func metricTile(
         title: String,
-        value: Int,
+        value: String,
+        accent: Color,
         onDecrement: @escaping () -> Void,
         onIncrement: @escaping () -> Void,
     ) -> some View {
-        HStack(spacing: FFSpacing.xs) {
+        VStack(alignment: .leading, spacing: FFSpacing.xs) {
             Text(title)
                 .font(FFTypography.caption)
                 .foregroundStyle(FFColors.textSecondary)
-            Spacer()
-            smallIconButton(systemName: "minus", action: onDecrement)
-            Text("\(value)")
-                .font(FFTypography.body.weight(.semibold))
+            Text(value)
+                .font(.system(size: 22, weight: .bold, design: .rounded))
                 .foregroundStyle(FFColors.textPrimary)
-                .frame(minWidth: 40)
-                .multilineTextAlignment(.center)
-            smallIconButton(systemName: "plus", action: onIncrement)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            HStack(spacing: FFSpacing.xs) {
+                compactIconButton(systemName: "minus", tint: accent, action: onDecrement)
+                compactIconButton(systemName: "plus", tint: accent, action: onIncrement)
+                Spacer(minLength: 0)
+            }
+        }
+        .padding(FFSpacing.sm)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(FFColors.background.opacity(0.78))
+        .clipShape(RoundedRectangle(cornerRadius: FFTheme.Radius.control))
+        .overlay {
+            RoundedRectangle(cornerRadius: FFTheme.Radius.control)
+                .stroke(accent.opacity(0.28), lineWidth: 1)
         }
     }
 
-    private func smallIconButton(systemName: String, tint: Color = FFColors.textSecondary, action: @escaping () -> Void)
-        -> some View
-    {
+    private func reorderHandle(id: String) -> some View {
+        Image(systemName: "line.3.horizontal")
+            .font(.system(size: 16, weight: .semibold))
+            .foregroundStyle(FFColors.textSecondary)
+            .frame(width: 32, height: 32)
+            .background(FFColors.background)
+            .clipShape(RoundedRectangle(cornerRadius: FFTheme.Radius.control))
+            .overlay {
+                RoundedRectangle(cornerRadius: FFTheme.Radius.control)
+                    .stroke(FFColors.gray700, lineWidth: 1)
+            }
+            .draggable(id)
+            .accessibilityLabel("Перетащите, чтобы изменить порядок упражнения")
+    }
+
+    private func iconButton(
+        systemName: String,
+        tint: Color = FFColors.textSecondary,
+        action: @escaping () -> Void,
+    ) -> some View {
         Button(action: action) {
             Image(systemName: systemName)
                 .font(.system(size: 14, weight: .semibold))
                 .frame(width: 32, height: 32)
                 .foregroundStyle(tint)
-                .background(FFColors.surface)
+                .background(FFColors.background)
                 .clipShape(RoundedRectangle(cornerRadius: FFTheme.Radius.control))
                 .overlay {
                     RoundedRectangle(cornerRadius: FFTheme.Radius.control)
@@ -358,110 +934,31 @@ struct QuickWorkoutBuilderView: View {
         .buttonStyle(.plain)
     }
 
-    private func reorderSelected(draggedId: String, targetId: String) -> Bool {
-        guard draggedId != targetId,
-              let from = selected.firstIndex(where: { $0.id == draggedId }),
-              let to = selected.firstIndex(where: { $0.id == targetId })
-        else { return false }
-
-        let item = selected.remove(at: from)
-        let destination = from < to ? to - 1 : to
-        selected.insert(item, at: destination)
-        return true
-    }
-
-    private func toggleExercise(_ exercise: DraftExercise) {
-        if let index = selected.firstIndex(where: { $0.id == exercise.id }) {
-            selected.remove(at: index)
-        } else {
-            selected.append(exercise)
+    private func compactIconButton(
+        systemName: String,
+        tint: Color,
+        action: @escaping () -> Void,
+    ) -> some View {
+        Button(action: action) {
+            Image(systemName: systemName)
+                .font(.system(size: 12, weight: .bold))
+                .frame(width: 28, height: 28)
+                .foregroundStyle(tint)
+                .background(tint.opacity(0.12))
+                .clipShape(RoundedRectangle(cornerRadius: 10))
         }
-    }
-
-    private func updateExercise(at index: Int, mutate: (inout DraftExercise) -> Void) {
-        guard selected.indices.contains(index) else { return }
-        var item = selected[index]
-        mutate(&item)
-        selected[index] = item
-    }
-
-    private func exerciseDescription(sets: Int, repsMin: Int, repsMax: Int, restSeconds: Int) -> String {
-        "\(sets) подхода • \(repsMin)-\(repsMax) повторов • отдых \(restSeconds) сек"
-    }
-
-    private func dismissKeyboard() {
-        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
-    }
-
-    private func start() {
-        guard !selected.isEmpty else { return }
-        let exercises = selected.enumerated().map { index, item in
-            WorkoutExercise(
-                id: "quick-\(item.id)-\(index)",
-                name: item.name,
-                sets: item.sets,
-                repsMin: item.repsMin,
-                repsMax: item.repsMax,
-                targetRpe: nil,
-                restSeconds: item.restSeconds,
-                notes: nil,
-                orderIndex: index,
-            )
-        }
-
-        let normalizedTitle = workoutTitle.trimmingCharacters(in: .whitespacesAndNewlines)
-        let resolvedTitle: String
-        if normalizedTitle.isEmpty {
-            if let initialWorkout {
-                resolvedTitle = initialWorkout.title
-            } else {
-                resolvedTitle = "Quick workout • \(Date().formatted(date: .omitted, time: .shortened))"
-            }
-        } else {
-            resolvedTitle = normalizedTitle
-        }
-
-        let workout = WorkoutDetailsModel(
-            id: initialWorkout?.id ?? "quick-\(UUID().uuidString)",
-            title: resolvedTitle,
-            dayOrder: initialWorkout?.dayOrder ?? 0,
-            coachNote: initialWorkout?.coachNote ?? "Быстрая тренировка",
-            exercises: exercises,
-        )
-        onSubmit(workout)
-        dismiss()
-    }
-
-    private var submitButtonLabel: String {
-        switch submitTitle {
-        case "Начать тренировку":
-            "Старт"
-        case "Сохранить изменения":
-            "Сохранить"
-        default:
-            submitTitle
-        }
-    }
-
-    private static func makeInitialSelected(_ workout: WorkoutDetailsModel?) -> [DraftExercise] {
-        guard let workout else { return [] }
-        return workout.exercises
-            .sorted(by: { $0.orderIndex < $1.orderIndex })
-            .map { exercise in
-                DraftExercise(
-                    id: exercise.id,
-                    name: exercise.name,
-                    sets: max(1, exercise.sets),
-                    repsMin: max(1, exercise.repsMin ?? 8),
-                    repsMax: max(exercise.repsMin ?? 8, exercise.repsMax ?? max(exercise.repsMin ?? 8, 10)),
-                    restSeconds: max(0, exercise.restSeconds ?? 90),
-                )
-            }
+        .buttonStyle(.plain)
     }
 }
 
 #Preview {
     NavigationStack {
         QuickWorkoutBuilderView(onStart: { _ in })
+    }
+}
+
+private extension String {
+    var nilIfEmpty: String? {
+        isEmpty ? nil : self
     }
 }

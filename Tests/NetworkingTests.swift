@@ -155,6 +155,60 @@ final class NetworkingTests: XCTestCase {
         XCTAssertEqual(decoded.lastWorkoutAt, "2026-03-02T10:15:00Z")
     }
 
+    func testHomeSummaryDecodingSupportsPrimaryActionAndProgramBlocks() throws {
+        let json = """
+        {
+          "generatedAt": "2026-03-19T09:20:00Z",
+          "primaryAction": {
+            "type": "START_TODAYS_WORKOUT",
+            "title": "Начать тренировку на сегодня",
+            "workout": {
+              "workoutInstanceId": "workout-1",
+              "programId": "program-1",
+              "title": "Ноги A",
+              "source": "PROGRAM",
+              "status": "PLANNED",
+              "scheduledDate": "2026-03-19"
+            }
+          },
+          "recentActivity": {
+            "lastCompletedWorkout": {
+              "workoutInstanceId": "workout-0",
+              "programId": "program-1",
+              "title": "Верх A",
+              "source": "PROGRAM",
+              "completedAt": "2026-03-18T09:20:00Z",
+              "durationSeconds": 3120
+            },
+            "recentWorkouts": []
+          },
+          "progressOverview": {
+            "streakDays": 4,
+            "workouts7d": 3,
+            "totalWorkouts": 57,
+            "totalMinutes7d": 146,
+            "lastWorkoutAt": "2026-03-18T09:20:00Z"
+          },
+          "activeProgram": {
+            "enrollmentId": "enrollment-1",
+            "programId": "program-1",
+            "title": "Upper Lower Strength",
+            "summaryLine": "Сегодня: Ноги A",
+            "completedWorkouts": 5,
+            "totalWorkouts": 24
+          }
+        }
+        """.data(using: .utf8)!
+
+        let decoded = try JSONDecoder().decode(AthleteHomeSummaryResponse.self, from: json)
+
+        XCTAssertEqual(decoded.primaryAction.type, .startTodaysWorkout)
+        XCTAssertEqual(decoded.primaryAction.workout?.workoutInstanceId, "workout-1")
+        XCTAssertEqual(decoded.activeProgram?.summaryLine, "Сегодня: Ноги A")
+        XCTAssertEqual(decoded.progressOverview.totalWorkouts, 57)
+        XCTAssertEqual(decoded.recentActivity.lastCompletedWorkout?.durationSeconds, 3120)
+    }
+
     func testExerciseHistoryDecodingMapsAlternativeDateField() throws {
         let json = """
         {
@@ -284,6 +338,131 @@ final class NetworkingTests: XCTestCase {
         XCTAssertEqual(mapped.exercises.first?.isBodyweight, true)
         XCTAssertEqual(mapped.exercises.first?.description, "Держите корпус стабильно и тянитесь грудью к перекладине.")
         XCTAssertEqual(mapped.exercises.first?.media?.first?.id, "media-1")
+    }
+
+    func testAthleteWorkoutDetailsDecodingSupportsAlternativeExercisePlanningKeys() throws {
+        let json = """
+        {
+          "workout": {
+            "id": "workout-1",
+            "title": "Workout",
+            "source": "PROGRAM"
+          },
+          "exercises": [
+            {
+              "exerciseExecutionId": "exec-1",
+              "workoutId": "workout-1",
+              "exerciseId": "exercise-1",
+              "order": 1,
+              "setsCount": 4,
+              "repsMin": 6,
+              "repsMax": 8,
+              "targetRpe": 8,
+              "restSeconds": 120,
+              "prescriptionNotes": "Heavy top sets",
+              "exercise": {
+                "id": "exercise-1",
+                "name": "Bench Press"
+              }
+            }
+          ]
+        }
+        """.data(using: .utf8)!
+
+        let decoded = try JSONDecoder().decode(AthleteWorkoutDetailsResponse.self, from: json)
+        let mapped = decoded.asWorkoutDetailsModel()
+
+        XCTAssertEqual(mapped.exercises.first?.id, "exercise-1")
+        XCTAssertEqual(mapped.exercises.first?.name, "Bench Press")
+        XCTAssertEqual(mapped.exercises.first?.sets, 4)
+        XCTAssertEqual(mapped.exercises.first?.repsMin, 6)
+        XCTAssertEqual(mapped.exercises.first?.repsMax, 8)
+        XCTAssertEqual(mapped.exercises.first?.targetRpe, 8)
+        XCTAssertEqual(mapped.exercises.first?.restSeconds, 120)
+        XCTAssertEqual(mapped.exercises.first?.notes, "Heavy top sets")
+        XCTAssertEqual(mapped.exercises.first?.orderIndex, 1)
+    }
+
+    func testUpdateExerciseSetEncodesWarmupPayload() async throws {
+        var capturedRequest: URLRequest?
+        MockURLProtocol.requestHandler = { request in
+            capturedRequest = request
+            let response = try HTTPURLResponse(
+                url: XCTUnwrap(request.url),
+                statusCode: 200,
+                httpVersion: nil,
+                headerFields: nil,
+            )!
+            let body = """
+            {
+              "id": "set-1",
+              "setNumber": 1,
+              "weight": 60,
+              "reps": 6,
+              "rpe": 8,
+              "isCompleted": true,
+              "isWarmup": true,
+              "restSecondsActual": 90
+            }
+            """
+            return (response, Data(body.utf8))
+        }
+
+        let apiClient = APIClient(httpClient: makeHTTPClient())
+        let result = await apiClient.updateExerciseSet(
+            exerciseExecutionId: "exec-1",
+            setNumber: 1,
+            weight: 60,
+            reps: 6,
+            rpe: 8,
+            isCompleted: true,
+            isWarmup: true,
+            restSecondsActual: 90,
+        )
+
+        guard case let .success(response) = result else {
+            return XCTFail("Expected successful update")
+        }
+
+        XCTAssertEqual(response.isWarmup, true)
+        XCTAssertEqual(response.restSecondsActual, 90)
+
+        let request = try XCTUnwrap(capturedRequest)
+        let payload = try XCTUnwrap(requestBody(from: request))
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: payload) as? [String: Any])
+        XCTAssertEqual(json["isWarmup"] as? Bool, true)
+        XCTAssertEqual(json["restSecondsActual"] as? Int, 90)
+    }
+
+    private func requestBody(from request: URLRequest) throws -> Data? {
+        if let body = request.httpBody {
+            return body
+        }
+
+        guard let stream = request.httpBodyStream else {
+            return nil
+        }
+
+        stream.open()
+        defer { stream.close() }
+
+        let bufferSize = 1024
+        let buffer = UnsafeMutablePointer<UInt8>.allocate(capacity: bufferSize)
+        defer { buffer.deallocate() }
+
+        var data = Data()
+        while stream.hasBytesAvailable {
+            let read = stream.read(buffer, maxLength: bufferSize)
+            if read < 0 {
+                throw XCTSkip("Failed to read request body stream")
+            }
+            if read == 0 {
+                break
+            }
+            data.append(buffer, count: read)
+        }
+
+        return data
     }
 
     private func makeHTTPClient() -> HTTPClient {

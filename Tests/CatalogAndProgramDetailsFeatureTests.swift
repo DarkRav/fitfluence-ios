@@ -235,6 +235,9 @@ final class CatalogAndProgramDetailsFeatureTests: XCTestCase {
                     currentWorkoutId: nil,
                     currentWorkoutTitle: nil,
                     currentWorkoutStatus: nil,
+                    todayWorkoutId: nil,
+                    todayWorkoutTitle: nil,
+                    todayWorkoutStatus: nil,
                     nextWorkoutId: "workout-2",
                     nextWorkoutTitle: "День 2",
                     nextWorkoutStatus: .planned,
@@ -259,13 +262,179 @@ final class CatalogAndProgramDetailsFeatureTests: XCTestCase {
         await viewModel.onAppear()
 
         XCTAssertTrue(viewModel.canAccessProgramWorkouts)
-        XCTAssertEqual(viewModel.primaryProgramActionTitle, "Продолжить программу")
+        XCTAssertEqual(viewModel.primaryProgramActionTitle, "Открыть тренировку программы")
 
         viewModel.openWorkouts()
         viewModel.workoutPicked("workout-2")
 
         XCTAssertTrue(viewModel.isWorkoutsPresented)
         XCTAssertEqual(viewModel.selectedWorkout?.workoutId, "workout-2")
+    }
+
+    func testProgramDetailsParticipantWithResumableWorkoutShowsContinueProgramCTA() async {
+        let mockClient = MockProgramsClient(
+            listResults: [],
+            detailsResults: [.success(sampleDetails)],
+            startResults: [],
+        )
+        let trainingClient = MockProgramDetailsAthleteTrainingClient(
+            progressResult: .success(
+                ActiveEnrollmentProgressResponse(
+                    enrollmentId: "enr-1",
+                    status: "ACTIVE",
+                    programId: "program-1",
+                    programTitle: "Программа",
+                    programVersionId: "ver-1",
+                    currentWorkoutId: "workout-1",
+                    currentWorkoutTitle: "День 1",
+                    currentWorkoutStatus: .inProgress,
+                    todayWorkoutId: "workout-1",
+                    todayWorkoutTitle: "День 1",
+                    todayWorkoutStatus: .inProgress,
+                    nextWorkoutId: "workout-2",
+                    nextWorkoutTitle: "День 2",
+                    nextWorkoutStatus: .planned,
+                    completedSessions: 0,
+                    totalSessions: 4,
+                    completionPercent: 0,
+                    lastCompletedAt: nil,
+                    updatedAt: nil,
+                ),
+            ),
+        )
+
+        let viewModel = ProgramDetailsViewModel(
+            programId: "program-1",
+            userSub: "u1",
+            programsClient: mockClient,
+            athleteTrainingClient: trainingClient,
+            cacheStore: MemoryCacheStore(),
+            networkMonitor: StaticNetworkMonitor(currentStatus: true),
+        )
+
+        await viewModel.onAppear()
+
+        XCTAssertTrue(viewModel.canAccessProgramWorkouts)
+        XCTAssertTrue(viewModel.hasResumableWorkout)
+        XCTAssertEqual(viewModel.primaryProgramActionTitle, "Продолжить программу")
+        XCTAssertEqual(viewModel.primaryProgramActionHint, "Вернёт к текущей тренировке: День 1.")
+    }
+
+    func testProgramDetailsEnrollmentSuccessOpensConfirmationAndFallbackLaunch() async {
+        let mockClient = MockProgramsClient(
+            listResults: [],
+            detailsResults: [.success(sampleDetailsWithWorkouts)],
+            startResults: [
+                .success(
+                    ProgramEnrollment(
+                        id: "enr-1",
+                        athleteId: "athlete-1",
+                        programId: "program-1",
+                        programTitle: "Программа",
+                        programVersionId: "ver-1",
+                        status: .active,
+                        startedAt: "2026-03-15T09:00:00Z",
+                        createdAt: nil,
+                        updatedAt: nil,
+                    ),
+                ),
+            ],
+        )
+        let trainingClient = MockProgramDetailsAthleteTrainingClient(
+            progressResult: .success(
+                ActiveEnrollmentProgressResponse(
+                    enrollmentId: "enr-1",
+                    status: "ACTIVE",
+                    programId: "program-1",
+                    programTitle: "Программа",
+                    programVersionId: "ver-1",
+                    currentWorkoutId: nil,
+                    currentWorkoutTitle: nil,
+                    currentWorkoutStatus: nil,
+                    todayWorkoutId: nil,
+                    todayWorkoutTitle: nil,
+                    todayWorkoutStatus: nil,
+                    nextWorkoutId: nil,
+                    nextWorkoutTitle: nil,
+                    nextWorkoutStatus: nil,
+                    completedSessions: 0,
+                    totalSessions: 3,
+                    completionPercent: 0,
+                    lastCompletedAt: nil,
+                    updatedAt: nil,
+                ),
+            ),
+        )
+
+        let viewModel = ProgramDetailsViewModel(
+            programId: "program-1",
+            userSub: "u1",
+            programsClient: mockClient,
+            athleteTrainingClient: trainingClient,
+            cacheStore: MemoryCacheStore(),
+            networkMonitor: StaticNetworkMonitor(currentStatus: true),
+        )
+
+        await viewModel.onAppear()
+        await viewModel.handlePrimaryProgramAction()
+
+        XCTAssertEqual(viewModel.primaryProgramActionTitle, "Открыть тренировку программы")
+        XCTAssertEqual(viewModel.enrollmentConfirmation?.firstWorkoutTitle, "День 1")
+        XCTAssertFalse(viewModel.enrollmentConfirmation?.canStartFirstWorkout ?? true)
+        XCTAssertNil(viewModel.enrollmentConfirmation?.firstWorkoutInstanceId)
+
+        await viewModel.handleEnrollmentPrimaryAction()
+
+        XCTAssertNotNil(viewModel.enrollmentConfirmation)
+        XCTAssertNil(viewModel.selectedWorkout)
+    }
+
+    func testProgramDetailsParticipantWithTodayWorkoutUsesGenericLaunchCTA() async {
+        let mockClient = MockProgramsClient(
+            listResults: [],
+            detailsResults: [.success(sampleDetails)],
+            startResults: [],
+        )
+        let trainingClient = MockProgramDetailsAthleteTrainingClient(
+            progressResult: .success(
+                ActiveEnrollmentProgressResponse(
+                    enrollmentId: "enr-1",
+                    status: "ACTIVE",
+                    programId: "program-1",
+                    programTitle: "Программа",
+                    programVersionId: "ver-1",
+                    currentWorkoutId: nil,
+                    currentWorkoutTitle: nil,
+                    currentWorkoutStatus: nil,
+                    todayWorkoutId: "workout-today",
+                    todayWorkoutTitle: "День сегодня",
+                    todayWorkoutStatus: .planned,
+                    nextWorkoutId: nil,
+                    nextWorkoutTitle: nil,
+                    nextWorkoutStatus: nil,
+                    completedSessions: 1,
+                    totalSessions: 4,
+                    completionPercent: 25,
+                    lastCompletedAt: nil,
+                    updatedAt: nil,
+                ),
+            ),
+        )
+
+        let viewModel = ProgramDetailsViewModel(
+            programId: "program-1",
+            userSub: "u1",
+            programsClient: mockClient,
+            athleteTrainingClient: trainingClient,
+            cacheStore: MemoryCacheStore(),
+            networkMonitor: StaticNetworkMonitor(currentStatus: true),
+        )
+
+        await viewModel.onAppear()
+
+        XCTAssertTrue(viewModel.canAccessProgramWorkouts)
+        XCTAssertEqual(viewModel.primaryProgramActionTitle, "Открыть тренировку программы")
+        XCTAssertEqual(viewModel.primaryProgramActionHint, "Откроет текущую доступную тренировку: День сегодня.")
     }
 
     func testProgramDetailsScheduleProgramWorkoutsCreatesLocalPlan() async {
@@ -293,7 +462,7 @@ final class CatalogAndProgramDetailsFeatureTests: XCTestCase {
 
         await viewModel.onAppear()
 
-        let startDate = Calendar.current.date(from: DateComponents(year: 2026, month: 3, day: 16))!
+        let startDate = Calendar.current.date(from: DateComponents(year: 2026, month: 3, day: 23))!
         let firstDay = await viewModel.scheduleProgramWorkouts(
             startDate: startDate,
             weekdays: [.monday, .wednesday, .friday],
@@ -550,7 +719,85 @@ private actor MockProgramDetailsAthleteTrainingClient: AthleteTrainingClientProt
         progressResult
     }
 
+    func programStatus(programId: String) async -> Result<AthleteProgramStatusResponse, APIError> {
+        switch progressResult {
+        case let .success(progress):
+            let enrollment = progress.enrollmentId.map {
+                AthleteProgramEnrollmentSummary(
+                    id: $0,
+                    athleteId: "athlete-1",
+                    programId: progress.programId,
+                    programTitle: progress.programTitle,
+                    programVersionId: progress.programVersionId ?? "ver-1",
+                    status: progress.status ?? "ACTIVE",
+                    startedAt: "2026-03-15T09:00:00Z",
+                    createdAt: nil,
+                    updatedAt: nil,
+                )
+            }
+
+            let currentWorkout = progress.currentWorkoutId.map {
+                AthleteProgramWorkoutTarget(
+                    workoutInstanceId: $0,
+                    workoutTemplateId: nil,
+                    title: progress.currentWorkoutTitle,
+                    scheduledDate: nil,
+                    status: progress.currentWorkoutStatus,
+                )
+            }
+            let todayWorkout = progress.todayWorkoutId.map {
+                AthleteProgramWorkoutTarget(
+                    workoutInstanceId: $0,
+                    workoutTemplateId: nil,
+                    title: progress.todayWorkoutTitle,
+                    scheduledDate: nil,
+                    status: progress.todayWorkoutStatus,
+                )
+            }
+            let nextWorkout = progress.nextWorkoutId.map {
+                AthleteProgramWorkoutTarget(
+                    workoutInstanceId: $0,
+                    workoutTemplateId: nil,
+                    title: progress.nextWorkoutTitle,
+                    scheduledDate: nil,
+                    status: progress.nextWorkoutStatus,
+                )
+            }
+
+            return .success(
+                AthleteProgramStatusResponse(
+                    programId: progress.programId ?? programId,
+                    programTitle: progress.programTitle ?? "Программа",
+                    enrollment: enrollment,
+                    currentWorkout: currentWorkout,
+                    todayWorkout: todayWorkout,
+                    nextWorkout: nextWorkout,
+                    resumeWorkout: currentWorkout?.status == .inProgress ? currentWorkout : nil,
+                    launchWorkout: currentWorkout?.status == .inProgress ? currentWorkout : (todayWorkout ?? nextWorkout),
+                    completedSessions: progress.completedSessions,
+                    totalSessions: progress.totalSessions,
+                    completionPercent: progress.completionPercent,
+                    lastCompletedAt: progress.lastCompletedAt,
+                    updatedAt: progress.updatedAt,
+                ),
+            )
+        case let .failure(error):
+            return .failure(error)
+        }
+    }
+
     func getWorkoutDetails(workoutInstanceId _: String) async -> Result<AthleteWorkoutDetailsResponse, APIError> {
+        .failure(.unknown)
+    }
+
+    func createCustomWorkout(request _: AthleteCreateCustomWorkoutRequest) async -> Result<AthleteWorkoutDetailsResponse, APIError> {
+        .failure(.unknown)
+    }
+
+    func updateCustomWorkout(
+        workoutInstanceId _: String,
+        request _: AthleteUpdateCustomWorkoutRequest,
+    ) async -> Result<AthleteWorkoutDetailsResponse, APIError> {
         .failure(.unknown)
     }
 

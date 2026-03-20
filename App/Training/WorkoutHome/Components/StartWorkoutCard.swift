@@ -4,6 +4,7 @@ struct StartWorkoutCard: View {
     var isLoading = false
     let syncStatus: SyncStatusKind
     let showsCacheTag: Bool
+    let onBuildTodayWorkout: () -> Void
     let onStartWorkout: () -> Void
 
     var body: some View {
@@ -15,7 +16,7 @@ struct StartWorkoutCard: View {
                             .font(FFTypography.h2)
                             .foregroundStyle(FFColors.textPrimary)
 
-                        Text("Один главный вход в тренировку: начните сейчас и логируйте без лишних шагов.")
+                        Text("Сначала соберите задачу на сегодня, а затем быстро доведите стартовую заготовку в конструкторе.")
                             .font(FFTypography.body)
                             .foregroundStyle(FFColors.textSecondary)
                     }
@@ -33,8 +34,13 @@ struct StartWorkoutCard: View {
                 }
 
                 WorkoutPrimaryButton(
-                    title: "Начать тренировку",
+                    title: "Собрать тренировку на сегодня",
                     isLoading: isLoading,
+                    action: onBuildTodayWorkout,
+                )
+
+                WorkoutSecondaryButton(
+                    title: "Пустая тренировка",
                     action: onStartWorkout,
                 )
             }

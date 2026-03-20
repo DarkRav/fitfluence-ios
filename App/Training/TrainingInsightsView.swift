@@ -306,9 +306,8 @@ enum ProgressInsightEngine {
 @MainActor
 final class TrainingInsightsViewModel {
     private enum CacheKeys {
-        static let statsSummary = "progress.stats.summary"
+        static let homeSummary = "progress.home.summary"
         static let personalRecords = "progress.prs.all"
-        static let activeEnrollmentProgress = "progress.active-enrollment"
 
         static func calendar(month: String) -> String {
             "progress.calendar.\(month)"
@@ -405,10 +404,9 @@ final class TrainingInsightsViewModel {
     private(set) var allExerciseItems: [ExerciseProgressListItem] = []
     private var localHistory: [CompletedWorkoutRecord] = []
     private var localPlansByMonth: [String: [TrainingDayPlan]] = [:]
-    private var statsSummary: AthleteStatsSummaryResponse?
+    private var homeSummary: AthleteHomeSummaryResponse?
     private var personalRecords: [AthletePersonalRecord] = []
     private var calendarByMonth: [String: AthleteCalendarResponse] = [:]
-    private var activeEnrollmentProgress: ActiveEnrollmentProgressResponse?
     private var exerciseHistoryMetaById: [String: ExerciseHistoryMeta] = [:]
     private var loadedExerciseMetaIds: Set<String> = []
 
@@ -466,22 +464,13 @@ final class TrainingInsightsViewModel {
         let monthKeys = requiredMonthKeys(for: selectedPeriod)
         localPlansByMonth = await loadLocalPlans(monthKeys: monthKeys)
 
-        if let cachedSummary = await cacheStore.get(CacheKeys.statsSummary, as: AthleteStatsSummaryResponse.self, namespace: userSub) {
-            statsSummary = cachedSummary
+        if let cachedSummary = await cacheStore.get(CacheKeys.homeSummary, as: AthleteHomeSummaryResponse.self, namespace: userSub) {
+            homeSummary = cachedSummary
             isShowingCachedData = true
         }
 
         if let cachedPRs = await cacheStore.get(CacheKeys.personalRecords, as: [AthletePersonalRecord].self, namespace: userSub) {
             personalRecords = cachedPRs
-            isShowingCachedData = true
-        }
-
-        if let cachedActiveEnrollment = await cacheStore.get(
-            CacheKeys.activeEnrollmentProgress,
-            as: ActiveEnrollmentProgressResponse.self,
-            namespace: userSub,
-        ) {
-            activeEnrollmentProgress = cachedActiveEnrollment
             isShowingCachedData = true
         }
 
@@ -495,19 +484,18 @@ final class TrainingInsightsViewModel {
         rebuildDerivedState()
 
         guard networkMonitor.currentStatus, let athleteTrainingClient else {
-            if statsSummary == nil, personalRecords.isEmpty, localHistory.isEmpty {
+            if homeSummary == nil, personalRecords.isEmpty, localHistory.isEmpty {
                 errorMessage = "Нет сети и кэшированных данных. Подключитесь к интернету и обновите экран."
             }
             return
         }
 
-        await fetchRemoteStatsAndPRs(client: athleteTrainingClient)
+        await fetchRemoteHomeSummaryAndPRs(client: athleteTrainingClient)
         await fetchRemoteCalendars(client: athleteTrainingClient, monthKeys: monthKeys)
-        await fetchRemoteNextAction(client: athleteTrainingClient)
 
         rebuildDerivedState()
 
-        if statsSummary == nil, personalRecords.isEmpty, localHistory.isEmpty {
+        if homeSummary == nil, personalRecords.isEmpty, localHistory.isEmpty {
             errorMessage = "Не удалось загрузить прогресс. Попробуйте позже."
         }
     }
@@ -603,15 +591,15 @@ final class TrainingInsightsViewModel {
         }
     }
 
-    private func fetchRemoteStatsAndPRs(client: AthleteTrainingClientProtocol) async {
-        async let summaryResult = client.statsSummary()
+    private func fetchRemoteHomeSummaryAndPRs(client: AthleteTrainingClientProtocol) async {
+        async let summaryResult = client.homeSummary()
         async let prsResult = client.personalRecords(exerciseId: nil)
 
         let resolvedSummary = await summaryResult
         switch resolvedSummary {
         case let .success(summary):
-            statsSummary = summary
-            await cacheStore.set(CacheKeys.statsSummary, value: summary, namespace: userSub, ttl: cacheTTL)
+            homeSummary = summary
+            await cacheStore.set(CacheKeys.homeSummary, value: summary, namespace: userSub, ttl: cacheTTL)
             isShowingCachedData = false
         case .failure:
             break
@@ -651,20 +639,6 @@ final class TrainingInsightsViewModel {
                 await cacheStore.set(CacheKeys.calendar(month: month), value: response, namespace: userSub, ttl: cacheTTL)
                 isShowingCachedData = false
             }
-        }
-    }
-
-    private func fetchRemoteNextAction(client: AthleteTrainingClientProtocol) async {
-        let result = await client.activeEnrollmentProgress()
-        if case let .success(progress) = result {
-            activeEnrollmentProgress = progress
-            await cacheStore.set(
-                CacheKeys.activeEnrollmentProgress,
-                value: progress,
-                namespace: userSub,
-                ttl: cacheTTL,
-            )
-            isShowingCachedData = false
         }
     }
 
@@ -931,7 +905,7 @@ final class TrainingInsightsViewModel {
         let fallbackWorkouts7d = workouts(inLast: 7, history: localHistory)
         let fallbackTotalMinutes7d = minutes(inLast: 7, history: localHistory)
 
-        let summary = statsSummary
+        let summary = homeSummary?.progressOverview
         let adherence = adherenceSnapshot(for: selectedPeriod)
 
         overview = ProgressOverviewSnapshot(
@@ -964,7 +938,7 @@ final class TrainingInsightsViewModel {
             recentPRExerciseId: recentPRCandidate?.record.exerciseId,
             recentPRExerciseName: recentPRCandidate?.record.exerciseName,
             recentPRDate: recentPRCandidate?.date,
-            lastWorkoutDate: summary?.lastWorkoutAtDate ?? localHistory.first?.finishedAt,
+            lastWorkoutDate: ProgressDateParser.parse(summary?.lastWorkoutAt) ?? localHistory.first?.finishedAt,
         )
 
         insight = ProgressInsightEngine.resolve(context: context, now: Date(), calendar: calendar)
@@ -972,15 +946,15 @@ final class TrainingInsightsViewModel {
     }
 
     private func rebuildNextAction() {
-        guard let progress = activeEnrollmentProgress else {
+        guard let summary = homeSummary else {
             nextAction = .startWorkout
             return
         }
 
-        let nextTarget = WorkoutDomainRules.resolveActiveEnrollment(progress)?.nextWorkoutToStart
+        let nextTarget = summary.primaryAction.workout ?? summary.activeProgram?.nextWorkout
         nextAction = ProgressNextActionSnapshot(
             hasNextWorkout: nextTarget != nil,
-            nextWorkoutId: nextTarget?.workoutId,
+            nextWorkoutId: nextTarget?.workoutInstanceId,
             nextWorkoutTitle: nextTarget?.title,
         )
     }

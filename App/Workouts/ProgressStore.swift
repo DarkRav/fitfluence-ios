@@ -19,10 +19,11 @@ struct ActiveEnrollmentState: Equatable, Sendable {
     let completedSessions: Int
     let totalSessions: Int
     let resumeWorkout: WorkoutRouteTarget?
+    let todayWorkout: WorkoutRouteTarget?
     let nextWorkoutToStart: WorkoutRouteTarget?
 
     var preferredLaunchWorkout: WorkoutRouteTarget? {
-        resumeWorkout ?? nextWorkoutToStart
+        resumeWorkout ?? todayWorkout ?? nextWorkoutToStart
     }
 
     var isCompleted: Bool {
@@ -113,6 +114,12 @@ enum WorkoutDomainRules {
             title: progress.nextWorkoutTitle,
             fallbackTitle: "Следующая тренировка",
         )
+        let todayTarget = makeTarget(
+            programId: programId,
+            workoutId: progress.todayWorkoutId,
+            title: progress.todayWorkoutTitle,
+            fallbackTitle: "Тренировка на сегодня",
+        )
 
         let resumeTarget: WorkoutRouteTarget? = {
             if progress.currentWorkoutStatus == .inProgress, let currentTarget {
@@ -123,10 +130,25 @@ enum WorkoutDomainRules {
             }
             return nil
         }()
+        let todayToStart: WorkoutRouteTarget? = {
+            guard let todayTarget else { return nil }
+            guard progress.todayWorkoutStatus != .completed,
+                  progress.todayWorkoutStatus != .missed,
+                  progress.todayWorkoutStatus != .abandoned
+            else {
+                return nil
+            }
+            guard todayTarget.workoutId != resumeTarget?.workoutId else { return nil }
+            return todayTarget
+        }()
 
         let nextToStart: WorkoutRouteTarget? = {
             guard let nextTarget else { return nil }
-            guard nextTarget.workoutId != resumeTarget?.workoutId else { return nil }
+            guard nextTarget.workoutId != resumeTarget?.workoutId,
+                  nextTarget.workoutId != todayToStart?.workoutId
+            else {
+                return nil
+            }
             return nextTarget
         }()
 
@@ -138,6 +160,7 @@ enum WorkoutDomainRules {
             completedSessions: completedSessions,
             totalSessions: totalSessions,
             resumeWorkout: resumeTarget,
+            todayWorkout: todayToStart,
             nextWorkoutToStart: nextToStart,
         )
     }
@@ -238,6 +261,30 @@ struct StoredSetProgress: Codable, Equatable, Sendable {
     var repsText: String
     var weightText: String
     var rpeText: String
+    var isWarmup: Bool
+
+    init(
+        isCompleted: Bool,
+        repsText: String,
+        weightText: String,
+        rpeText: String,
+        isWarmup: Bool = false,
+    ) {
+        self.isCompleted = isCompleted
+        self.repsText = repsText
+        self.weightText = weightText
+        self.rpeText = rpeText
+        self.isWarmup = isWarmup
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        isCompleted = try container.decode(Bool.self, forKey: .isCompleted)
+        repsText = try container.decode(String.self, forKey: .repsText)
+        weightText = try container.decode(String.self, forKey: .weightText)
+        rpeText = try container.decode(String.self, forKey: .rpeText)
+        isWarmup = try container.decodeIfPresent(Bool.self, forKey: .isWarmup) ?? false
+    }
 }
 
 struct StoredExerciseProgress: Codable, Equatable, Sendable {
@@ -252,9 +299,54 @@ struct WorkoutProgressSnapshot: Codable, Equatable, Sendable {
     var startedAt: Date? = nil
     var source: WorkoutSource? = nil
     var workoutDetails: WorkoutDetailsModel? = nil
+    var hasLocalOnlyStructuralChanges: Bool
     var isFinished: Bool
     var lastUpdated: Date
     var exercises: [String: StoredExerciseProgress]
+
+    init(
+        userSub: String,
+        programId: String,
+        workoutId: String,
+        currentExerciseIndex: Int?,
+        startedAt: Date? = nil,
+        source: WorkoutSource? = nil,
+        workoutDetails: WorkoutDetailsModel? = nil,
+        hasLocalOnlyStructuralChanges: Bool = false,
+        isFinished: Bool,
+        lastUpdated: Date,
+        exercises: [String: StoredExerciseProgress],
+    ) {
+        self.userSub = userSub
+        self.programId = programId
+        self.workoutId = workoutId
+        self.currentExerciseIndex = currentExerciseIndex
+        self.startedAt = startedAt
+        self.source = source
+        self.workoutDetails = workoutDetails
+        self.hasLocalOnlyStructuralChanges = hasLocalOnlyStructuralChanges
+        self.isFinished = isFinished
+        self.lastUpdated = lastUpdated
+        self.exercises = exercises
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        userSub = try container.decode(String.self, forKey: .userSub)
+        programId = try container.decode(String.self, forKey: .programId)
+        workoutId = try container.decode(String.self, forKey: .workoutId)
+        currentExerciseIndex = try container.decodeIfPresent(Int.self, forKey: .currentExerciseIndex)
+        startedAt = try container.decodeIfPresent(Date.self, forKey: .startedAt)
+        source = try container.decodeIfPresent(WorkoutSource.self, forKey: .source)
+        workoutDetails = try container.decodeIfPresent(WorkoutDetailsModel.self, forKey: .workoutDetails)
+        hasLocalOnlyStructuralChanges = try container.decodeIfPresent(
+            Bool.self,
+            forKey: .hasLocalOnlyStructuralChanges,
+        ) ?? false
+        isFinished = try container.decode(Bool.self, forKey: .isFinished)
+        lastUpdated = try container.decode(Date.self, forKey: .lastUpdated)
+        exercises = try container.decode([String: StoredExerciseProgress].self, forKey: .exercises)
+    }
 
     var status: WorkoutProgressStatus {
         WorkoutDomainRules.progressStatus(
@@ -352,6 +444,7 @@ struct SessionSetState: Equatable, Sendable {
     var repsText: String
     var weightText: String
     var rpeText: String
+    var isWarmup: Bool
 }
 
 struct SessionSetDefaults: Equatable, Sendable {
@@ -377,6 +470,7 @@ struct WorkoutSessionState: Equatable, Sendable {
     var currentExerciseIndex: Int
     var lastUpdated: Date
     var exercises: [SessionExerciseState]
+    var hasLocalOnlyStructuralChanges: Bool
 
     var completedSetsCount: Int {
         exercises.flatMap(\.sets).filter(\.isCompleted).count
@@ -392,8 +486,27 @@ enum SessionUndoAction: Equatable, Sendable {
     case updateReps(exerciseId: String, setIndex: Int, previous: String)
     case updateWeight(exerciseId: String, setIndex: Int, previous: String)
     case updateRPE(exerciseId: String, setIndex: Int, previous: String)
+    case toggleWarmup(exerciseId: String, setIndex: Int, previous: Bool)
     case skipExercise(exerciseId: String, previous: Bool)
     case changeExerciseIndex(previous: Int)
+    case addSet(exerciseId: String, setIndex: Int, previousLocalOnlyStructuralChanges: Bool)
+    case removeSet(
+        exerciseId: String,
+        setIndex: Int,
+        removedSet: SessionSetState,
+        previousLocalOnlyStructuralChanges: Bool
+    )
+    case addExercise(
+        exerciseIndex: Int,
+        previousCurrentExerciseIndex: Int,
+        previousLocalOnlyStructuralChanges: Bool
+    )
+    case replaceExercise(
+        exerciseIndex: Int,
+        previousExercise: WorkoutExercise,
+        previousState: SessionExerciseState,
+        previousLocalOnlyStructuralChanges: Bool
+    )
 }
 
 actor WorkoutSessionManager {
@@ -440,12 +553,14 @@ actor WorkoutSessionManager {
                             repsText: "",
                             weightText: "",
                             rpeText: "",
+                            isWarmup: false,
                         ),
                         count: max(1, exercise.sets),
                     ),
                     isSkipped: false,
                 )
             },
+            hasLocalOnlyStructuralChanges: false,
         )
         undoStacks[key] = []
         await autosave(session)
@@ -532,6 +647,110 @@ actor WorkoutSessionManager {
         }
     }
 
+    func toggleSetWarmup(
+        _ session: WorkoutSessionState,
+        exerciseId: String,
+        setIndex: Int,
+    ) async -> WorkoutSessionState {
+        await mutate(session, action: .toggleWarmup(exerciseId: exerciseId, setIndex: setIndex, previous: false)) {
+            target in
+            guard let index = target.exercises.firstIndex(where: { $0.exerciseId == exerciseId }),
+                  target.exercises[index].sets.indices.contains(setIndex)
+            else { return }
+            let previous = target.exercises[index].sets[setIndex].isWarmup
+            recordUndo(
+                for: target,
+                action: .toggleWarmup(exerciseId: exerciseId, setIndex: setIndex, previous: previous),
+            )
+            target.exercises[index].sets[setIndex].isWarmup.toggle()
+        }
+    }
+
+    func addSet(
+        _ session: WorkoutSessionState,
+        exerciseId: String,
+        duplicateLast: Bool,
+    ) async -> WorkoutSessionState {
+        await mutate(session, action: .addSet(exerciseId: exerciseId, setIndex: 0, previousLocalOnlyStructuralChanges: false)) {
+            target in
+            guard let exerciseIndex = target.exercises.firstIndex(where: { $0.exerciseId == exerciseId }),
+                  let workoutExerciseIndex = target.workoutDetails.exercises.firstIndex(where: { $0.id == exerciseId })
+            else { return }
+
+            let newSet = duplicateLast
+                ? (target.exercises[exerciseIndex].sets.last ?? SessionSetState(
+                    isCompleted: false,
+                    repsText: "",
+                    weightText: "",
+                    rpeText: "",
+                    isWarmup: false,
+                ))
+                : SessionSetState(
+                    isCompleted: false,
+                    repsText: "",
+                    weightText: "",
+                    rpeText: "",
+                    isWarmup: false,
+                )
+
+            let insertIndex = target.exercises[exerciseIndex].sets.count
+            let previousLocalOnlyFlag = target.hasLocalOnlyStructuralChanges
+            recordUndo(
+                for: target,
+                action: .addSet(
+                    exerciseId: exerciseId,
+                    setIndex: insertIndex,
+                    previousLocalOnlyStructuralChanges: previousLocalOnlyFlag,
+                ),
+            )
+            target.exercises[exerciseIndex].sets.append(newSet)
+            var updatedExercises = target.workoutDetails.exercises
+            updatedExercises[workoutExerciseIndex] = updatedExercises[workoutExerciseIndex]
+                .updatingSetCount(target.exercises[exerciseIndex].sets.count)
+            target.workoutDetails = target.workoutDetails.updatingExercises(updatedExercises)
+            target.hasLocalOnlyStructuralChanges = true
+        }
+    }
+
+    func removeSet(
+        _ session: WorkoutSessionState,
+        exerciseId: String,
+        setIndex: Int,
+    ) async -> WorkoutSessionState {
+        await mutate(
+            session,
+            action: .removeSet(
+                exerciseId: exerciseId,
+                setIndex: setIndex,
+                removedSet: SessionSetState(isCompleted: false, repsText: "", weightText: "", rpeText: "", isWarmup: false),
+                previousLocalOnlyStructuralChanges: false,
+            ),
+        ) { target in
+            guard let exerciseIndex = target.exercises.firstIndex(where: { $0.exerciseId == exerciseId }),
+                  target.exercises[exerciseIndex].sets.indices.contains(setIndex),
+                  target.exercises[exerciseIndex].sets.count > 1,
+                  let workoutExerciseIndex = target.workoutDetails.exercises.firstIndex(where: { $0.id == exerciseId })
+            else { return }
+
+            let removedSet = target.exercises[exerciseIndex].sets.remove(at: setIndex)
+            let previousLocalOnlyFlag = target.hasLocalOnlyStructuralChanges
+            recordUndo(
+                for: target,
+                action: .removeSet(
+                    exerciseId: exerciseId,
+                    setIndex: setIndex,
+                    removedSet: removedSet,
+                    previousLocalOnlyStructuralChanges: previousLocalOnlyFlag,
+                ),
+            )
+            var updatedExercises = target.workoutDetails.exercises
+            updatedExercises[workoutExerciseIndex] = updatedExercises[workoutExerciseIndex]
+                .updatingSetCount(target.exercises[exerciseIndex].sets.count)
+            target.workoutDetails = target.workoutDetails.updatingExercises(updatedExercises)
+            target.hasLocalOnlyStructuralChanges = true
+        }
+    }
+
     func skipExercise(_ session: WorkoutSessionState, exerciseId: String) async -> WorkoutSessionState {
         await mutate(session, action: .skipExercise(exerciseId: exerciseId, previous: false)) { target in
             guard let index = target.exercises.firstIndex(where: { $0.exerciseId == exerciseId }) else { return }
@@ -547,6 +766,114 @@ actor WorkoutSessionManager {
             let previous = target.currentExerciseIndex
             recordUndo(for: target, action: .changeExerciseIndex(previous: previous))
             target.currentExerciseIndex = clamped
+        }
+    }
+
+    func addExercise(
+        _ session: WorkoutSessionState,
+        exercise: WorkoutExercise,
+        afterExerciseId: String?,
+    ) async -> WorkoutSessionState {
+        await mutate(
+            session,
+            action: .addExercise(
+                exerciseIndex: 0,
+                previousCurrentExerciseIndex: session.currentExerciseIndex,
+                previousLocalOnlyStructuralChanges: false,
+            ),
+        ) { target in
+            let previousCurrentExerciseIndex = target.currentExerciseIndex
+            let previousLocalOnlyFlag = target.hasLocalOnlyStructuralChanges
+            let baseIndex = afterExerciseId.flatMap { id in
+                target.workoutDetails.exercises.firstIndex(where: { $0.id == id })
+            } ?? (target.workoutDetails.exercises.count - 1)
+            let insertIndex = min(target.workoutDetails.exercises.count, max(0, baseIndex + 1))
+
+            recordUndo(
+                for: target,
+                action: .addExercise(
+                    exerciseIndex: insertIndex,
+                    previousCurrentExerciseIndex: previousCurrentExerciseIndex,
+                    previousLocalOnlyStructuralChanges: previousLocalOnlyFlag,
+                ),
+            )
+
+            var updatedExercises = target.workoutDetails.exercises
+            updatedExercises.insert(exercise, at: insertIndex)
+            target.workoutDetails = target.workoutDetails.updatingExercises(updatedExercises.normalizedWorkoutOrder())
+            target.exercises.insert(
+                SessionExerciseState(
+                    exerciseId: exercise.id,
+                    sets: Array(
+                        repeating: SessionSetState(
+                            isCompleted: false,
+                            repsText: "",
+                            weightText: "",
+                            rpeText: "",
+                            isWarmup: false,
+                        ),
+                        count: max(1, exercise.sets),
+                    ),
+                    isSkipped: false,
+                ),
+                at: insertIndex,
+            )
+            target.currentExerciseIndex = insertIndex
+            target.hasLocalOnlyStructuralChanges = true
+        }
+    }
+
+    func replaceExercise(
+        _ session: WorkoutSessionState,
+        exerciseId: String,
+        with exercise: WorkoutExercise,
+    ) async -> WorkoutSessionState {
+        await mutate(
+            session,
+            action: .replaceExercise(
+                exerciseIndex: 0,
+                previousExercise: exercise,
+                previousState: SessionExerciseState(exerciseId: exerciseId, sets: [], isSkipped: false),
+                previousLocalOnlyStructuralChanges: false,
+            ),
+        ) { target in
+            guard let exerciseIndex = target.exercises.firstIndex(where: { $0.exerciseId == exerciseId }),
+                  target.workoutDetails.exercises.indices.contains(exerciseIndex)
+            else {
+                return
+            }
+
+            let previousExercise = target.workoutDetails.exercises[exerciseIndex]
+            let previousState = target.exercises[exerciseIndex]
+            let previousLocalOnlyFlag = target.hasLocalOnlyStructuralChanges
+            recordUndo(
+                for: target,
+                action: .replaceExercise(
+                    exerciseIndex: exerciseIndex,
+                    previousExercise: previousExercise,
+                    previousState: previousState,
+                    previousLocalOnlyStructuralChanges: previousLocalOnlyFlag,
+                ),
+            )
+
+            var updatedExercises = target.workoutDetails.exercises
+            updatedExercises[exerciseIndex] = exercise.updatingOrderIndex(exerciseIndex)
+            target.workoutDetails = target.workoutDetails.updatingExercises(updatedExercises)
+            target.exercises[exerciseIndex] = SessionExerciseState(
+                exerciseId: exercise.id,
+                sets: Array(
+                    repeating: SessionSetState(
+                        isCompleted: false,
+                        repsText: "",
+                        weightText: "",
+                        rpeText: "",
+                        isWarmup: false,
+                    ),
+                    count: max(1, exercise.sets),
+                ),
+                isSkipped: false,
+            )
+            target.hasLocalOnlyStructuralChanges = true
         }
     }
 
@@ -602,6 +929,11 @@ actor WorkoutSessionManager {
         next.lastUpdated = Date()
         await autosave(next)
         return next
+    }
+
+    func replaceSession(_ session: WorkoutSessionState) async -> WorkoutSessionState {
+        await autosave(session)
+        return session
     }
 
     func finish(_ session: WorkoutSessionState) async {
@@ -699,6 +1031,11 @@ actor WorkoutSessionManager {
                   session.exercises[exerciseIndex].sets.indices.contains(setIndex)
             else { return }
             session.exercises[exerciseIndex].sets[setIndex].rpeText = previous
+        case let .toggleWarmup(exerciseId, setIndex, previous):
+            guard let exerciseIndex = session.exercises.firstIndex(where: { $0.exerciseId == exerciseId }),
+                  session.exercises[exerciseIndex].sets.indices.contains(setIndex)
+            else { return }
+            session.exercises[exerciseIndex].sets[setIndex].isWarmup = previous
         case let .skipExercise(exerciseId, previous):
             guard let exerciseIndex = session.exercises.firstIndex(where: { $0.exerciseId == exerciseId }) else {
                 return
@@ -706,6 +1043,58 @@ actor WorkoutSessionManager {
             session.exercises[exerciseIndex].isSkipped = previous
         case let .changeExerciseIndex(previous):
             session.currentExerciseIndex = previous
+        case let .addSet(exerciseId, setIndex, previousLocalOnlyStructuralChanges):
+            guard let exerciseIndex = session.exercises.firstIndex(where: { $0.exerciseId == exerciseId }),
+                  session.exercises[exerciseIndex].sets.indices.contains(setIndex),
+                  let workoutExerciseIndex = session.workoutDetails.exercises.firstIndex(where: { $0.id == exerciseId })
+            else {
+                return
+            }
+            session.exercises[exerciseIndex].sets.remove(at: setIndex)
+            var updatedExercises = session.workoutDetails.exercises
+            updatedExercises[workoutExerciseIndex] = updatedExercises[workoutExerciseIndex]
+                .updatingSetCount(session.exercises[exerciseIndex].sets.count)
+            session.workoutDetails = session.workoutDetails.updatingExercises(updatedExercises)
+            session.hasLocalOnlyStructuralChanges = previousLocalOnlyStructuralChanges
+        case let .removeSet(exerciseId, setIndex, removedSet, previousLocalOnlyStructuralChanges):
+            guard let exerciseIndex = session.exercises.firstIndex(where: { $0.exerciseId == exerciseId }),
+                  let workoutExerciseIndex = session.workoutDetails.exercises.firstIndex(where: { $0.id == exerciseId })
+            else {
+                return
+            }
+            let insertIndex = min(setIndex, session.exercises[exerciseIndex].sets.count)
+            session.exercises[exerciseIndex].sets.insert(removedSet, at: insertIndex)
+            var updatedExercises = session.workoutDetails.exercises
+            updatedExercises[workoutExerciseIndex] = updatedExercises[workoutExerciseIndex]
+                .updatingSetCount(session.exercises[exerciseIndex].sets.count)
+            session.workoutDetails = session.workoutDetails.updatingExercises(updatedExercises)
+            session.hasLocalOnlyStructuralChanges = previousLocalOnlyStructuralChanges
+        case let .addExercise(exerciseIndex, previousCurrentExerciseIndex, previousLocalOnlyStructuralChanges):
+            guard session.workoutDetails.exercises.indices.contains(exerciseIndex),
+                  session.exercises.indices.contains(exerciseIndex)
+            else {
+                return
+            }
+            var updatedExercises = session.workoutDetails.exercises
+            updatedExercises.remove(at: exerciseIndex)
+            session.workoutDetails = session.workoutDetails.updatingExercises(updatedExercises.normalizedWorkoutOrder())
+            session.exercises.remove(at: exerciseIndex)
+            session.currentExerciseIndex = max(
+                0,
+                min(previousCurrentExerciseIndex, max(0, session.exercises.count - 1)),
+            )
+            session.hasLocalOnlyStructuralChanges = previousLocalOnlyStructuralChanges
+        case let .replaceExercise(exerciseIndex, previousExercise, previousState, previousLocalOnlyStructuralChanges):
+            guard session.workoutDetails.exercises.indices.contains(exerciseIndex),
+                  session.exercises.indices.contains(exerciseIndex)
+            else {
+                return
+            }
+            var updatedExercises = session.workoutDetails.exercises
+            updatedExercises[exerciseIndex] = previousExercise.updatingOrderIndex(exerciseIndex)
+            session.workoutDetails = session.workoutDetails.updatingExercises(updatedExercises)
+            session.exercises[exerciseIndex] = previousState
+            session.hasLocalOnlyStructuralChanges = previousLocalOnlyStructuralChanges
         }
     }
 
@@ -713,7 +1102,8 @@ actor WorkoutSessionManager {
         from snapshot: WorkoutProgressSnapshot,
         workout: WorkoutDetailsModel,
     ) -> WorkoutSessionState {
-        let exercises = workout.exercises.map { exercise in
+        let resolvedWorkout = snapshot.workoutDetails ?? workout
+        let exercises = resolvedWorkout.exercises.map { exercise in
             let stored = snapshot.exercises[exercise.id]
             let sets = Array(0 ..< max(1, exercise.sets)).map { index in
                 if let storedSet = stored?.sets[safe: index] {
@@ -722,9 +1112,16 @@ actor WorkoutSessionManager {
                         repsText: storedSet.repsText,
                         weightText: storedSet.weightText,
                         rpeText: storedSet.rpeText,
+                        isWarmup: storedSet.isWarmup,
                     )
                 }
-                return SessionSetState(isCompleted: false, repsText: "", weightText: "", rpeText: "")
+                return SessionSetState(
+                    isCompleted: false,
+                    repsText: "",
+                    weightText: "",
+                    rpeText: "",
+                    isWarmup: false,
+                )
             }
             return SessionExerciseState(exerciseId: exercise.id, sets: sets, isSkipped: false)
         }
@@ -732,13 +1129,14 @@ actor WorkoutSessionManager {
             userSub: snapshot.userSub,
             programId: snapshot.programId,
             workoutId: snapshot.workoutId,
-            workoutTitle: workout.title,
-            workoutDetails: workout,
+            workoutTitle: resolvedWorkout.title,
+            workoutDetails: resolvedWorkout,
             source: snapshot.source ?? .program,
             startedAt: snapshot.startedAt ?? snapshot.lastUpdated,
             currentExerciseIndex: max(0, min(snapshot.currentExerciseIndex ?? 0, max(0, exercises.count - 1))),
             lastUpdated: snapshot.lastUpdated,
             exercises: exercises,
+            hasLocalOnlyStructuralChanges: snapshot.hasLocalOnlyStructuralChanges,
         )
     }
 
@@ -750,6 +1148,7 @@ actor WorkoutSessionManager {
                     repsText: $0.repsText,
                     weightText: $0.weightText,
                     rpeText: $0.rpeText,
+                    isWarmup: $0.isWarmup,
                 )
             }
             return (exercise.exerciseId, StoredExerciseProgress(sets: sets))
@@ -762,6 +1161,7 @@ actor WorkoutSessionManager {
             startedAt: session.startedAt,
             source: session.source,
             workoutDetails: session.workoutDetails,
+            hasLocalOnlyStructuralChanges: session.hasLocalOnlyStructuralChanges,
             isFinished: isFinished,
             lastUpdated: session.lastUpdated,
             exercises: exercises,
@@ -777,5 +1177,61 @@ private extension Array {
     subscript(safe index: Int) -> Element? {
         guard indices.contains(index) else { return nil }
         return self[index]
+    }
+}
+
+private extension WorkoutExercise {
+    func updatingSetCount(_ sets: Int) -> WorkoutExercise {
+        WorkoutExercise(
+            id: id,
+            name: name,
+            description: description,
+            sets: max(1, sets),
+            repsMin: repsMin,
+            repsMax: repsMax,
+            targetRpe: targetRpe,
+            restSeconds: restSeconds,
+            notes: notes,
+            orderIndex: orderIndex,
+            isBodyweight: isBodyweight,
+            media: media,
+        )
+    }
+
+    func updatingOrderIndex(_ orderIndex: Int) -> WorkoutExercise {
+        WorkoutExercise(
+            id: id,
+            name: name,
+            description: description,
+            sets: sets,
+            repsMin: repsMin,
+            repsMax: repsMax,
+            targetRpe: targetRpe,
+            restSeconds: restSeconds,
+            notes: notes,
+            orderIndex: orderIndex,
+            isBodyweight: isBodyweight,
+            media: media,
+        )
+    }
+}
+
+private extension WorkoutDetailsModel {
+    func updatingExercises(_ exercises: [WorkoutExercise]) -> WorkoutDetailsModel {
+        WorkoutDetailsModel(
+            id: id,
+            title: title,
+            dayOrder: dayOrder,
+            coachNote: coachNote,
+            exercises: exercises,
+        )
+    }
+}
+
+private extension Array where Element == WorkoutExercise {
+    func normalizedWorkoutOrder() -> [WorkoutExercise] {
+        enumerated().map { index, exercise in
+            exercise.updatingOrderIndex(index)
+        }
     }
 }

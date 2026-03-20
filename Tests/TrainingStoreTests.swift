@@ -378,6 +378,167 @@ final class TrainingStoreTests: XCTestCase {
         XCTAssertEqual(insight.ctaTitle, "Начать следующую тренировку")
     }
 
+    func testWorkoutCompositionDraftSupportsAddRemoveReorderAndPrescriptionUpdates() {
+        var draft = WorkoutCompositionDraft()
+        let squat = makeCatalogItem(
+            id: "ex-squat",
+            name: "Присед",
+            defaults: ExerciseCatalogDraftDefaults(
+                sets: 4,
+                repsMin: 5,
+                repsMax: 8,
+                restSeconds: 150,
+                targetRpe: 8,
+                notes: "Контроль глубины",
+            ),
+        )
+        let bench = makeCatalogItem(
+            id: "ex-bench",
+            name: "Жим лёжа",
+            defaults: ExerciseCatalogDraftDefaults(
+                sets: 3,
+                repsMin: 6,
+                repsMax: 10,
+                restSeconds: 120,
+                targetRpe: 7,
+                notes: nil,
+            ),
+        )
+
+        XCTAssertTrue(draft.addExercise(squat))
+        XCTAssertFalse(draft.addExercise(squat))
+        XCTAssertTrue(draft.addExercise(bench))
+
+        draft.updateExercise(id: "ex-bench") {
+            $0.sets = 5
+            $0.repsMin = 4
+            $0.repsMax = 6
+            $0.targetRpe = 9
+            $0.notes = "Пауза 1 секунда"
+        }
+
+        XCTAssertTrue(draft.reorderExercise(draggedId: "ex-bench", targetId: "ex-squat"))
+        XCTAssertEqual(draft.exercises.map(\.id), ["ex-bench", "ex-squat"])
+        XCTAssertEqual(draft.exercises.first?.sets, 5)
+        XCTAssertEqual(draft.exercises.first?.targetRpe, 9)
+        XCTAssertEqual(draft.exercises.first?.notes, "Пауза 1 секунда")
+
+        draft.removeExercise(id: "ex-squat")
+        XCTAssertEqual(draft.exercises.map(\.id), ["ex-bench"])
+    }
+
+    func testWorkoutCompositionDraftHydratesFromExistingWorkoutAndBuildsWorkoutDetails() {
+        let workout = WorkoutDetailsModel(
+            id: "quick-1",
+            title: "Push Day",
+            dayOrder: 2,
+            coachNote: "Быстрая тренировка",
+            exercises: [
+                WorkoutExercise(
+                    id: "ex-press",
+                    name: "Жим над головой",
+                    sets: 4,
+                    repsMin: 6,
+                    repsMax: 8,
+                    targetRpe: 8,
+                    restSeconds: 120,
+                    notes: "Без прогиба",
+                    orderIndex: 0,
+                ),
+            ],
+        )
+
+        var draft = WorkoutCompositionDraft(workout: workout)
+        XCTAssertEqual(draft.title, "Push Day")
+        XCTAssertEqual(draft.exercises.first?.targetRpe, 8)
+        XCTAssertEqual(draft.exercises.first?.notes, "Без прогиба")
+
+        draft.updateExercise(id: "ex-press") {
+            $0.sets = 5
+            $0.restSeconds = 150
+        }
+
+        let rebuilt = draft.asWorkoutDetailsModel(
+            workoutID: workout.id,
+            fallbackTitle: "Fallback",
+            dayOrder: workout.dayOrder,
+            coachNote: workout.coachNote,
+        )
+
+        XCTAssertEqual(rebuilt.id, "quick-1")
+        XCTAssertEqual(rebuilt.title, "Push Day")
+        XCTAssertEqual(rebuilt.exercises.first?.sets, 5)
+        XCTAssertEqual(rebuilt.exercises.first?.restSeconds, 150)
+        XCTAssertEqual(rebuilt.exercises.first?.targetRpe, 8)
+        XCTAssertEqual(rebuilt.exercises.first?.notes, "Без прогиба")
+    }
+
+    func testWorkoutCompositionDraftBuildsTemplateDraftPreservingPrescription() {
+        let draft = WorkoutCompositionDraft(
+            title: "Upper A",
+            exercises: [
+                WorkoutCompositionExerciseDraft(
+                    id: "ex-row",
+                    name: "Тяга в наклоне",
+                    sets: 4,
+                    repsMin: 8,
+                    repsMax: 10,
+                    targetRpe: 8,
+                    restSeconds: 90,
+                    notes: "Локти назад",
+                ),
+            ],
+        )
+
+        let template = draft.asTemplateDraft(
+            id: "template-upper-a",
+            userSub: "u1",
+            fallbackTitle: "Fallback",
+        )
+
+        XCTAssertEqual(template.name, "Upper A")
+        XCTAssertEqual(template.exercises.first?.targetRpe, 8)
+        XCTAssertEqual(template.exercises.first?.notes, "Локти назад")
+        XCTAssertEqual(template.exercises.first?.repsMin, 8)
+        XCTAssertEqual(template.exercises.first?.repsMax, 10)
+    }
+
+    func testBackendWorkoutTemplateRepositoryUsesCacheDuringRemoteFailureCooldown() async throws {
+        let suite = "fitfluence.tests.training.backend-template-fallback.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        let cacheStore = LocalTrainingStore(defaults: defaults)
+        let cachedTemplate = WorkoutTemplateDraft(
+            id: "cached-template",
+            userSub: "u1",
+            name: "Cached Upper",
+            exercises: [
+                TemplateExerciseDraft(id: "ex-1", name: "Жим лёжа", sets: 4, repsMin: 5, repsMax: 8, restSeconds: 120),
+            ],
+            updatedAt: Date(),
+        )
+        await cacheStore.saveTemplate(cachedTemplate)
+
+        let apiClient = StubAthleteWorkoutTemplatesAPIClient(
+            listResults: [
+                .failure(.serverError(statusCode: 500, bodySnippet: "boom")),
+            ],
+        )
+        let repository = BackendWorkoutTemplateRepository(
+            apiClient: apiClient,
+            cacheStore: cacheStore,
+        )
+
+        let first = await repository.templates(userSub: "u1")
+        let second = await repository.templates(userSub: "u1")
+
+        XCTAssertEqual(first.map(\.id), ["cached-template"])
+        XCTAssertEqual(second.map(\.id), ["cached-template"])
+        let calls = await apiClient.listCallCount
+        XCTAssertEqual(calls, 1)
+    }
+
     private func monthKey(for date: Date, calendar: Calendar) -> String {
         let formatter = DateFormatter()
         formatter.calendar = calendar
@@ -385,5 +546,60 @@ final class TrainingStoreTests: XCTestCase {
         formatter.timeZone = calendar.timeZone
         formatter.dateFormat = "yyyy-MM"
         return formatter.string(from: date)
+    }
+
+    private func makeCatalogItem(
+        id: String,
+        name: String,
+        defaults: ExerciseCatalogDraftDefaults,
+    ) -> ExerciseCatalogItem {
+        ExerciseCatalogItem(
+            id: id,
+            code: nil,
+            name: name,
+            description: nil,
+            movementPattern: nil,
+            difficultyLevel: nil,
+            isBodyweight: false,
+            muscles: [],
+            equipment: [],
+            media: [],
+            source: .athleteCatalog,
+            draftDefaults: defaults,
+        )
+    }
+}
+
+private actor StubAthleteWorkoutTemplatesAPIClient: AthleteWorkoutTemplatesAPIClientProtocol {
+    private var queuedListResults: [Result<[AthleteWorkoutTemplatePayload], APIError>]
+    private(set) var listCallCount = 0
+
+    init(listResults: [Result<[AthleteWorkoutTemplatePayload], APIError>]) {
+        queuedListResults = listResults
+    }
+
+    func listAthleteWorkoutTemplates() async -> Result<[AthleteWorkoutTemplatePayload], APIError> {
+        listCallCount += 1
+        if !queuedListResults.isEmpty {
+            return queuedListResults.removeFirst()
+        }
+        return .success([])
+    }
+
+    func createAthleteWorkoutTemplate(
+        request _: CreateAthleteWorkoutTemplateRequestBody,
+    ) async -> Result<AthleteWorkoutTemplatePayload, APIError> {
+        .failure(.unknown)
+    }
+
+    func updateAthleteWorkoutTemplate(
+        templateId _: String,
+        request _: UpdateAthleteWorkoutTemplateRequestBody,
+    ) async -> Result<AthleteWorkoutTemplatePayload, APIError> {
+        .failure(.unknown)
+    }
+
+    func deleteAthleteWorkoutTemplate(templateId _: String) async -> Result<Void, APIError> {
+        .failure(.unknown)
     }
 }

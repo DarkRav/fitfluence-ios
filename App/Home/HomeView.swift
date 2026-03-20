@@ -129,13 +129,9 @@ final class HomeViewModel {
         isLoading = true
         defer { isLoading = false }
 
-        if let session = await sessionManager.latestActiveSession(userSub: userSub),
-           await canLaunch(session: session)
-        {
-            activeSession = session
-        } else {
-            activeSession = nil
-        }
+        let localActiveSession = await resolvedLocalActiveSession()
+        activeSession = localActiveSession
+        await loadHomeSummaryContext(localActiveSession: localActiveSession)
         await loadActiveEnrollmentContext()
         if plannedWorkoutToday == nil {
             await loadTodayPlan()
@@ -178,8 +174,66 @@ final class HomeViewModel {
         }
     }
 
-    private func loadActiveEnrollmentContext() async {
+    private func resolvedLocalActiveSession() async -> ActiveWorkoutSession? {
+        if let session = await sessionManager.latestActiveSession(userSub: userSub),
+           await canLaunch(session: session)
+        {
+            return session
+        }
+        return nil
+    }
+
+    private func loadHomeSummaryContext(localActiveSession: ActiveWorkoutSession?) async {
         guard let athleteTrainingClient, isOnline else { return }
+
+        let result = await athleteTrainingClient.homeSummary()
+        guard case let .success(summary) = result else { return }
+
+        if let remoteActive = summary.activeWorkout {
+            let remoteSession = ActiveWorkoutSession(
+                userSub: userSub,
+                programId: remoteActive.programId?.trimmedNilIfEmpty ?? remoteActive.source.rawValue,
+                workoutId: remoteActive.workoutInstanceId,
+                source: remoteActive.source == .program ? .program : .freestyle,
+                status: .inProgress,
+                currentExerciseIndex: nil,
+                lastUpdated: parseDate(summary.generatedAt) ?? Date(),
+            )
+            activeSession = remoteSession
+        } else {
+            activeSession = localActiveSession
+        }
+
+        if let activeProgram = summary.activeProgram {
+            activeProgramId = activeProgram.programId
+            activeProgramTitle = activeProgram.title.trimmedNilIfEmpty ?? activeProgramTitle
+            if activeProgram.totalWorkouts > 0 {
+                lastWorkoutSummary = "Прогресс программы: \(activeProgram.completedWorkouts)/\(activeProgram.totalWorkouts)"
+            }
+        }
+
+        if let todayWorkout = summary.todayWorkout {
+            let mappedStatus = mapStatus(todayWorkout.status)
+            plannedWorkoutToday = HomePlannedWorkoutSnapshot(
+                title: todayWorkout.title.trimmedNilIfEmpty ?? "Тренировка",
+                status: mappedStatus,
+                statusText: statusText(for: mappedStatus),
+                subtitle: subtitle(for: todayWorkout),
+                source: mapSource(todayWorkout.source),
+                programId: todayWorkout.programId?.trimmedNilIfEmpty,
+                workoutId: todayWorkout.workoutInstanceId,
+            )
+            await loadWorkoutSnapshotFromInstance(workoutInstanceId: todayWorkout.workoutInstanceId)
+        }
+    }
+
+    private func loadActiveEnrollmentContext() async {
+        guard plannedWorkoutToday == nil,
+              let athleteTrainingClient,
+              isOnline
+        else {
+            return
+        }
 
         let result = await athleteTrainingClient.activeEnrollmentProgress()
         switch result {
@@ -486,6 +540,76 @@ final class HomeViewModel {
             namespace: userSub,
         ) != nil
     }
+
+    private func parseDate(_ value: String?) -> Date? {
+        guard let value = value?.trimmedNilIfEmpty else { return nil }
+        if let withFractions = Self.iso8601WithFractions.date(from: value) {
+            return withFractions
+        }
+        return Self.iso8601.date(from: value)
+    }
+
+    private func statusText(for status: TrainingDayStatus) -> String {
+        switch status {
+        case .planned:
+            "Запланирована"
+        case .inProgress:
+            "В процессе"
+        case .completed:
+            "Выполнена"
+        case .missed:
+            "Пропущена"
+        case .skipped:
+            "Пропущена намеренно"
+        }
+    }
+
+    private func mapStatus(_ status: AthleteWorkoutInstanceStatus?) -> TrainingDayStatus {
+        switch status {
+        case .inProgress:
+            .inProgress
+        case .completed:
+            .completed
+        case .missed:
+            .missed
+        case .abandoned:
+            .skipped
+        case .planned, .none:
+            .planned
+        }
+    }
+
+    private func mapSource(_ source: AthleteWorkoutSource) -> WorkoutSource {
+        switch source {
+        case .program:
+            .program
+        case .custom:
+            .freestyle
+        }
+    }
+
+    private func subtitle(for workout: AthleteHomeWorkoutSummary) -> String {
+        switch mapSource(workout.source) {
+        case .program:
+            return "Активная программа"
+        case .freestyle:
+            return "Своя тренировка"
+        case .template:
+            return "По шаблону"
+        }
+    }
+
+    private static let iso8601WithFractions: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter
+    }()
+
+    private static let iso8601: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime]
+        return formatter
+    }()
 }
 
 struct HomeViewV2: View {

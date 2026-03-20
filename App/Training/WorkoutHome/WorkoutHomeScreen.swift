@@ -6,6 +6,7 @@ struct WorkoutHomeScreen: View {
     let onContinueSession: (ActiveWorkoutSession) -> Void
     let onOpenRemoteWorkout: (WorkoutHomeViewModel.RemoteWorkoutTarget) -> Void
     let onOpenPresetWorkout: (WorkoutHomeViewModel.PresetWorkoutTarget) -> Void
+    let onBuildTodayWorkout: () -> Void
     let onStartQuickWorkout: () -> Void
     let onOpenTemplates: () -> Void
     let onRepeatWorkout: (CompletedWorkoutRecord) -> Void
@@ -44,6 +45,7 @@ struct WorkoutHomeScreen: View {
                         isLoading: false,
                         syncStatus: viewModel.syncIndicator,
                         showsCacheTag: viewModel.isShowingCachedData,
+                        onBuildTodayWorkout: onBuildTodayWorkout,
                         onStartWorkout: runStartWorkout,
                     )
                 }
@@ -72,6 +74,10 @@ struct WorkoutHomeScreen: View {
                 }
 
                 QuickActionsSection(
+                    onBuildTodayWorkout: {
+                        ClientAnalytics.track(.workoutStartButtonTapped, properties: ["source": "hub_today_planning"])
+                        onBuildTodayWorkout()
+                    },
                     onStartEmptyWorkout: {
                         ClientAnalytics.track(.workoutQuickButtonTapped)
                         onStartQuickWorkout()
@@ -219,6 +225,7 @@ struct WorkoutHomeScreen: View {
             onContinueSession: { _ in },
             onOpenRemoteWorkout: { _ in },
             onOpenPresetWorkout: { _ in },
+            onBuildTodayWorkout: {},
             onStartQuickWorkout: {},
             onOpenTemplates: {},
             onRepeatWorkout: { _ in },

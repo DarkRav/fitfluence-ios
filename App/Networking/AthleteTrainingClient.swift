@@ -9,6 +9,9 @@ struct ActiveEnrollmentProgressResponse: Codable, Equatable, Sendable {
     let currentWorkoutId: String?
     let currentWorkoutTitle: String?
     let currentWorkoutStatus: AthleteWorkoutInstanceStatus?
+    let todayWorkoutId: String?
+    let todayWorkoutTitle: String?
+    let todayWorkoutStatus: AthleteWorkoutInstanceStatus?
     let nextWorkoutId: String?
     let nextWorkoutTitle: String?
     let nextWorkoutStatus: AthleteWorkoutInstanceStatus?
@@ -27,6 +30,9 @@ struct ActiveEnrollmentProgressResponse: Codable, Equatable, Sendable {
         currentWorkoutId: nil,
         currentWorkoutTitle: nil,
         currentWorkoutStatus: nil,
+        todayWorkoutId: nil,
+        todayWorkoutTitle: nil,
+        todayWorkoutStatus: nil,
         nextWorkoutId: nil,
         nextWorkoutTitle: nil,
         nextWorkoutStatus: nil,
@@ -36,6 +42,121 @@ struct ActiveEnrollmentProgressResponse: Codable, Equatable, Sendable {
         lastCompletedAt: nil,
         updatedAt: nil,
     )
+}
+
+struct AthleteProgramEnrollmentSummary: Codable, Equatable, Sendable {
+    let id: String
+    let athleteId: String
+    let programId: String?
+    let programTitle: String?
+    let programVersionId: String
+    let status: String
+    let startedAt: String
+    let createdAt: String?
+    let updatedAt: String?
+}
+
+struct AthleteProgramWorkoutTarget: Codable, Equatable, Sendable {
+    let workoutInstanceId: String
+    let workoutTemplateId: String?
+    let title: String?
+    let scheduledDate: String?
+    let status: AthleteWorkoutInstanceStatus?
+}
+
+struct AthleteProgramStatusResponse: Codable, Equatable, Sendable {
+    let programId: String
+    let programTitle: String
+    let enrollment: AthleteProgramEnrollmentSummary?
+    let currentWorkout: AthleteProgramWorkoutTarget?
+    let todayWorkout: AthleteProgramWorkoutTarget?
+    let nextWorkout: AthleteProgramWorkoutTarget?
+    let resumeWorkout: AthleteProgramWorkoutTarget?
+    let launchWorkout: AthleteProgramWorkoutTarget?
+    let completedSessions: Int?
+    let totalSessions: Int?
+    let completionPercent: Double?
+    let lastCompletedAt: String?
+    let updatedAt: String?
+}
+
+enum AthleteHomePrimaryActionType: String, Codable, Equatable, Sendable {
+    case continueActiveWorkout = "CONTINUE_ACTIVE_WORKOUT"
+    case startTodaysWorkout = "START_TODAYS_WORKOUT"
+    case continueProgram = "CONTINUE_PROGRAM"
+    case startWorkout = "START_WORKOUT"
+}
+
+struct AthleteHomeWorkoutSummary: Codable, Equatable, Sendable {
+    let workoutInstanceId: String
+    let workoutTemplateId: String?
+    let enrollmentId: String?
+    let programId: String?
+    let title: String
+    let source: AthleteWorkoutSource
+    let status: AthleteWorkoutInstanceStatus?
+    let scheduledDate: String?
+    let startedAt: String?
+    let completedAt: String?
+}
+
+struct AthleteHomePrimaryAction: Codable, Equatable, Sendable {
+    let type: AthleteHomePrimaryActionType
+    let title: String
+    let workout: AthleteHomeWorkoutSummary?
+    let enrollmentId: String?
+    let programId: String?
+}
+
+struct AthleteHomeProgramSummary: Codable, Equatable, Sendable {
+    let enrollmentId: String
+    let programId: String
+    let title: String
+    let completedWorkouts: Int
+    let totalWorkouts: Int
+    let summaryLine: String?
+    let completionPercent: Double?
+    let lastCompletedAt: String?
+    let resumeWorkout: AthleteHomeWorkoutSummary?
+    let todayWorkout: AthleteHomeWorkoutSummary?
+    let nextWorkout: AthleteHomeWorkoutSummary?
+}
+
+struct AthleteHomeProgressOverview: Codable, Equatable, Sendable {
+    let streakDays: Int
+    let workouts7d: Int
+    let totalWorkouts: Int
+    let totalMinutes7d: Int?
+    let lastWorkoutAt: String?
+}
+
+struct AthleteHomeRecentWorkoutSummary: Codable, Equatable, Sendable {
+    let workoutInstanceId: String
+    let programId: String?
+    let title: String
+    let source: AthleteWorkoutSource
+    let completedAt: String
+    let durationSeconds: Int?
+}
+
+struct AthleteHomeRecentActivity: Codable, Equatable, Sendable {
+    let lastCompletedWorkout: AthleteHomeRecentWorkoutSummary?
+    let recentWorkouts: [AthleteHomeRecentWorkoutSummary]
+}
+
+struct AthleteHomeSummaryResponse: Codable, Equatable, Sendable {
+    let generatedAt: String
+    let primaryAction: AthleteHomePrimaryAction
+    let recentActivity: AthleteHomeRecentActivity
+    let progressOverview: AthleteHomeProgressOverview
+    let activeWorkout: AthleteHomeWorkoutSummary?
+    let todayWorkout: AthleteHomeWorkoutSummary?
+    let activeProgram: AthleteHomeProgramSummary?
+}
+
+struct AthleteEnrollmentScheduleUpdateRequest: Codable, Equatable, Sendable {
+    let startDate: String
+    let weekdays: [String]
 }
 
 enum AthleteWorkoutInstanceStatus: String, Codable, Equatable, Sendable {
@@ -290,6 +411,7 @@ struct AthleteSetExecution: Codable, Equatable, Sendable {
     let reps: Int?
     let rpe: Int?
     let isCompleted: Bool
+    let isWarmup: Bool?
     let restSecondsActual: Int?
 }
 
@@ -310,11 +432,171 @@ struct AthleteExerciseExecution: Codable, Equatable, Sendable {
     let progressionPolicyId: String?
     let exercise: AthleteExerciseBrief?
     let sets: [AthleteSetExecution]?
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case workoutInstanceId
+        case exerciseTemplateId
+        case workoutPlanId
+        case exerciseId
+        case orderIndex
+        case notes
+        case plannedSets
+        case plannedRepsMin
+        case plannedRepsMax
+        case plannedTargetRpe
+        case plannedRestSeconds
+        case plannedNotes
+        case progressionPolicyId
+        case exercise
+        case sets
+    }
+
+    private enum DecodingKeys: String, CodingKey {
+        case id
+        case exerciseExecutionId
+        case workoutInstanceId
+        case workoutId
+        case exerciseTemplateId
+        case templateExerciseId
+        case workoutPlanId
+        case workoutExercisePlanId
+        case exerciseId
+        case exercise
+        case orderIndex
+        case order
+        case position
+        case notes
+        case plannedSets
+        case setsCount
+        case setCount
+        case sets
+        case plannedRepsMin
+        case repsMin
+        case minReps
+        case plannedRepsMax
+        case repsMax
+        case maxReps
+        case plannedTargetRpe
+        case targetRpe
+        case rpe
+        case plannedRestSeconds
+        case restSeconds
+        case rest
+        case plannedNotes
+        case prescriptionNotes
+        case progressionPolicyId
+    }
+
+    init(
+        id: String,
+        workoutInstanceId: String,
+        exerciseTemplateId: String?,
+        workoutPlanId: String?,
+        exerciseId: String,
+        orderIndex: Int,
+        notes: String?,
+        plannedSets: Int?,
+        plannedRepsMin: Int?,
+        plannedRepsMax: Int?,
+        plannedTargetRpe: Int?,
+        plannedRestSeconds: Int?,
+        plannedNotes: String?,
+        progressionPolicyId: String?,
+        exercise: AthleteExerciseBrief?,
+        sets: [AthleteSetExecution]?,
+    ) {
+        self.id = id
+        self.workoutInstanceId = workoutInstanceId
+        self.exerciseTemplateId = exerciseTemplateId
+        self.workoutPlanId = workoutPlanId
+        self.exerciseId = exerciseId
+        self.orderIndex = orderIndex
+        self.notes = notes
+        self.plannedSets = plannedSets
+        self.plannedRepsMin = plannedRepsMin
+        self.plannedRepsMax = plannedRepsMax
+        self.plannedTargetRpe = plannedTargetRpe
+        self.plannedRestSeconds = plannedRestSeconds
+        self.plannedNotes = plannedNotes
+        self.progressionPolicyId = progressionPolicyId
+        self.exercise = exercise
+        self.sets = sets
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: DecodingKeys.self)
+        let resolvedExercise = try? container.decodeIfPresent(AthleteExerciseBrief.self, forKey: .exercise)
+        let resolvedExerciseID = container.decodeLossyString(forKeys: [.exerciseId]) ?? resolvedExercise?.id ?? UUID().uuidString
+
+        id = container.decodeLossyString(forKeys: [.id, .exerciseExecutionId]) ?? resolvedExerciseID
+        workoutInstanceId = container.decodeLossyString(forKeys: [.workoutInstanceId, .workoutId]) ?? ""
+        exerciseTemplateId = container.decodeLossyString(forKeys: [.exerciseTemplateId, .templateExerciseId])
+        workoutPlanId = container.decodeLossyString(forKeys: [.workoutPlanId, .workoutExercisePlanId])
+        exerciseId = resolvedExerciseID
+        orderIndex = max(0, container.decodeLossyInt(forKeys: [.orderIndex, .order, .position]) ?? 0)
+        notes = container.decodeLossyString(forKeys: [.notes])
+        plannedSets = container.decodeLossyInt(forKeys: [.plannedSets, .setsCount, .setCount, .sets])
+        plannedRepsMin = container.decodeLossyInt(forKeys: [.plannedRepsMin, .repsMin, .minReps])
+        plannedRepsMax = container.decodeLossyInt(forKeys: [.plannedRepsMax, .repsMax, .maxReps])
+        plannedTargetRpe = container.decodeLossyInt(forKeys: [.plannedTargetRpe, .targetRpe, .rpe])
+        plannedRestSeconds = container.decodeLossyInt(forKeys: [.plannedRestSeconds, .restSeconds, .rest])
+        plannedNotes = container.decodeLossyString(forKeys: [.plannedNotes, .prescriptionNotes])
+        progressionPolicyId = container.decodeLossyString(forKeys: [.progressionPolicyId])
+        exercise = resolvedExercise
+        sets = container.decodeLossyArray(forKeys: [.sets])
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(workoutInstanceId, forKey: .workoutInstanceId)
+        try container.encodeIfPresent(exerciseTemplateId, forKey: .exerciseTemplateId)
+        try container.encodeIfPresent(workoutPlanId, forKey: .workoutPlanId)
+        try container.encode(exerciseId, forKey: .exerciseId)
+        try container.encode(orderIndex, forKey: .orderIndex)
+        try container.encodeIfPresent(notes, forKey: .notes)
+        try container.encodeIfPresent(plannedSets, forKey: .plannedSets)
+        try container.encodeIfPresent(plannedRepsMin, forKey: .plannedRepsMin)
+        try container.encodeIfPresent(plannedRepsMax, forKey: .plannedRepsMax)
+        try container.encodeIfPresent(plannedTargetRpe, forKey: .plannedTargetRpe)
+        try container.encodeIfPresent(plannedRestSeconds, forKey: .plannedRestSeconds)
+        try container.encodeIfPresent(plannedNotes, forKey: .plannedNotes)
+        try container.encodeIfPresent(progressionPolicyId, forKey: .progressionPolicyId)
+        try container.encodeIfPresent(exercise, forKey: .exercise)
+        try container.encodeIfPresent(sets, forKey: .sets)
+    }
 }
 
 struct AthleteWorkoutDetailsResponse: Codable, Equatable, Sendable {
     let workout: AthleteWorkoutInstance
     let exercises: [AthleteExerciseExecution]
+}
+
+struct ActiveWorkoutSyncSetRequest: Codable, Equatable, Sendable {
+    let id: String?
+    let weight: Double?
+    let reps: Int?
+    let rpe: Int?
+    let isCompleted: Bool?
+    let isWarmup: Bool?
+    let restSecondsActual: Int?
+}
+
+struct ActiveWorkoutSyncExerciseRequest: Codable, Equatable, Sendable {
+    let id: String?
+    let exerciseId: String
+    let repsMin: Int?
+    let repsMax: Int?
+    let targetRpe: Int?
+    let restSeconds: Int?
+    let notes: String?
+    let progressionPolicyId: String?
+    let sets: [ActiveWorkoutSyncSetRequest]
+}
+
+struct ActiveWorkoutSyncRequest: Codable, Equatable, Sendable {
+    let exercises: [ActiveWorkoutSyncExerciseRequest]
 }
 
 struct AthleteWorkoutCompleteResponse: Codable, Equatable, Sendable {
@@ -656,6 +938,20 @@ struct AthleteExerciseHistoryResponse: Codable, Equatable, Sendable {
     }
 }
 
+struct AthleteRecentExerciseEntry: Codable, Equatable, Sendable, Identifiable {
+    let exercise: AthleteExerciseBrief
+    let lastUsedAt: String?
+    let usageCount: Int
+
+    var id: String {
+        exercise.id
+    }
+}
+
+struct AthleteRecentExercisesResponse: Codable, Equatable, Sendable {
+    let entries: [AthleteRecentExerciseEntry]
+}
+
 struct AthleteExerciseLastPerformanceSet: Codable, Equatable, Sendable, Identifiable {
     let setNumber: Int
     let weight: Double?
@@ -899,24 +1195,67 @@ private struct UpdateExerciseSetRequestBody: Codable, Sendable {
     let reps: Int?
     let rpe: Int?
     let isCompleted: Bool?
+    let isWarmup: Bool?
+    let restSecondsActual: Int?
+}
+
+struct AthleteCustomWorkoutExerciseDraftRequest: Codable, Equatable, Sendable {
+    let exerciseId: String
+    let orderIndex: Int
+    let sets: Int
+    let repsMin: Int?
+    let repsMax: Int?
+    let targetRpe: Int?
+    let restSeconds: Int?
+    let notes: String?
+    let progressionPolicyId: String?
+}
+
+struct AthleteCreateCustomWorkoutRequest: Codable, Equatable, Sendable {
+    let title: String
+    let scheduledDate: String?
+    let notes: String?
+    let exercises: [AthleteCustomWorkoutExerciseDraftRequest]?
+}
+
+struct AthleteUpdateCustomWorkoutRequest: Codable, Equatable, Sendable {
+    let title: String?
+    let scheduledDate: String?
+    let notes: String?
 }
 
 protocol AthleteTrainingClientProtocol: Sendable {
     func activeEnrollments() async -> Result<[ActiveEnrollmentProgressResponse], APIError>
     func activeEnrollmentProgress() async -> Result<ActiveEnrollmentProgressResponse, APIError>
+    func homeSummary() async -> Result<AthleteHomeSummaryResponse, APIError>
     func calendar(month: String) async -> Result<AthleteCalendarResponse, APIError>
     func enrollmentSchedule(enrollmentId: String) async -> Result<AthleteEnrollmentScheduleResponse, APIError>
+    func updateEnrollmentSchedule(
+        enrollmentId: String,
+        request: AthleteEnrollmentScheduleUpdateRequest,
+    ) async -> Result<AthleteEnrollmentScheduleResponse, APIError>
+    func programStatus(programId: String) async -> Result<AthleteProgramStatusResponse, APIError>
     func syncStatus() async -> Result<AthleteSyncStatusResponse, APIError>
     func exerciseHistory(
         exerciseId: String,
         page: Int?,
         size: Int?,
     ) async -> Result<AthleteExerciseHistoryResponse, APIError>
+    func recentExercises(limit: Int?) async -> Result<AthleteRecentExercisesResponse, APIError>
     func lastPerformance(exerciseId: String) async -> Result<AthleteExerciseLastPerformanceResponse, APIError>
     func personalRecords(exerciseId: String?) async -> Result<AthletePersonalRecordsResponse, APIError>
     func statsSummary() async -> Result<AthleteStatsSummaryResponse, APIError>
     func creatorAnalytics() async -> Result<CreatorAnalyticsResponse, APIError>
     func getWorkoutDetails(workoutInstanceId: String) async -> Result<AthleteWorkoutDetailsResponse, APIError>
+    func createCustomWorkout(request: AthleteCreateCustomWorkoutRequest) async -> Result<AthleteWorkoutDetailsResponse, APIError>
+    func updateCustomWorkout(
+        workoutInstanceId: String,
+        request: AthleteUpdateCustomWorkoutRequest,
+    ) async -> Result<AthleteWorkoutDetailsResponse, APIError>
+    func syncActiveWorkout(
+        workoutInstanceId: String,
+        request: ActiveWorkoutSyncRequest,
+    ) async -> Result<AthleteWorkoutDetailsResponse, APIError>
     func startWorkout(workoutInstanceId: String, startedAt: Date?) async -> Result<AthleteWorkoutInstance, APIError>
     func completeWorkout(workoutInstanceId: String, completedAt: Date?) async -> Result<AthleteWorkoutInstance, APIError>
     func abandonWorkout(workoutInstanceId: String, abandonedAt: Date?) async -> Result<AthleteWorkoutInstance, APIError>
@@ -927,11 +1266,17 @@ protocol AthleteTrainingClientProtocol: Sendable {
         reps: Int?,
         rpe: Int?,
         isCompleted: Bool?,
+        isWarmup: Bool?,
+        restSecondsActual: Int?,
     ) async -> Result<AthleteSetExecution, APIError>
     func workoutComparison(workoutInstanceId: String) async -> Result<AthleteWorkoutComparisonResponse, APIError>
 }
 
 extension AthleteTrainingClientProtocol {
+    func activeEnrollmentProgress() async -> Result<ActiveEnrollmentProgressResponse, APIError> {
+        .failure(.unknown)
+    }
+
     func activeEnrollments() async -> Result<[ActiveEnrollmentProgressResponse], APIError> {
         switch await activeEnrollmentProgress() {
         case let .success(value):
@@ -945,7 +1290,22 @@ extension AthleteTrainingClientProtocol {
         .failure(.unknown)
     }
 
+    func homeSummary() async -> Result<AthleteHomeSummaryResponse, APIError> {
+        .failure(.unknown)
+    }
+
     func enrollmentSchedule(enrollmentId _: String) async -> Result<AthleteEnrollmentScheduleResponse, APIError> {
+        .failure(.unknown)
+    }
+
+    func updateEnrollmentSchedule(
+        enrollmentId _: String,
+        request _: AthleteEnrollmentScheduleUpdateRequest,
+    ) async -> Result<AthleteEnrollmentScheduleResponse, APIError> {
+        .failure(.unknown)
+    }
+
+    func programStatus(programId _: String) async -> Result<AthleteProgramStatusResponse, APIError> {
         .failure(.unknown)
     }
 
@@ -958,6 +1318,10 @@ extension AthleteTrainingClientProtocol {
         page _: Int?,
         size _: Int?,
     ) async -> Result<AthleteExerciseHistoryResponse, APIError> {
+        .failure(.unknown)
+    }
+
+    func recentExercises(limit _: Int?) async -> Result<AthleteRecentExercisesResponse, APIError> {
         .failure(.unknown)
     }
 
@@ -977,7 +1341,35 @@ extension AthleteTrainingClientProtocol {
         .failure(.unknown)
     }
 
+    func getWorkoutDetails(workoutInstanceId _: String) async -> Result<AthleteWorkoutDetailsResponse, APIError> {
+        .failure(.unknown)
+    }
+
+    func createCustomWorkout(
+        request _: AthleteCreateCustomWorkoutRequest,
+    ) async -> Result<AthleteWorkoutDetailsResponse, APIError> {
+        .failure(.unknown)
+    }
+
+    func updateCustomWorkout(
+        workoutInstanceId _: String,
+        request _: AthleteUpdateCustomWorkoutRequest,
+    ) async -> Result<AthleteWorkoutDetailsResponse, APIError> {
+        .failure(.unknown)
+    }
+
+    func startWorkout(workoutInstanceId _: String, startedAt _: Date?) async -> Result<AthleteWorkoutInstance, APIError> {
+        .failure(.unknown)
+    }
+
     func completeWorkout(workoutInstanceId _: String, completedAt _: Date?) async -> Result<AthleteWorkoutInstance, APIError> {
+        .failure(.unknown)
+    }
+
+    func syncActiveWorkout(
+        workoutInstanceId _: String,
+        request _: ActiveWorkoutSyncRequest,
+    ) async -> Result<AthleteWorkoutDetailsResponse, APIError> {
         .failure(.unknown)
     }
 
@@ -992,6 +1384,8 @@ extension AthleteTrainingClientProtocol {
         reps _: Int?,
         rpe _: Int?,
         isCompleted _: Bool?,
+        isWarmup _: Bool?,
+        restSecondsActual _: Int?,
     ) async -> Result<AthleteSetExecution, APIError> {
         .failure(.unknown)
     }
@@ -1090,12 +1484,43 @@ extension APIClient: AthleteTrainingClientProtocol {
         return await decode(request, as: AthleteCalendarResponse.self)
     }
 
+    func homeSummary() async -> Result<AthleteHomeSummaryResponse, APIError> {
+        let request = APIRequest.get(path: "/v1/athlete/home/summary", requiresAuthorization: true)
+        return await decode(request, as: AthleteHomeSummaryResponse.self)
+    }
+
     func enrollmentSchedule(enrollmentId: String) async -> Result<AthleteEnrollmentScheduleResponse, APIError> {
         let request = APIRequest.get(
             path: "/v1/athlete/enrollments/\(enrollmentId)/schedule",
             requiresAuthorization: true,
         )
         return await decode(request, as: AthleteEnrollmentScheduleResponse.self)
+    }
+
+    func updateEnrollmentSchedule(
+        enrollmentId: String,
+        request: AthleteEnrollmentScheduleUpdateRequest,
+    ) async -> Result<AthleteEnrollmentScheduleResponse, APIError> {
+        do {
+            let body = try JSONEncoder().encode(request)
+            let apiRequest = APIRequest(
+                path: "/v1/athlete/enrollments/\(enrollmentId)/schedule",
+                method: .put,
+                body: body,
+                requiresAuthorization: true,
+            )
+            return await decode(apiRequest, as: AthleteEnrollmentScheduleResponse.self)
+        } catch {
+            return .failure(.unknown)
+        }
+    }
+
+    func programStatus(programId: String) async -> Result<AthleteProgramStatusResponse, APIError> {
+        let request = APIRequest.get(
+            path: "/v1/athlete/programs/\(programId)/status",
+            requiresAuthorization: true,
+        )
+        return await decode(request, as: AthleteProgramStatusResponse.self)
     }
 
     func syncStatus() async -> Result<AthleteSyncStatusResponse, APIError> {
@@ -1126,6 +1551,19 @@ extension APIClient: AthleteTrainingClientProtocol {
     func lastPerformance(exerciseId: String) async -> Result<AthleteExerciseLastPerformanceResponse, APIError> {
         let request = APIRequest.get(path: "/v1/athlete/exercises/\(exerciseId)/last-performance", requiresAuthorization: true)
         return await decode(request, as: AthleteExerciseLastPerformanceResponse.self)
+    }
+
+    func recentExercises(limit: Int?) async -> Result<AthleteRecentExercisesResponse, APIError> {
+        var queryItems: [URLQueryItem] = []
+        if let limit {
+            queryItems.append(URLQueryItem(name: "limit", value: "\(limit)"))
+        }
+        let request = APIRequest.get(
+            path: "/v1/athlete/exercises/recent",
+            queryItems: queryItems,
+            requiresAuthorization: true,
+        )
+        return await decode(request, as: AthleteRecentExercisesResponse.self)
     }
 
     func personalRecords(exerciseId: String?) async -> Result<AthletePersonalRecordsResponse, APIError> {
@@ -1160,6 +1598,57 @@ extension APIClient: AthleteTrainingClientProtocol {
     func getWorkoutDetails(workoutInstanceId: String) async -> Result<AthleteWorkoutDetailsResponse, APIError> {
         let request = APIRequest.get(path: "/v1/athlete/workouts/\(workoutInstanceId)", requiresAuthorization: true)
         return await decode(request, as: AthleteWorkoutDetailsResponse.self)
+    }
+
+    func createCustomWorkout(request: AthleteCreateCustomWorkoutRequest) async -> Result<AthleteWorkoutDetailsResponse, APIError> {
+        do {
+            let body = try JSONEncoder().encode(request)
+            let apiRequest = APIRequest(
+                path: "/v1/athlete/workouts/custom",
+                method: .post,
+                body: body,
+                requiresAuthorization: true,
+            )
+            return await decode(apiRequest, as: AthleteWorkoutDetailsResponse.self)
+        } catch {
+            return .failure(.unknown)
+        }
+    }
+
+    func updateCustomWorkout(
+        workoutInstanceId: String,
+        request: AthleteUpdateCustomWorkoutRequest,
+    ) async -> Result<AthleteWorkoutDetailsResponse, APIError> {
+        do {
+            let body = try JSONEncoder().encode(request)
+            let apiRequest = APIRequest(
+                path: "/v1/athlete/workouts/custom/\(workoutInstanceId)",
+                method: .patch,
+                body: body,
+                requiresAuthorization: true,
+            )
+            return await decode(apiRequest, as: AthleteWorkoutDetailsResponse.self)
+        } catch {
+            return .failure(.unknown)
+        }
+    }
+
+    func syncActiveWorkout(
+        workoutInstanceId: String,
+        request: ActiveWorkoutSyncRequest,
+    ) async -> Result<AthleteWorkoutDetailsResponse, APIError> {
+        do {
+            let body = try JSONEncoder().encode(request)
+            let apiRequest = APIRequest(
+                path: "/v1/athlete/workouts/\(workoutInstanceId)",
+                method: .put,
+                body: body,
+                requiresAuthorization: true,
+            )
+            return await decode(apiRequest, as: AthleteWorkoutDetailsResponse.self)
+        } catch {
+            return .failure(.unknown)
+        }
     }
 
     func startWorkout(workoutInstanceId: String, startedAt: Date?) async -> Result<AthleteWorkoutInstance, APIError> {
@@ -1247,6 +1736,8 @@ extension APIClient: AthleteTrainingClientProtocol {
         reps: Int?,
         rpe: Int?,
         isCompleted: Bool?,
+        isWarmup: Bool?,
+        restSecondsActual: Int?,
     ) async -> Result<AthleteSetExecution, APIError> {
         do {
             let payload = UpdateExerciseSetRequestBody(
@@ -1254,6 +1745,8 @@ extension APIClient: AthleteTrainingClientProtocol {
                 reps: reps,
                 rpe: rpe,
                 isCompleted: isCompleted,
+                isWarmup: isWarmup,
+                restSecondsActual: restSecondsActual,
             )
             let body = try JSONEncoder().encode(payload)
             let request = APIRequest(

@@ -16,10 +16,14 @@ final class SyncEngineTests: XCTestCase {
                 reps: 8,
                 rpe: 8,
                 isCompleted: true,
+                isWarmup: false,
+                restSecondsActual: nil,
             ),
             namespace: namespace,
         )
-        let firstOperation = try XCTUnwrap(first.operation)
+        guard let firstOperation = first.operation else {
+            return XCTFail("Expected operation to be enqueued")
+        }
 
         await store.markRetryableError(
             operationId: firstOperation.id,
@@ -38,6 +42,8 @@ final class SyncEngineTests: XCTestCase {
                 reps: 10,
                 rpe: 9,
                 isCompleted: true,
+                isWarmup: false,
+                restSecondsActual: nil,
             ),
             namespace: namespace,
         )
@@ -102,6 +108,8 @@ final class SyncEngineTests: XCTestCase {
                 reps: 5,
                 rpe: 8,
                 isCompleted: true,
+                isWarmup: false,
+                restSecondsActual: nil,
             ),
             namespace: namespace,
         )
@@ -147,6 +155,8 @@ final class SyncEngineTests: XCTestCase {
                     reps: 8,
                     rpe: 7,
                     isCompleted: false,
+                    isWarmup: false,
+                    restSecondsActual: nil,
                 ),
                 namespace: namespace,
             )
@@ -242,6 +252,7 @@ private actor MockAthleteTrainingClient: AthleteTrainingClientProtocol {
             reps: 8,
             rpe: 8,
             isCompleted: true,
+            isWarmup: false,
             restSecondsActual: nil,
         ),
     )
@@ -259,6 +270,17 @@ private actor MockAthleteTrainingClient: AthleteTrainingClientProtocol {
     }
 
     func getWorkoutDetails(workoutInstanceId _: String) async -> Result<AthleteWorkoutDetailsResponse, APIError> {
+        .failure(.unknown)
+    }
+
+    func createCustomWorkout(request _: AthleteCreateCustomWorkoutRequest) async -> Result<AthleteWorkoutDetailsResponse, APIError> {
+        .failure(.unknown)
+    }
+
+    func updateCustomWorkout(
+        workoutInstanceId _: String,
+        request _: AthleteUpdateCustomWorkoutRequest,
+    ) async -> Result<AthleteWorkoutDetailsResponse, APIError> {
         .failure(.unknown)
     }
 
@@ -284,6 +306,8 @@ private actor MockAthleteTrainingClient: AthleteTrainingClientProtocol {
         reps _: Int?,
         rpe _: Int?,
         isCompleted _: Bool?,
+        isWarmup _: Bool?,
+        restSecondsActual _: Int?,
     ) async -> Result<AthleteSetExecution, APIError> {
         calls.append("UPSERT_SET:\(exerciseExecutionId):\(setNumber)")
         return setResult

@@ -29,6 +29,8 @@ struct SyncOperationPayload: Codable, Equatable, Sendable {
     var reps: Int?
     var rpe: Int?
     var isCompleted: Bool?
+    var isWarmup: Bool?
+    var restSecondsActual: Int?
 
     var startedAt: String?
     var completedAt: String?
@@ -39,12 +41,16 @@ struct SyncOperationPayload: Codable, Equatable, Sendable {
         reps: Int?,
         rpe: Int?,
         isCompleted: Bool?,
+        isWarmup: Bool?,
+        restSecondsActual: Int?,
     ) -> SyncOperationPayload {
         SyncOperationPayload(
             weight: weight,
             reps: reps,
             rpe: rpe,
             isCompleted: isCompleted,
+            isWarmup: isWarmup,
+            restSecondsActual: restSecondsActual,
             startedAt: nil,
             completedAt: nil,
             abandonedAt: nil,
@@ -57,6 +63,8 @@ struct SyncOperationPayload: Codable, Equatable, Sendable {
             reps: nil,
             rpe: nil,
             isCompleted: nil,
+            isWarmup: nil,
+            restSecondsActual: nil,
             startedAt: startedAt,
             completedAt: nil,
             abandonedAt: nil,
@@ -69,6 +77,8 @@ struct SyncOperationPayload: Codable, Equatable, Sendable {
             reps: nil,
             rpe: nil,
             isCompleted: nil,
+            isWarmup: nil,
+            restSecondsActual: nil,
             startedAt: nil,
             completedAt: completedAt,
             abandonedAt: nil,
@@ -81,6 +91,8 @@ struct SyncOperationPayload: Codable, Equatable, Sendable {
             reps: nil,
             rpe: nil,
             isCompleted: nil,
+            isWarmup: nil,
+            restSecondsActual: nil,
             startedAt: nil,
             completedAt: nil,
             abandonedAt: abandonedAt,
@@ -143,11 +155,20 @@ struct SyncOperation: Codable, Equatable, Sendable, Identifiable {
         reps: Int?,
         rpe: Int?,
         isCompleted: Bool?,
+        isWarmup: Bool?,
+        restSecondsActual: Int?,
     ) -> SyncOperation {
         SyncOperation(
             type: .upsertSet,
             dedupeKey: "\(exerciseExecutionId):\(setNumber)",
-            payload: .upsertSet(weight: weight, reps: reps, rpe: rpe, isCompleted: isCompleted),
+            payload: .upsertSet(
+                weight: weight,
+                reps: reps,
+                rpe: rpe,
+                isCompleted: isCompleted,
+                isWarmup: isWarmup,
+                restSecondsActual: restSecondsActual,
+            ),
             workoutInstanceId: workoutInstanceId,
             exerciseExecutionId: exerciseExecutionId,
             setNumber: setNumber,

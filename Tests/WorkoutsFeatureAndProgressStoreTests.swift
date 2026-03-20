@@ -109,6 +109,814 @@ final class WorkoutsFeatureAndProgressStoreTests: XCTestCase {
         XCTAssertEqual(viewModel.toastMessage, "Последнее действие отменено")
     }
 
+    func testWorkoutSetInputFormattingNormalizesWeightInput() {
+        XCTAssertEqual(WorkoutSetInputFormatting.normalizedWeightText(from: "42,5"), "42.5")
+        XCTAssertEqual(WorkoutSetInputFormatting.normalizedWeightText(from: "100.00"), "100")
+        XCTAssertEqual(WorkoutSetInputFormatting.normalizedWeightText(from: "17.25"), "17.25")
+        XCTAssertNil(WorkoutSetInputFormatting.normalizedWeightText(from: "-5"))
+    }
+
+    func testWorkoutSetInputFormattingNormalizesRepsInput() {
+        XCTAssertEqual(WorkoutSetInputFormatting.normalizedRepsText(from: "12"), "12")
+        XCTAssertEqual(WorkoutSetInputFormatting.normalizedRepsText(from: "08"), "8")
+        XCTAssertNil(WorkoutSetInputFormatting.normalizedRepsText(from: "8.5"))
+        XCTAssertNil(WorkoutSetInputFormatting.normalizedRepsText(from: "abc"))
+    }
+
+    func testWorkoutPlayerViewModelDirectEditingPersistsWeightRepsAndRPE() async {
+        let progressStore = MockWorkoutProgressStore(statuses: [:])
+        let sessionManager = WorkoutSessionManager(progressStore: progressStore)
+        let viewModel = WorkoutPlayerViewModel(
+            userSub: "u1",
+            programId: "p1",
+            workout: sampleWorkoutDetails,
+            sessionManager: sessionManager,
+        )
+
+        await viewModel.onAppear()
+        await viewModel.updateWeight(setIndex: 0, input: "42,5")
+        await viewModel.updateReps(setIndex: 0, input: "10")
+        await viewModel.updateRPE(setIndex: 0, rpe: 9)
+
+        XCTAssertEqual(viewModel.currentExerciseState?.sets.first?.weightText, "42.5")
+        XCTAssertEqual(viewModel.currentExerciseState?.sets.first?.repsText, "10")
+        XCTAssertEqual(viewModel.currentExerciseState?.sets.first?.rpeText, "9")
+
+        let snapshot = await progressStore.load(userSub: "u1", programId: "p1", workoutId: "w1")
+        XCTAssertEqual(snapshot?.exercises["ex-1"]?.sets.first?.weightText, "42.5")
+        XCTAssertEqual(snapshot?.exercises["ex-1"]?.sets.first?.repsText, "10")
+        XCTAssertEqual(snapshot?.exercises["ex-1"]?.sets.first?.rpeText, "9")
+    }
+
+    func testWorkoutPlayerViewModelRestoresDirectEditsAfterResume() async {
+        let progressStore = MockWorkoutProgressStore(statuses: [:])
+        let sessionManager = WorkoutSessionManager(progressStore: progressStore)
+
+        let firstViewModel = WorkoutPlayerViewModel(
+            userSub: "u1",
+            programId: "p1",
+            workout: sampleWorkoutDetails,
+            sessionManager: sessionManager,
+        )
+
+        await firstViewModel.onAppear()
+        await firstViewModel.updateWeight(setIndex: 0, input: "60")
+        await firstViewModel.updateReps(setIndex: 0, input: "6")
+        await firstViewModel.updateRPE(setIndex: 0, rpe: 8)
+
+        let secondViewModel = WorkoutPlayerViewModel(
+            userSub: "u1",
+            programId: "p1",
+            workout: sampleWorkoutDetails,
+            sessionManager: sessionManager,
+        )
+
+        await secondViewModel.onAppear()
+
+        XCTAssertEqual(secondViewModel.currentExerciseState?.sets.first?.weightText, "60")
+        XCTAssertEqual(secondViewModel.currentExerciseState?.sets.first?.repsText, "6")
+        XCTAssertEqual(secondViewModel.currentExerciseState?.sets.first?.rpeText, "8")
+    }
+
+    func testWorkoutPlayerViewModelPersistsSetStructureEditsAcrossResume() async {
+        let progressStore = MockWorkoutProgressStore(statuses: [:])
+        let sessionManager = WorkoutSessionManager(progressStore: progressStore)
+
+        let firstViewModel = WorkoutPlayerViewModel(
+            userSub: "u1",
+            programId: "p1",
+            workout: sampleWorkoutDetails,
+            sessionManager: sessionManager,
+        )
+
+        await firstViewModel.onAppear()
+        await firstViewModel.addSet(duplicateLast: false)
+        await firstViewModel.toggleWarmup(setIndex: 2)
+        await firstViewModel.removeSet(setIndex: 1)
+
+        let snapshot = await progressStore.load(userSub: "u1", programId: "p1", workoutId: "w1")
+        XCTAssertEqual(snapshot?.workoutDetails?.exercises.first?.sets, 2)
+        XCTAssertEqual(snapshot?.exercises["ex-1"]?.sets.count, 2)
+        XCTAssertEqual(snapshot?.exercises["ex-1"]?.sets.last?.isWarmup, true)
+        XCTAssertEqual(snapshot?.hasLocalOnlyStructuralChanges, true)
+
+        let secondViewModel = WorkoutPlayerViewModel(
+            userSub: "u1",
+            programId: "p1",
+            workout: sampleWorkoutDetails,
+            sessionManager: sessionManager,
+        )
+
+        await secondViewModel.onAppear()
+
+        XCTAssertEqual(secondViewModel.currentExerciseState?.sets.count, 2)
+        XCTAssertEqual(secondViewModel.currentExerciseState?.sets.last?.isWarmup, true)
+        XCTAssertTrue(secondViewModel.showsLocalStructureNotice)
+        XCTAssertEqual(secondViewModel.syncStatus, .savedLocally)
+    }
+
+    func testWorkoutPlayerViewModelWarmupToggleStaysServerSyncable() async {
+        let progressStore = MockWorkoutProgressStore(statuses: [:])
+        let sessionManager = WorkoutSessionManager(progressStore: progressStore)
+
+        let viewModel = WorkoutPlayerViewModel(
+            userSub: "u1",
+            programId: "p1",
+            workout: sampleWorkoutDetails,
+            sessionManager: sessionManager,
+        )
+
+        await viewModel.onAppear()
+        await viewModel.toggleWarmup(setIndex: 0)
+
+        let snapshot = await progressStore.load(userSub: "u1", programId: "p1", workoutId: "w1")
+        XCTAssertEqual(snapshot?.exercises["ex-1"]?.sets.first?.isWarmup, true)
+        XCTAssertEqual(snapshot?.hasLocalOnlyStructuralChanges, false)
+        XCTAssertFalse(viewModel.showsLocalStructureNotice)
+    }
+
+    func testWorkoutPlayerViewModelAddsExerciseDuringWorkoutAndRestoresIt() async {
+        let progressStore = MockWorkoutProgressStore(statuses: [:])
+        let sessionManager = WorkoutSessionManager(progressStore: progressStore)
+
+        let firstViewModel = WorkoutPlayerViewModel(
+            userSub: "u1",
+            programId: "p1",
+            workout: sampleWorkoutDetails,
+            sessionManager: sessionManager,
+        )
+
+        await firstViewModel.onAppear()
+        await firstViewModel.applyPickedExercise(
+            sampleCatalogItem(
+                id: "ex-extra",
+                name: "Тяга блока",
+                defaults: ExerciseCatalogDraftDefaults(
+                    sets: 3,
+                    repsMin: 10,
+                    repsMax: 12,
+                    restSeconds: 75,
+                    targetRpe: 8,
+                    notes: "Пауза в сведении",
+                ),
+            ),
+            flow: .addAfterCurrent,
+        )
+
+        XCTAssertEqual(firstViewModel.progressItems.map(\.id), ["ex-1", "ex-extra"])
+        XCTAssertEqual(firstViewModel.currentExercise?.id, "ex-extra")
+        XCTAssertEqual(firstViewModel.currentExerciseState?.sets.count, 3)
+        XCTAssertEqual(firstViewModel.currentExerciseState?.sets.first?.repsText, "10")
+        XCTAssertEqual(firstViewModel.currentExerciseState?.sets.first?.rpeText, "8")
+
+        let secondViewModel = WorkoutPlayerViewModel(
+            userSub: "u1",
+            programId: "p1",
+            workout: sampleWorkoutDetails,
+            sessionManager: sessionManager,
+        )
+
+        await secondViewModel.onAppear()
+
+        XCTAssertEqual(secondViewModel.progressItems.map(\.id), ["ex-1", "ex-extra"])
+        XCTAssertEqual(secondViewModel.currentExercise?.id, "ex-extra")
+        XCTAssertEqual(secondViewModel.currentExerciseState?.sets.count, 3)
+    }
+
+    func testWorkoutHomeViewModelUsesHomeSummaryAsRemoteSourceOfTruth() async {
+        let client = MockWorkoutHomeAthleteTrainingClient(
+            homeSummaryResult: .success(
+                AthleteHomeSummaryResponse(
+                    generatedAt: "2026-03-19T09:20:00Z",
+                    primaryAction: AthleteHomePrimaryAction(
+                        type: .startTodaysWorkout,
+                        title: "Начать тренировку на сегодня",
+                        workout: AthleteHomeWorkoutSummary(
+                            workoutInstanceId: "workout-1",
+                            workoutTemplateId: nil,
+                            enrollmentId: "enrollment-1",
+                            programId: "program-1",
+                            title: "Ноги A",
+                            source: .program,
+                            status: .planned,
+                            scheduledDate: "2026-03-19",
+                            startedAt: nil,
+                            completedAt: nil,
+                        ),
+                        enrollmentId: "enrollment-1",
+                        programId: "program-1",
+                    ),
+                    recentActivity: AthleteHomeRecentActivity(
+                        lastCompletedWorkout: AthleteHomeRecentWorkoutSummary(
+                            workoutInstanceId: "workout-0",
+                            programId: "program-1",
+                            title: "Верх A",
+                            source: .program,
+                            completedAt: "2026-03-18T09:20:00Z",
+                            durationSeconds: 3000,
+                        ),
+                        recentWorkouts: [
+                            AthleteHomeRecentWorkoutSummary(
+                                workoutInstanceId: "workout-0",
+                                programId: "program-1",
+                                title: "Верх A",
+                                source: .program,
+                                completedAt: "2026-03-18T09:20:00Z",
+                                durationSeconds: 3000,
+                            ),
+                        ],
+                    ),
+                    progressOverview: AthleteHomeProgressOverview(
+                        streakDays: 4,
+                        workouts7d: 3,
+                        totalWorkouts: 12,
+                        totalMinutes7d: 145,
+                        lastWorkoutAt: "2026-03-18T09:20:00Z",
+                    ),
+                    activeWorkout: nil,
+                    todayWorkout: AthleteHomeWorkoutSummary(
+                        workoutInstanceId: "workout-1",
+                        workoutTemplateId: nil,
+                        enrollmentId: "enrollment-1",
+                        programId: "program-1",
+                        title: "Ноги A",
+                        source: .program,
+                        status: .planned,
+                        scheduledDate: "2026-03-19",
+                        startedAt: nil,
+                        completedAt: nil,
+                    ),
+                    activeProgram: AthleteHomeProgramSummary(
+                        enrollmentId: "enrollment-1",
+                        programId: "program-1",
+                        title: "Upper Lower",
+                        completedWorkouts: 5,
+                        totalWorkouts: 12,
+                        summaryLine: "Сегодня: Ноги A",
+                        completionPercent: 41.7,
+                        lastCompletedAt: "2026-03-18T09:20:00Z",
+                        resumeWorkout: nil,
+                        todayWorkout: nil,
+                        nextWorkout: AthleteHomeWorkoutSummary(
+                            workoutInstanceId: "workout-1",
+                            workoutTemplateId: nil,
+                            enrollmentId: "enrollment-1",
+                            programId: "program-1",
+                            title: "Ноги A",
+                            source: .program,
+                            status: .planned,
+                            scheduledDate: "2026-03-19",
+                            startedAt: nil,
+                            completedAt: nil,
+                        ),
+                    ),
+                ),
+            ),
+            syncStatusResult: .success(
+                AthleteSyncStatusResponse(
+                    status: .synced,
+                    hasPendingLocalChanges: false,
+                    isDelayed: false,
+                    pendingOperations: 0,
+                    lastSyncedAt: "2026-03-19T09:20:00Z",
+                ),
+            ),
+        )
+
+        let viewModel = WorkoutHomeViewModel(
+            userSub: "u1",
+            trainingStore: LocalTrainingStore(),
+            progressStore: MockWorkoutProgressStore(statuses: [:]),
+            resumeStore: LocalWorkoutResumeStore(),
+            cacheStore: MemoryCacheStore(),
+            networkMonitor: StaticNetworkMonitor(currentStatus: true),
+            athleteTrainingClient: client,
+            syncCoordinator: .shared,
+        )
+
+        await viewModel.reload()
+
+        XCTAssertEqual(viewModel.todayWorkout?.title, "Ноги A")
+        XCTAssertEqual(viewModel.programProgress?.title, "Upper Lower")
+        XCTAssertEqual(viewModel.programProgress?.detailsLine, "Сегодня: Ноги A")
+        XCTAssertEqual(viewModel.recentWorkouts.first?.workoutTitle, "Верх A")
+        XCTAssertEqual(viewModel.startWorkoutTarget?.workoutId, "workout-1")
+        XCTAssertEqual(viewModel.primaryActionKind, .startToday)
+    }
+
+    func testHomeViewModelUsesHomeSummaryAsPrimaryRemoteSourceOfTruth() async {
+        let programId = "11111111-1111-1111-1111-111111111111"
+        let client = MockWorkoutHomeAthleteTrainingClient(
+            homeSummaryResult: .success(
+                AthleteHomeSummaryResponse(
+                    generatedAt: "2026-03-19T09:20:00Z",
+                    primaryAction: AthleteHomePrimaryAction(
+                        type: .continueActiveWorkout,
+                        title: "Продолжить тренировку",
+                        workout: AthleteHomeWorkoutSummary(
+                            workoutInstanceId: "workout-remote",
+                            workoutTemplateId: nil,
+                            enrollmentId: "enrollment-1",
+                            programId: programId,
+                            title: "Ноги A",
+                            source: .program,
+                            status: .inProgress,
+                            scheduledDate: "2026-03-19",
+                            startedAt: "2026-03-19T09:00:00Z",
+                            completedAt: nil,
+                        ),
+                        enrollmentId: "enrollment-1",
+                        programId: "program-1",
+                    ),
+                    recentActivity: AthleteHomeRecentActivity(lastCompletedWorkout: nil, recentWorkouts: []),
+                    progressOverview: AthleteHomeProgressOverview(
+                        streakDays: 3,
+                        workouts7d: 2,
+                        totalWorkouts: 10,
+                        totalMinutes7d: 90,
+                        lastWorkoutAt: "2026-03-18T09:20:00Z",
+                    ),
+                    activeWorkout: AthleteHomeWorkoutSummary(
+                        workoutInstanceId: "workout-remote",
+                        workoutTemplateId: nil,
+                        enrollmentId: "enrollment-1",
+                        programId: programId,
+                        title: "Ноги A",
+                        source: .program,
+                        status: .inProgress,
+                        scheduledDate: "2026-03-19",
+                        startedAt: "2026-03-19T09:00:00Z",
+                        completedAt: nil,
+                    ),
+                    todayWorkout: AthleteHomeWorkoutSummary(
+                        workoutInstanceId: "workout-remote",
+                        workoutTemplateId: nil,
+                        enrollmentId: "enrollment-1",
+                        programId: programId,
+                        title: "Ноги A",
+                        source: .program,
+                        status: .inProgress,
+                        scheduledDate: "2026-03-19",
+                        startedAt: "2026-03-19T09:00:00Z",
+                        completedAt: nil,
+                    ),
+                    activeProgram: AthleteHomeProgramSummary(
+                        enrollmentId: "enrollment-1",
+                        programId: programId,
+                        title: "Upper Lower",
+                        completedWorkouts: 2,
+                        totalWorkouts: 8,
+                        summaryLine: "В процессе: Ноги A",
+                        completionPercent: 25,
+                        lastCompletedAt: "2026-03-18T09:20:00Z",
+                        resumeWorkout: nil,
+                        todayWorkout: nil,
+                        nextWorkout: nil,
+                    ),
+                ),
+            ),
+            syncStatusResult: .success(
+                AthleteSyncStatusResponse(
+                    status: .synced,
+                    hasPendingLocalChanges: false,
+                    isDelayed: false,
+                    pendingOperations: 0,
+                    lastSyncedAt: "2026-03-19T09:20:00Z",
+                ),
+            ),
+        )
+
+        let viewModel = HomeViewModel(
+            userSub: "u1",
+            sessionManager: WorkoutSessionManager(progressStore: MockWorkoutProgressStore(statuses: [:])),
+            isOnline: true,
+            trainingStore: LocalTrainingStore(),
+            cacheStore: MemoryCacheStore(),
+            progressStore: MockWorkoutProgressStore(statuses: [:]),
+            programsClient: nil,
+            athleteTrainingClient: client,
+            calendar: .current,
+        )
+
+        await viewModel.onAppear()
+
+        XCTAssertEqual(viewModel.activeSession?.workoutId, "workout-remote")
+        XCTAssertEqual(viewModel.plannedWorkoutToday?.workoutId, "workout-remote")
+        XCTAssertEqual(viewModel.primaryTitle, "Продолжить тренировку")
+        XCTAssertEqual(viewModel.primaryAction, .continueSession(programId: programId, workoutId: "workout-remote"))
+    }
+
+    func testHomeViewModelFallsBackToTodayWorkoutFromActiveEnrollment() async {
+        let programId = "22222222-2222-2222-2222-222222222222"
+        let client = MockWorkoutHomeAthleteTrainingClient(
+            progressResult: .success(
+                ActiveEnrollmentProgressResponse(
+                    enrollmentId: "enrollment-1",
+                    status: "ACTIVE",
+                    programId: programId,
+                    programTitle: "Upper Lower",
+                    programVersionId: "version-1",
+                    currentWorkoutId: nil,
+                    currentWorkoutTitle: nil,
+                    currentWorkoutStatus: nil,
+                    todayWorkoutId: "workout-today",
+                    todayWorkoutTitle: "Ноги A",
+                    todayWorkoutStatus: .planned,
+                    nextWorkoutId: nil,
+                    nextWorkoutTitle: nil,
+                    nextWorkoutStatus: nil,
+                    completedSessions: 2,
+                    totalSessions: 8,
+                    completionPercent: 25,
+                    lastCompletedAt: nil,
+                    updatedAt: nil,
+                ),
+            ),
+            homeSummaryResult: .failure(.offline),
+            syncStatusResult: .success(
+                AthleteSyncStatusResponse(
+                    status: .synced,
+                    hasPendingLocalChanges: false,
+                    isDelayed: false,
+                    pendingOperations: 0,
+                    lastSyncedAt: "2026-03-19T09:20:00Z",
+                ),
+            ),
+        )
+
+        let viewModel = HomeViewModel(
+            userSub: "u1",
+            sessionManager: WorkoutSessionManager(progressStore: MockWorkoutProgressStore(statuses: [:])),
+            isOnline: true,
+            trainingStore: LocalTrainingStore(),
+            cacheStore: MemoryCacheStore(),
+            progressStore: MockWorkoutProgressStore(statuses: [:]),
+            programsClient: nil,
+            athleteTrainingClient: client,
+            calendar: .current,
+        )
+
+        await viewModel.onAppear()
+
+        XCTAssertEqual(viewModel.plannedWorkoutToday?.title, "Ноги A")
+        XCTAssertEqual(viewModel.plannedWorkoutToday?.workoutId, "workout-today")
+        XCTAssertEqual(viewModel.primaryTitle, "Начать сегодняшнюю")
+        XCTAssertEqual(viewModel.primaryAction, .startNext(programId: programId, workoutId: "workout-today"))
+    }
+
+    func testWorkoutHomeViewModelPrefersRemoteResumeOverLocalStaleSession() async {
+        let localSnapshot = WorkoutProgressSnapshot(
+            userSub: "u1",
+            programId: "program-local",
+            workoutId: "workout-local",
+            currentExerciseIndex: 0,
+            startedAt: Date().addingTimeInterval(-1200),
+            source: .program,
+            workoutDetails: nil,
+            hasLocalOnlyStructuralChanges: false,
+            isFinished: false,
+            lastUpdated: Date().addingTimeInterval(-900),
+            exercises: [:],
+        )
+        let client = MockWorkoutHomeAthleteTrainingClient(
+            homeSummaryResult: .success(
+                AthleteHomeSummaryResponse(
+                    generatedAt: "2026-03-19T09:20:00Z",
+                    primaryAction: AthleteHomePrimaryAction(
+                        type: .continueActiveWorkout,
+                        title: "Продолжить тренировку",
+                        workout: AthleteHomeWorkoutSummary(
+                            workoutInstanceId: "workout-remote",
+                            workoutTemplateId: nil,
+                            enrollmentId: "enrollment-1",
+                            programId: "program-remote",
+                            title: "Жим B",
+                            source: .program,
+                            status: .inProgress,
+                            scheduledDate: "2026-03-19",
+                            startedAt: "2026-03-19T08:50:00Z",
+                            completedAt: nil,
+                        ),
+                        enrollmentId: "enrollment-1",
+                        programId: "program-remote",
+                    ),
+                    recentActivity: AthleteHomeRecentActivity(lastCompletedWorkout: nil, recentWorkouts: []),
+                    progressOverview: AthleteHomeProgressOverview(
+                        streakDays: 0,
+                        workouts7d: 0,
+                        totalWorkouts: 0,
+                        totalMinutes7d: 0,
+                        lastWorkoutAt: nil,
+                    ),
+                    activeWorkout: AthleteHomeWorkoutSummary(
+                        workoutInstanceId: "workout-remote",
+                        workoutTemplateId: nil,
+                        enrollmentId: "enrollment-1",
+                        programId: "program-remote",
+                        title: "Жим B",
+                        source: .program,
+                        status: .inProgress,
+                        scheduledDate: "2026-03-19",
+                        startedAt: "2026-03-19T08:50:00Z",
+                        completedAt: nil,
+                    ),
+                    todayWorkout: nil,
+                    activeProgram: nil,
+                ),
+            ),
+            syncStatusResult: .success(
+                AthleteSyncStatusResponse(
+                    status: .synced,
+                    hasPendingLocalChanges: false,
+                    isDelayed: false,
+                    pendingOperations: 0,
+                    lastSyncedAt: "2026-03-19T09:20:00Z",
+                ),
+            ),
+        )
+
+        let viewModel = WorkoutHomeViewModel(
+            userSub: "u1",
+            trainingStore: LocalTrainingStore(),
+            progressStore: MockWorkoutProgressStore(statuses: [:], snapshot: localSnapshot),
+            resumeStore: LocalWorkoutResumeStore(),
+            cacheStore: MemoryCacheStore(),
+            networkMonitor: StaticNetworkMonitor(currentStatus: true),
+            athleteTrainingClient: client,
+            syncCoordinator: .shared,
+        )
+
+        await viewModel.reload()
+
+        XCTAssertEqual(viewModel.resumeWorkout?.workoutName, "Жим B")
+        if case let .remote(target)? = viewModel.resumeWorkout?.source {
+            XCTAssertEqual(target.programId, "program-remote")
+            XCTAssertEqual(target.workoutId, "workout-remote")
+        } else {
+            XCTFail("Expected remote resume source")
+        }
+    }
+
+    func testWorkoutHomeViewModelTreatsRemoteTodayWorkoutWithoutStatusAsPlanned() async {
+        let client = MockWorkoutHomeAthleteTrainingClient(
+            homeSummaryResult: .success(
+                AthleteHomeSummaryResponse(
+                    generatedAt: "2026-03-19T09:20:00Z",
+                    primaryAction: AthleteHomePrimaryAction(
+                        type: .startTodaysWorkout,
+                        title: "Начать тренировку на сегодня",
+                        workout: AthleteHomeWorkoutSummary(
+                            workoutInstanceId: "workout-remote",
+                            workoutTemplateId: nil,
+                            enrollmentId: "enrollment-1",
+                            programId: "program-remote",
+                            title: "Жим B",
+                            source: .program,
+                            status: nil,
+                            scheduledDate: "2026-03-19",
+                            startedAt: nil,
+                            completedAt: nil,
+                        ),
+                        enrollmentId: "enrollment-1",
+                        programId: "program-remote",
+                    ),
+                    recentActivity: AthleteHomeRecentActivity(lastCompletedWorkout: nil, recentWorkouts: []),
+                    progressOverview: AthleteHomeProgressOverview(
+                        streakDays: 0,
+                        workouts7d: 0,
+                        totalWorkouts: 0,
+                        totalMinutes7d: 0,
+                        lastWorkoutAt: nil,
+                    ),
+                    activeWorkout: nil,
+                    todayWorkout: AthleteHomeWorkoutSummary(
+                        workoutInstanceId: "workout-remote",
+                        workoutTemplateId: nil,
+                        enrollmentId: "enrollment-1",
+                        programId: "program-remote",
+                        title: "Жим B",
+                        source: .program,
+                        status: nil,
+                        scheduledDate: "2026-03-19",
+                        startedAt: nil,
+                        completedAt: nil,
+                    ),
+                    activeProgram: nil,
+                ),
+            ),
+            syncStatusResult: .success(
+                AthleteSyncStatusResponse(
+                    status: .synced,
+                    hasPendingLocalChanges: false,
+                    isDelayed: false,
+                    pendingOperations: 0,
+                    lastSyncedAt: "2026-03-19T09:20:00Z",
+                ),
+            ),
+        )
+
+        let viewModel = WorkoutHomeViewModel(
+            userSub: "u1",
+            trainingStore: LocalTrainingStore(),
+            progressStore: MockWorkoutProgressStore(statuses: [:]),
+            resumeStore: LocalWorkoutResumeStore(),
+            cacheStore: MemoryCacheStore(),
+            networkMonitor: StaticNetworkMonitor(currentStatus: true),
+            athleteTrainingClient: client,
+            syncCoordinator: .shared,
+        )
+
+        await viewModel.reload()
+
+        XCTAssertEqual(viewModel.todayWorkout?.status, .planned)
+        XCTAssertEqual(viewModel.primaryActionKind, .startToday)
+    }
+
+    func testWorkoutPlayerViewModelNavigatesBetweenExercises() async {
+        let progressStore = MockWorkoutProgressStore(statuses: [:])
+        let sessionManager = WorkoutSessionManager(progressStore: progressStore)
+        let viewModel = WorkoutPlayerViewModel(
+            userSub: "u1",
+            programId: "p1",
+            workout: multiExerciseWorkoutDetails,
+            sessionManager: sessionManager,
+        )
+
+        await viewModel.onAppear()
+
+        XCTAssertEqual(viewModel.currentExercise?.id, "ex-1")
+        XCTAssertFalse(viewModel.canMoveToPreviousExercise)
+        XCTAssertTrue(viewModel.canMoveToNextExercise)
+        XCTAssertEqual(viewModel.nextExerciseTitle, "Жим лёжа")
+        XCTAssertEqual(viewModel.progressLabel, "Упражнение 1 из 2")
+
+        await viewModel.nextExercise()
+
+        XCTAssertEqual(viewModel.currentExercise?.id, "ex-2")
+        XCTAssertTrue(viewModel.canMoveToPreviousExercise)
+        XCTAssertFalse(viewModel.canMoveToNextExercise)
+        XCTAssertEqual(viewModel.previousExerciseTitle, "Присед")
+        XCTAssertEqual(viewModel.progressLabel, "Упражнение 2 из 2")
+
+        await viewModel.prevExercise()
+
+        XCTAssertEqual(viewModel.currentExercise?.id, "ex-1")
+    }
+
+    func testRestTimerControlsSupportAdjustResetAndSkip() {
+        let timer = RestTimerModel()
+
+        timer.start(seconds: 90)
+        timer.pauseOrResume()
+
+        XCTAssertTrue(timer.isVisible)
+        XCTAssertFalse(timer.isRunning)
+        XCTAssertEqual(timer.remainingSeconds, 90)
+
+        timer.add(seconds: 30)
+        XCTAssertEqual(timer.remainingSeconds, 120)
+
+        timer.reset()
+        timer.pauseOrResume()
+
+        XCTAssertTrue(timer.isVisible)
+        XCTAssertFalse(timer.isRunning)
+        XCTAssertEqual(timer.remainingSeconds, 90)
+
+        timer.skip()
+        XCTAssertFalse(timer.isVisible)
+        XCTAssertFalse(timer.isRunning)
+        XCTAssertEqual(timer.remainingSeconds, 0)
+    }
+
+    func testWorkoutPlayerViewModelCompletingExerciseAdvancesFlowAndRestContext() async {
+        let progressStore = MockWorkoutProgressStore(statuses: [:])
+        let sessionManager = WorkoutSessionManager(progressStore: progressStore)
+        let restTimer = RestTimerModel()
+        let viewModel = WorkoutPlayerViewModel(
+            userSub: "u1",
+            programId: "p1",
+            workout: multiExerciseWorkoutDetails,
+            sessionManager: sessionManager,
+            restTimer: restTimer,
+        )
+
+        await viewModel.onAppear()
+        await viewModel.toggleSetComplete(setIndex: 0)
+
+        XCTAssertEqual(viewModel.currentExercise?.id, "ex-1")
+        XCTAssertEqual(viewModel.autoAdvanceUndoState?.includesExerciseMove, false)
+        XCTAssertEqual(viewModel.restStatusTitle, "Идёт отдых")
+
+        await viewModel.toggleSetComplete(setIndex: 1)
+
+        XCTAssertEqual(viewModel.currentExercise?.id, "ex-2")
+        XCTAssertEqual(viewModel.autoAdvanceUndoState?.includesExerciseMove, true)
+        XCTAssertEqual(restTimer.exerciseName, "Жим лёжа")
+        XCTAssertTrue(restTimer.isVisible)
+        XCTAssertEqual(viewModel.nextStepSummary, "Дальше подход 1 в упражнении Жим лёжа.")
+    }
+
+    func testWorkoutPlayerViewModelPreservesCurrentExerciseAcrossResume() async {
+        let progressStore = MockWorkoutProgressStore(statuses: [:])
+        let sessionManager = WorkoutSessionManager(progressStore: progressStore)
+
+        let firstViewModel = WorkoutPlayerViewModel(
+            userSub: "u1",
+            programId: "p1",
+            workout: multiExerciseWorkoutDetails,
+            sessionManager: sessionManager,
+        )
+
+        await firstViewModel.onAppear()
+        await firstViewModel.nextExercise()
+
+        let secondViewModel = WorkoutPlayerViewModel(
+            userSub: "u1",
+            programId: "p1",
+            workout: multiExerciseWorkoutDetails,
+            sessionManager: sessionManager,
+        )
+
+        await secondViewModel.onAppear()
+
+        XCTAssertEqual(secondViewModel.currentExercise?.id, "ex-2")
+        XCTAssertEqual(secondViewModel.progressLabel, "Упражнение 2 из 2")
+        XCTAssertEqual(secondViewModel.previousExerciseTitle, "Присед")
+    }
+
+    func testWorkoutPlayerViewModelReplacesExerciseDuringWorkout() async {
+        let progressStore = MockWorkoutProgressStore(statuses: [:])
+        let sessionManager = WorkoutSessionManager(progressStore: progressStore)
+        let viewModel = WorkoutPlayerViewModel(
+            userSub: "u1",
+            programId: "p1",
+            workout: sampleWorkoutDetails,
+            sessionManager: sessionManager,
+        )
+
+        await viewModel.onAppear()
+        await viewModel.updateWeight(setIndex: 0, input: "80")
+
+        await viewModel.applyPickedExercise(
+            sampleCatalogItem(
+                id: "ex-alt",
+                name: "Жим ногами",
+                defaults: ExerciseCatalogDraftDefaults(
+                    sets: 4,
+                    repsMin: 12,
+                    repsMax: 15,
+                    restSeconds: 90,
+                    targetRpe: 7,
+                    notes: nil,
+                ),
+            ),
+            flow: .replaceCurrent,
+        )
+
+        XCTAssertEqual(viewModel.currentExercise?.id, "ex-alt")
+        XCTAssertEqual(viewModel.currentExercise?.name, "Жим ногами")
+        XCTAssertEqual(viewModel.currentExerciseState?.sets.count, 4)
+        XCTAssertEqual(viewModel.currentExerciseState?.sets.first?.weightText, "")
+        XCTAssertEqual(viewModel.currentExerciseState?.sets.first?.repsText, "12")
+        XCTAssertEqual(viewModel.currentExerciseState?.sets.first?.rpeText, "7")
+        XCTAssertEqual(viewModel.progressItems.map(\.id), ["ex-alt"])
+    }
+
+    func testWorkoutPlayerViewModelFinishUsesEditedWorkoutStructure() async {
+        let progressStore = MockWorkoutProgressStore(statuses: [:])
+        let sessionManager = WorkoutSessionManager(progressStore: progressStore)
+        let viewModel = WorkoutPlayerViewModel(
+            userSub: "u1",
+            programId: "p1",
+            workout: sampleWorkoutDetails,
+            sessionManager: sessionManager,
+        )
+
+        await viewModel.onAppear()
+        await viewModel.addSet(duplicateLast: false)
+        await viewModel.applyPickedExercise(
+            sampleCatalogItem(
+                id: "ex-accessory",
+                name: "Сгибание ног",
+                defaults: ExerciseCatalogDraftDefaults(
+                    sets: 2,
+                    repsMin: 12,
+                    repsMax: 15,
+                    restSeconds: 60,
+                    targetRpe: nil,
+                    notes: nil,
+                ),
+            ),
+            flow: .addAfterCurrent,
+        )
+
+        await viewModel.finish()
+
+        XCTAssertEqual(viewModel.completionSummary?.totalExercises, 2)
+        XCTAssertEqual(viewModel.completionSummary?.totalSets, 5)
+    }
+
     func testWorkoutPlayerViewModelFinishProducesSummary() async {
         let progressStore = MockWorkoutProgressStore(statuses: [:])
         let sessionManager = WorkoutSessionManager(progressStore: progressStore)
@@ -404,6 +1212,46 @@ final class WorkoutsFeatureAndProgressStoreTests: XCTestCase {
         XCTAssertFalse(viewModel.isSubmittingFinish)
     }
 
+    func testWorkoutCompositionDraftBuildsLaunchableWorkoutForPlayer() async {
+        let progressStore = MockWorkoutProgressStore(statuses: [:])
+        let sessionManager = WorkoutSessionManager(progressStore: progressStore)
+        let draft = WorkoutCompositionDraft(
+            title: "Builder Flow",
+            exercises: [
+                WorkoutCompositionExerciseDraft(
+                    id: "ex-builder",
+                    name: "Тяга гантели",
+                    sets: 3,
+                    repsMin: 10,
+                    repsMax: 12,
+                    targetRpe: 8,
+                    restSeconds: 75,
+                    notes: "Контроль лопатки",
+                ),
+            ],
+        )
+
+        let builtWorkout = draft.asWorkoutDetailsModel(
+            workoutID: "quick-builder",
+            fallbackTitle: "Fallback",
+            dayOrder: 0,
+            coachNote: "Быстрая тренировка",
+        )
+        let viewModel = WorkoutPlayerViewModel(
+            userSub: "u1",
+            programId: "custom",
+            workout: builtWorkout,
+            sessionManager: sessionManager,
+        )
+
+        await viewModel.onAppear()
+
+        XCTAssertEqual(viewModel.currentExercise?.name, "Тяга гантели")
+        XCTAssertEqual(viewModel.currentExerciseState?.sets.count, 3)
+        XCTAssertEqual(viewModel.currentExerciseState?.sets.first?.repsText, "10")
+        XCTAssertEqual(viewModel.currentExerciseState?.sets.first?.rpeText, "8")
+    }
+
     func testWorkoutPlayerFinishPostsCompletionNotification() async {
         let progressStore = MockWorkoutProgressStore(statuses: [:])
         let sessionManager = WorkoutSessionManager(progressStore: progressStore)
@@ -591,10 +1439,10 @@ final class WorkoutsFeatureAndProgressStoreTests: XCTestCase {
 
     func testAthleteShellTabsMakeTodayDefaultEntryPoint() {
         XCTAssertEqual(AthleteShellTab.defaultTab, .today)
-        XCTAssertEqual(AthleteShellTab.allCases, [.today, .plan, .progress, .profile])
+        XCTAssertEqual(AthleteShellTab.allCases, [.today, .programs, .plan, .progress, .profile])
         XCTAssertEqual(
             AthleteShellTab.allCases.map(\.title),
-            ["Сегодня", "План", "Прогресс", "Профиль"],
+            ["Сегодня", "Программы", "План", "Прогресс", "Профиль"],
         )
     }
 
@@ -668,6 +1516,9 @@ final class WorkoutsFeatureAndProgressStoreTests: XCTestCase {
             currentWorkoutId: "workout-current",
             currentWorkoutTitle: "День 3",
             currentWorkoutStatus: .inProgress,
+            todayWorkoutId: "workout-current",
+            todayWorkoutTitle: "День 3",
+            todayWorkoutStatus: .inProgress,
             nextWorkoutId: "workout-next",
             nextWorkoutTitle: "День 4",
             nextWorkoutStatus: .planned,
@@ -689,6 +1540,36 @@ final class WorkoutsFeatureAndProgressStoreTests: XCTestCase {
         XCTAssertEqual(resolved?.totalSessions, 8)
     }
 
+    func testActiveEnrollmentResolutionUsesTodayWorkoutAsPreferredLaunchWhenNextMissing() {
+        let progress = ActiveEnrollmentProgressResponse(
+            enrollmentId: "enr-2",
+            status: "ACTIVE",
+            programId: "program-2",
+            programTitle: "Программа на сегодня",
+            programVersionId: "version-2",
+            currentWorkoutId: nil,
+            currentWorkoutTitle: nil,
+            currentWorkoutStatus: nil,
+            todayWorkoutId: "workout-today",
+            todayWorkoutTitle: "День 2",
+            todayWorkoutStatus: .planned,
+            nextWorkoutId: nil,
+            nextWorkoutTitle: nil,
+            nextWorkoutStatus: nil,
+            completedSessions: 1,
+            totalSessions: 4,
+            completionPercent: 25,
+            lastCompletedAt: nil,
+            updatedAt: nil,
+        )
+
+        let resolved = WorkoutDomainRules.resolveActiveEnrollment(progress)
+
+        XCTAssertEqual(resolved?.todayWorkout?.workoutId, "workout-today")
+        XCTAssertEqual(resolved?.preferredLaunchWorkout?.workoutId, "workout-today")
+        XCTAssertNil(resolved?.nextWorkoutToStart)
+    }
+
     func testActiveEnrollmentResolutionBuildsStartTargetWithoutResumeInvariant() {
         let progress = ActiveEnrollmentProgressResponse(
             enrollmentId: "enr-2",
@@ -699,6 +1580,9 @@ final class WorkoutsFeatureAndProgressStoreTests: XCTestCase {
             currentWorkoutId: nil,
             currentWorkoutTitle: nil,
             currentWorkoutStatus: nil,
+            todayWorkoutId: nil,
+            todayWorkoutTitle: nil,
+            todayWorkoutStatus: nil,
             nextWorkoutId: "workout-next",
             nextWorkoutTitle: nil,
             nextWorkoutStatus: .planned,
@@ -853,6 +1737,60 @@ final class WorkoutsFeatureAndProgressStoreTests: XCTestCase {
             ],
         )
     }
+
+    private var multiExerciseWorkoutDetails: WorkoutDetailsModel {
+        WorkoutDetailsModel(
+            id: "w1",
+            title: "Тренировка A",
+            dayOrder: 1,
+            coachNote: nil,
+            exercises: [
+                WorkoutExercise(
+                    id: "ex-1",
+                    name: "Присед",
+                    sets: 2,
+                    repsMin: 8,
+                    repsMax: 10,
+                    targetRpe: 8,
+                    restSeconds: 90,
+                    notes: nil,
+                    orderIndex: 0,
+                ),
+                WorkoutExercise(
+                    id: "ex-2",
+                    name: "Жим лёжа",
+                    sets: 2,
+                    repsMin: 6,
+                    repsMax: 8,
+                    targetRpe: 8,
+                    restSeconds: 120,
+                    notes: nil,
+                    orderIndex: 1,
+                ),
+            ],
+        )
+    }
+
+    private func sampleCatalogItem(
+        id: String,
+        name: String,
+        defaults: ExerciseCatalogDraftDefaults,
+    ) -> ExerciseCatalogItem {
+        ExerciseCatalogItem(
+            id: id,
+            code: nil,
+            name: name,
+            description: "Тестовое упражнение",
+            movementPattern: nil,
+            difficultyLevel: nil,
+            isBodyweight: false,
+            muscles: [],
+            equipment: [],
+            media: [],
+            source: .athleteCatalog,
+            draftDefaults: defaults,
+        )
+    }
 }
 
 private actor MockWorkoutsClient: WorkoutsClientProtocol {
@@ -922,5 +1860,52 @@ private actor MockWorkoutProgressStore: WorkoutProgressStore {
             currentExerciseIndex: snapshot.currentExerciseIndex,
             lastUpdated: snapshot.lastUpdated,
         )
+    }
+}
+
+private actor MockWorkoutHomeAthleteTrainingClient: AthleteTrainingClientProtocol {
+    let progressResult: Result<ActiveEnrollmentProgressResponse, APIError>
+    let homeSummaryResult: Result<AthleteHomeSummaryResponse, APIError>
+    let syncStatusResult: Result<AthleteSyncStatusResponse, APIError>
+
+    init(
+        progressResult: Result<ActiveEnrollmentProgressResponse, APIError> = .failure(.unknown),
+        homeSummaryResult: Result<AthleteHomeSummaryResponse, APIError>,
+        syncStatusResult: Result<AthleteSyncStatusResponse, APIError>,
+    ) {
+        self.progressResult = progressResult
+        self.homeSummaryResult = homeSummaryResult
+        self.syncStatusResult = syncStatusResult
+    }
+
+    func activeEnrollmentProgress() async -> Result<ActiveEnrollmentProgressResponse, APIError> {
+        progressResult
+    }
+
+    func homeSummary() async -> Result<AthleteHomeSummaryResponse, APIError> {
+        homeSummaryResult
+    }
+
+    func syncStatus() async -> Result<AthleteSyncStatusResponse, APIError> {
+        syncStatusResult
+    }
+
+    func getWorkoutDetails(workoutInstanceId _: String) async -> Result<AthleteWorkoutDetailsResponse, APIError> {
+        .failure(.unknown)
+    }
+
+    func createCustomWorkout(request _: AthleteCreateCustomWorkoutRequest) async -> Result<AthleteWorkoutDetailsResponse, APIError> {
+        .failure(.unknown)
+    }
+
+    func updateCustomWorkout(
+        workoutInstanceId _: String,
+        request _: AthleteUpdateCustomWorkoutRequest,
+    ) async -> Result<AthleteWorkoutDetailsResponse, APIError> {
+        .failure(.unknown)
+    }
+
+    func startWorkout(workoutInstanceId _: String, startedAt _: Date?) async -> Result<AthleteWorkoutInstance, APIError> {
+        .failure(.unknown)
     }
 }

@@ -482,6 +482,8 @@ enum EnrollmentStatus: String, Codable, Equatable, Sendable {
 struct ProgramEnrollment: Codable, Equatable, Sendable {
     let id: String
     let athleteId: String
+    let programId: String?
+    let programTitle: String?
     let programVersionId: String
     let status: EnrollmentStatus
     let startedAt: String

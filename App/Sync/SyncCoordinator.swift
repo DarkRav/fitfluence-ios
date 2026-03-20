@@ -57,6 +57,8 @@ actor SyncCoordinator {
         reps: Int?,
         rpe: Int?,
         isCompleted: Bool?,
+        isWarmup: Bool?,
+        restSecondsActual: Int?,
     ) async -> SyncOutboxMutationResult {
         await activate(namespace: namespace)
 
@@ -76,6 +78,8 @@ actor SyncCoordinator {
                 reps: reps,
                 rpe: rpe,
                 isCompleted: isCompleted,
+                isWarmup: isWarmup,
+                restSecondsActual: restSecondsActual,
             ),
             namespace: namespace,
         )

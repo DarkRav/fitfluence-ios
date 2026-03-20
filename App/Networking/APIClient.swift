@@ -4,6 +4,120 @@ struct HealthResponse: Codable, Equatable {
     let status: String
 }
 
+struct AthleteWorkoutTemplateExerciseCatalogPayload: Codable, Equatable, Sendable, Identifiable {
+    let id: String
+    let name: String
+}
+
+struct AthleteWorkoutTemplateExercisePayload: Codable, Equatable, Sendable, Identifiable {
+    let id: String
+    let exercise: AthleteWorkoutTemplateExerciseCatalogPayload
+    let sets: Int
+    let repsMin: Int?
+    let repsMax: Int?
+    let targetRpe: Int?
+    let restSeconds: Int?
+    let notes: String?
+    let progressionPolicyId: String?
+    let orderIndex: Int
+}
+
+struct AthleteWorkoutTemplatePayload: Codable, Equatable, Sendable, Identifiable {
+    let id: String
+    let athleteId: String
+    let title: String
+    let notes: String?
+    let exercises: [AthleteWorkoutTemplateExercisePayload]
+    let createdAt: String?
+    let updatedAt: String?
+}
+
+struct AthleteWorkoutTemplateExerciseInputRequest: Codable, Equatable, Sendable {
+    let exerciseId: String
+    let sets: Int
+    let repsMin: Int?
+    let repsMax: Int?
+    let targetRpe: Int?
+    let restSeconds: Int?
+    let notes: String?
+    let progressionPolicyId: String?
+}
+
+struct CreateAthleteWorkoutTemplateRequestBody: Codable, Equatable, Sendable {
+    let title: String
+    let notes: String?
+    let exercises: [AthleteWorkoutTemplateExerciseInputRequest]
+}
+
+struct UpdateAthleteWorkoutTemplateRequestBody: Codable, Equatable, Sendable {
+    let title: String?
+    let notes: String?
+    let exercises: [AthleteWorkoutTemplateExerciseInputRequest]?
+}
+
+protocol AthleteWorkoutTemplatesAPIClientProtocol: Sendable {
+    func listAthleteWorkoutTemplates() async -> Result<[AthleteWorkoutTemplatePayload], APIError>
+    func createAthleteWorkoutTemplate(
+        request: CreateAthleteWorkoutTemplateRequestBody,
+    ) async -> Result<AthleteWorkoutTemplatePayload, APIError>
+    func updateAthleteWorkoutTemplate(
+        templateId: String,
+        request: UpdateAthleteWorkoutTemplateRequestBody,
+    ) async -> Result<AthleteWorkoutTemplatePayload, APIError>
+    func deleteAthleteWorkoutTemplate(templateId: String) async -> Result<Void, APIError>
+}
+
+extension APIClient: AthleteWorkoutTemplatesAPIClientProtocol {
+    func listAthleteWorkoutTemplates() async -> Result<[AthleteWorkoutTemplatePayload], APIError> {
+        let request = APIRequest.get(path: "/v1/athlete/templates", requiresAuthorization: true)
+        return await decode(request, as: [AthleteWorkoutTemplatePayload].self)
+    }
+
+    func createAthleteWorkoutTemplate(
+        request: CreateAthleteWorkoutTemplateRequestBody,
+    ) async -> Result<AthleteWorkoutTemplatePayload, APIError> {
+        do {
+            let body = try JSONEncoder().encode(request)
+            let apiRequest = APIRequest(
+                path: "/v1/athlete/templates",
+                method: .post,
+                body: body,
+                requiresAuthorization: true,
+            )
+            return await decode(apiRequest, as: AthleteWorkoutTemplatePayload.self)
+        } catch {
+            return .failure(.unknown)
+        }
+    }
+
+    func updateAthleteWorkoutTemplate(
+        templateId: String,
+        request: UpdateAthleteWorkoutTemplateRequestBody,
+    ) async -> Result<AthleteWorkoutTemplatePayload, APIError> {
+        do {
+            let body = try JSONEncoder().encode(request)
+            let apiRequest = APIRequest(
+                path: "/v1/athlete/templates/\(templateId)",
+                method: .patch,
+                body: body,
+                requiresAuthorization: true,
+            )
+            return await decode(apiRequest, as: AthleteWorkoutTemplatePayload.self)
+        } catch {
+            return .failure(.unknown)
+        }
+    }
+
+    func deleteAthleteWorkoutTemplate(templateId: String) async -> Result<Void, APIError> {
+        let request = APIRequest(
+            path: "/v1/athlete/templates/\(templateId)",
+            method: .delete,
+            requiresAuthorization: true,
+        )
+        return await performWithRetry(request, allowRetryAfterRefresh: true)
+    }
+}
+
 protocol APIClientProtocol: Sendable {
     func healthCheck() async -> Result<HealthResponse, APIError>
     func me() async -> Result<MeResponse, APIError>
@@ -239,7 +353,7 @@ final class APIClient: APIClientProtocol, MeClientProtocol, AthleteProfileClient
         }
     }
 
-    private func performWithRetry(
+    func performWithRetry(
         _ request: APIRequest,
         allowRetryAfterRefresh: Bool,
     ) async -> Result<Void, APIError> {

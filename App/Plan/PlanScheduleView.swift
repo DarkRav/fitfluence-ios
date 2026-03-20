@@ -302,6 +302,23 @@ final class PlanScheduleViewModel {
     }
 
     func scheduleConfiguredQuickWorkout(_ workout: WorkoutDetailsModel, on day: Date) async {
+        if let athleteTrainingClient {
+            let result = await athleteTrainingClient.createCustomWorkout(
+                request: workout.asCreateCustomWorkoutRequest(scheduledDate: day),
+            )
+            if case let .success(detailsResponse) = result {
+                let details = detailsResponse.asWorkoutDetailsModel()
+                await cacheStore.set(
+                    workoutCacheKey(programId: nil, source: .freestyle, workoutId: details.id),
+                    value: details,
+                    namespace: userSub,
+                    ttl: 60 * 60 * 24,
+                )
+                await reload()
+                return
+            }
+        }
+
         await schedulePlan(
             day: day,
             title: workout.title,
@@ -374,13 +391,12 @@ final class PlanScheduleViewModel {
 
     func templates() async -> [WorkoutTemplateDraft] {
         let local = await trainingStore.templates(userSub: userSub)
-        let builtIn = builtInTemplates()
         let remote = await remoteTemplateCandidates()
 
         var seen = Set<String>()
         var merged: [WorkoutTemplateDraft] = []
 
-        for template in (local + remote + builtIn) {
+        for template in (local + remote) {
             guard seen.insert(template.id).inserted else { continue }
             merged.append(template)
         }
@@ -471,6 +487,24 @@ final class PlanScheduleViewModel {
     }
 
     func replanMissed(_ item: DayScheduleItem, on targetDay: Date) async {
+        if isRemoteCustomWorkout(item),
+           let workoutId = item.workoutId?.trimmedNilIfEmpty,
+           let athleteTrainingClient
+        {
+            let result = await athleteTrainingClient.updateCustomWorkout(
+                workoutInstanceId: workoutId,
+                request: AthleteUpdateCustomWorkoutRequest(
+                    title: nil,
+                    scheduledDate: Self.scheduleDateFormatter.string(from: calendar.startOfDay(for: targetDay)),
+                    notes: item.workoutDetails?.coachNote?.trimmedNilIfEmpty,
+                ),
+            )
+            if case .success = result {
+                await reload()
+                return
+            }
+        }
+
         await schedulePlan(
             day: targetDay,
             title: item.title,
@@ -488,6 +522,23 @@ final class PlanScheduleViewModel {
         let normalizedTarget = calendar.startOfDay(for: targetDay)
         guard normalizedCurrent != normalizedTarget else { return }
         guard canSchedule(on: normalizedTarget) else { return }
+        if isRemoteCustomWorkout(item),
+           let workoutId = item.workoutId?.trimmedNilIfEmpty,
+           let athleteTrainingClient
+        {
+            let result = await athleteTrainingClient.updateCustomWorkout(
+                workoutInstanceId: workoutId,
+                request: AthleteUpdateCustomWorkoutRequest(
+                    title: nil,
+                    scheduledDate: Self.scheduleDateFormatter.string(from: normalizedTarget),
+                    notes: item.workoutDetails?.coachNote?.trimmedNilIfEmpty,
+                ),
+            )
+            if case .success = result {
+                await reload()
+                return
+            }
+        }
         if let suppression = suppressionSignature(day: item.day, workoutId: item.workoutId, planId: item.planId) {
             suppressedPlanSignatures.insert(suppression)
         }
@@ -508,6 +559,9 @@ final class PlanScheduleViewModel {
     }
 
     func deletePlan(_ item: DayScheduleItem) async {
+        if isRemoteCustomWorkout(item) {
+            return
+        }
         if let suppression = suppressionSignature(day: item.day, workoutId: item.workoutId, planId: item.planId) {
             suppressedPlanSignatures.insert(suppression)
         }
@@ -616,6 +670,23 @@ final class PlanScheduleViewModel {
             }
         }
 
+        if item.source == .freestyle,
+           let workoutInstanceId = item.workoutId?.trimmedNilIfEmpty,
+           UUID(uuidString: workoutInstanceId) != nil,
+           let athleteTrainingClient
+        {
+            if case let .success(detailsResponse) = await athleteTrainingClient.getWorkoutDetails(workoutInstanceId: workoutInstanceId) {
+                let details = detailsResponse.asWorkoutDetailsModel()
+                await cacheStore.set(
+                    workoutCacheKey(programId: item.programId, source: item.source, workoutId: item.workoutId),
+                    value: details,
+                    namespace: userSub,
+                    ttl: 60 * 60 * 24,
+                )
+                return details
+            }
+        }
+
         if item.source == .freestyle {
             return WorkoutDetailsModel(
                 id: item.workoutId?.trimmedNilIfEmpty ?? "quick-\(UUID().uuidString)",
@@ -637,6 +708,7 @@ final class PlanScheduleViewModel {
 
     func canDeletePlannedWorkout(_ item: DayScheduleItem) -> Bool {
         guard item.status == .planned else { return false }
+        guard !isRemoteCustomWorkout(item) else { return false }
         return item.sourceKind == .manual
     }
 
@@ -660,6 +732,62 @@ final class PlanScheduleViewModel {
 
     func updatePlannedManualWorkout(_ item: DayScheduleItem, with workout: WorkoutDetailsModel) async {
         guard canEditPlannedWorkout(item, details: workout) else { return }
+        if isRemoteCustomWorkout(item),
+           let workoutId = item.workoutId?.trimmedNilIfEmpty,
+           let athleteTrainingClient
+        {
+            let metadataResult = await athleteTrainingClient.updateCustomWorkout(
+                workoutInstanceId: workoutId,
+                request: workout.asUpdateCustomWorkoutRequest(scheduledDate: item.day),
+            )
+            if case .success = metadataResult {
+                let syncRequest = ActiveWorkoutSyncRequest(
+                    exercises: workout.exercises
+                        .sorted(by: { $0.orderIndex < $1.orderIndex })
+                        .enumerated()
+                        .map { index, exercise in
+                            ActiveWorkoutSyncExerciseRequest(
+                                id: nil,
+                                exerciseId: exercise.id,
+                                repsMin: exercise.repsMin,
+                                repsMax: exercise.repsMax,
+                                targetRpe: exercise.targetRpe,
+                                restSeconds: exercise.restSeconds,
+                                notes: exercise.notes?.trimmedNilIfEmpty,
+                                progressionPolicyId: nil,
+                                sets: Array(
+                                    repeating: ActiveWorkoutSyncSetRequest(
+                                        id: nil,
+                                        weight: nil,
+                                        reps: nil,
+                                        rpe: nil,
+                                        isCompleted: false,
+                                        isWarmup: false,
+                                        restSecondsActual: nil,
+                                    ),
+                                    count: max(1, exercise.sets),
+                                ),
+                            )
+                        },
+                )
+                let syncResult = await athleteTrainingClient.syncActiveWorkout(
+                    workoutInstanceId: workoutId,
+                    request: syncRequest,
+                )
+                if case let .success(detailsResponse) = syncResult {
+                    let details = detailsResponse.asWorkoutDetailsModel()
+                    await cacheStore.set(
+                        workoutCacheKey(programId: item.programId, source: item.source, workoutId: workoutId),
+                        value: details,
+                        namespace: userSub,
+                        ttl: 60 * 60 * 24,
+                    )
+                    await reload()
+                    return
+                }
+            }
+        }
+
         let resolvedTitle = workout.title.trimmingCharacters(in: .whitespacesAndNewlines)
         let updated = TrainingDayPlan(
             id: item.planId,
@@ -681,6 +809,10 @@ final class PlanScheduleViewModel {
             ttl: 60 * 60 * 24,
         )
         await reload()
+    }
+
+    private func isRemoteCustomWorkout(_ item: DayScheduleItem) -> Bool {
+        item.source == .freestyle && item.planId.hasPrefix("remote-") && item.workoutId?.trimmedNilIfEmpty != nil
     }
 
     private func suppressionSignature(day: Date, workoutId: String?, planId: String) -> String? {
@@ -916,38 +1048,19 @@ final class PlanScheduleViewModel {
         return "\(date.timeIntervalSince1970)::\(workoutId)"
     }
 
+    private static let scheduleDateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(secondsFromGMT: 0)
+        formatter.dateFormat = "yyyy-MM-dd"
+        return formatter
+    }()
+
     private func workoutCacheKey(programId: String?, source: WorkoutSource, workoutId: String?) -> String {
         let resolvedProgramID = programId?.trimmedNilIfEmpty ?? source.rawValue
         let resolvedWorkoutID = workoutId?.trimmedNilIfEmpty ?? "unknown"
         return "workout.details:\(resolvedProgramID):\(resolvedWorkoutID)"
-    }
-
-    private func builtInTemplates() -> [WorkoutTemplateDraft] {
-        [
-            WorkoutTemplateDraft(
-                id: "preset-upper-lower",
-                userSub: "preset",
-                name: "Верх / Низ",
-                exercises: [
-                    .init(id: "bp", name: "Жим лёжа", sets: 4, repsMin: 5, repsMax: 8, restSeconds: 120),
-                    .init(id: "row", name: "Тяга в наклоне", sets: 4, repsMin: 8, repsMax: 12, restSeconds: 90),
-                    .init(id: "sq", name: "Присед со штангой", sets: 4, repsMin: 5, repsMax: 8, restSeconds: 120),
-                    .init(id: "dl", name: "Становая тяга", sets: 3, repsMin: 4, repsMax: 6, restSeconds: 150),
-                ],
-                updatedAt: Date.distantPast,
-            ),
-            WorkoutTemplateDraft(
-                id: "preset-ppl",
-                userSub: "preset",
-                name: "Жим / Тяга / Ноги",
-                exercises: [
-                    .init(id: "ohp", name: "Жим стоя", sets: 4, repsMin: 6, repsMax: 10, restSeconds: 90),
-                    .init(id: "pull", name: "Подтягивания", sets: 4, repsMin: 6, repsMax: 12, restSeconds: 90),
-                    .init(id: "legpress", name: "Жим ногами", sets: 4, repsMin: 10, repsMax: 15, restSeconds: 75),
-                ],
-                updatedAt: Date.distantPast,
-            ),
-        ]
     }
 
     private func remoteTemplateCandidates() async -> [WorkoutTemplateDraft] {
@@ -1031,6 +1144,8 @@ final class PlanScheduleViewModel {
                     repsMin: exercise.repsMin,
                     repsMax: exercise.repsMax,
                     restSeconds: exercise.restSeconds,
+                    targetRpe: exercise.targetRpe,
+                    notes: exercise.notes,
                 )
             }
             templates.append(
@@ -1170,6 +1285,8 @@ struct PlanScheduleScreen: View {
     let onOpenPresetWorkout: (_ workout: WorkoutDetailsModel, _ source: WorkoutSource, _ programId: String?) -> Void
     let onOpenQuickWorkoutBuilder: () -> Void
     let onOpenCompletedWorkout: (_ record: CompletedWorkoutRecord) -> Void
+    let exerciseCatalogRepository: any ExerciseCatalogRepository
+    let exercisePickerSuggestionsProvider: any ExercisePickerSuggestionsProviding
 
     @State private var expandedUpcomingDay: Date?
     @State private var scheduleTargetDay: Date?
@@ -1184,12 +1301,19 @@ struct PlanScheduleScreen: View {
 
     init(
         viewModel: PlanScheduleViewModel,
+        exerciseCatalogRepository: any ExerciseCatalogRepository = BackendExerciseCatalogRepository(
+            apiClient: nil,
+            userSub: nil,
+        ),
+        exercisePickerSuggestionsProvider: any ExercisePickerSuggestionsProviding = EmptyExercisePickerSuggestionsProvider(),
         onOpenProgramWorkout: @escaping (_ programId: String, _ workoutId: String) -> Void = { _, _ in },
         onOpenPresetWorkout: @escaping (_ workout: WorkoutDetailsModel, _ source: WorkoutSource, _ programId: String?) -> Void = { _, _, _ in },
         onOpenQuickWorkoutBuilder: @escaping () -> Void = {},
         onOpenCompletedWorkout: @escaping (_ record: CompletedWorkoutRecord) -> Void = { _ in },
     ) {
         _viewModel = State(initialValue: viewModel)
+        self.exerciseCatalogRepository = exerciseCatalogRepository
+        self.exercisePickerSuggestionsProvider = exercisePickerSuggestionsProvider
         self.onOpenProgramWorkout = onOpenProgramWorkout
         self.onOpenPresetWorkout = onOpenPresetWorkout
         self.onOpenQuickWorkoutBuilder = onOpenQuickWorkoutBuilder
@@ -1249,7 +1373,11 @@ struct PlanScheduleScreen: View {
         }
         .fullScreenCover(isPresented: $isQuickScheduleBuilderPresented) {
             NavigationStack {
-                QuickWorkoutBuilderView(submitTitle: "Создать") { workout in
+                QuickWorkoutBuilderView(
+                    submitTitle: "Создать",
+                    exerciseCatalogRepository: exerciseCatalogRepository,
+                    exercisePickerSuggestionsProvider: exercisePickerSuggestionsProvider,
+                ) { workout in
                     guard let day = scheduleTargetDay else { return }
                     Task {
                         await viewModel.scheduleConfiguredQuickWorkout(workout, on: day)
@@ -1315,6 +1443,8 @@ struct PlanScheduleScreen: View {
                 QuickWorkoutBuilderView(
                     initialWorkout: flow.workoutDetails,
                     submitTitle: "Сохранить изменения",
+                    exerciseCatalogRepository: exerciseCatalogRepository,
+                    exercisePickerSuggestionsProvider: exercisePickerSuggestionsProvider,
                 ) { updatedWorkout in
                     Task {
                         await viewModel.updatePlannedManualWorkout(flow.item, with: updatedWorkout)
@@ -2491,29 +2621,40 @@ private struct PlanWorkoutDetailsSheet: View {
                             }
                         }
 
-                        FFCard {
-                            VStack(alignment: .leading, spacing: FFSpacing.sm) {
-                                Text("Упражнения")
-                                    .font(FFTypography.body.weight(.semibold))
-                                    .foregroundStyle(FFColors.textPrimary)
-                                if let workoutDetails, !workoutDetails.exercises.isEmpty {
-                                    ForEach(workoutDetails.exercises.sorted(by: { $0.orderIndex < $1.orderIndex })) { exercise in
-                                        VStack(alignment: .leading, spacing: FFSpacing.xxs) {
-                                            Text(exercise.name)
-                                                .font(FFTypography.body.weight(.semibold))
-                                                .foregroundStyle(FFColors.textPrimary)
-                                                .lineLimit(2)
-                                            Text("\(max(1, exercise.sets)) подхода • \(repsLabel(for: exercise)) повторов")
-                                                .font(FFTypography.caption)
-                                                .foregroundStyle(FFColors.textSecondary)
-                                        }
-                                        .frame(maxWidth: .infinity, alignment: .leading)
-                                        .padding(.bottom, FFSpacing.xxs)
+                        if let workoutDetails {
+                            if let coachNote = workoutDetails.coachNote?.trimmingCharacters(in: .whitespacesAndNewlines), !coachNote.isEmpty {
+                                FFCard {
+                                    VStack(alignment: .leading, spacing: FFSpacing.xs) {
+                                        Text("Комментарий")
+                                            .font(FFTypography.body.weight(.semibold))
+                                            .foregroundStyle(FFColors.textPrimary)
+                                        Text(coachNote)
+                                            .font(FFTypography.body)
+                                            .foregroundStyle(FFColors.textSecondary)
                                     }
-                                } else {
-                                    Text("Список упражнений пока недоступен для этой тренировки.")
-                                        .font(FFTypography.caption)
-                                        .foregroundStyle(FFColors.textSecondary)
+                                }
+                            }
+
+                            if !workoutDetails.exercises.isEmpty {
+                                FFCard {
+                                    VStack(alignment: .leading, spacing: FFSpacing.sm) {
+                                        Text("Упражнения")
+                                            .font(FFTypography.body.weight(.semibold))
+                                            .foregroundStyle(FFColors.textPrimary)
+                                        ForEach(workoutDetails.exercises.sorted(by: { $0.orderIndex < $1.orderIndex })) { exercise in
+                                            VStack(alignment: .leading, spacing: FFSpacing.xxs) {
+                                                Text(exercise.name)
+                                                    .font(FFTypography.body.weight(.semibold))
+                                                    .foregroundStyle(FFColors.textPrimary)
+                                                    .lineLimit(2)
+                                                Text("\(max(1, exercise.sets)) подхода • \(repsLabel(for: exercise)) повторов")
+                                                    .font(FFTypography.caption)
+                                                    .foregroundStyle(FFColors.textSecondary)
+                                            }
+                                            .frame(maxWidth: .infinity, alignment: .leading)
+                                            .padding(.bottom, FFSpacing.xxs)
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -2579,9 +2720,9 @@ private extension WorkoutTemplateDraft {
                 sets: max(1, item.sets),
                 repsMin: item.repsMin,
                 repsMax: item.repsMax,
-                targetRpe: nil,
+                targetRpe: item.targetRpe,
                 restSeconds: item.restSeconds,
-                notes: nil,
+                notes: item.notes,
                 orderIndex: index,
             )
         }

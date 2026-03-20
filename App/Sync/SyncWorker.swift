@@ -103,6 +103,8 @@ actor SyncWorker {
                 reps: operation.payload.reps,
                 rpe: operation.payload.rpe,
                 isCompleted: operation.payload.isCompleted,
+                isWarmup: operation.payload.isWarmup,
+                restSecondsActual: operation.payload.restSecondsActual,
             )
             result = response.map { _ in () }
 

@@ -7,6 +7,7 @@ extension Notification.Name {
 
 enum AthleteShellTab: String, CaseIterable, Hashable, Sendable {
     case today
+    case programs
     case plan
     case progress
     case profile
@@ -17,6 +18,8 @@ enum AthleteShellTab: String, CaseIterable, Hashable, Sendable {
         switch self {
         case .today:
             "Сегодня"
+        case .programs:
+            "Программы"
         case .plan:
             "План"
         case .progress:
@@ -34,6 +37,8 @@ enum AthleteShellTab: String, CaseIterable, Hashable, Sendable {
         switch self {
         case .today:
             "figure.run"
+        case .programs:
+            "square.grid.2x2"
         case .plan:
             "calendar"
         case .progress:
@@ -216,6 +221,7 @@ private struct AthleteShellView: View {
                         userSub: me.subject ?? "anonymous",
                         apiClient: apiClient,
                         onOpenPlan: { selectedTab = .plan },
+                        onOpenPrograms: { selectedTab = .programs },
                         resumeSessionRequest: $pendingResumeRequest,
                         onResumeHandled: {
                             pendingResumeRequest = nil
@@ -235,6 +241,28 @@ private struct AthleteShellView: View {
                     Label(AthleteShellTab.today.title, systemImage: AthleteShellTab.today.systemImage)
                 }
                 .tag(AthleteShellTab.today)
+
+                NavigationStack {
+                    CatalogTabContent(
+                        store: store,
+                        environment: environment,
+                        apiClient: apiClient,
+                        userSub: me.subject ?? "anonymous",
+                        onOpenPlanTab: {
+                            selectedTab = .plan
+                        },
+                        onOpenWorkoutHubTab: {
+                            selectedTab = .today
+                        },
+                    )
+                    .navigationTitle(AthleteShellTab.programs.navigationTitle)
+                    .navigationBarTitleDisplayMode(.inline)
+                    .navigationBarBackButtonHidden(true)
+                }
+                .tabItem {
+                    Label(AthleteShellTab.programs.title, systemImage: AthleteShellTab.programs.systemImage)
+                }
+                .tag(AthleteShellTab.programs)
 
                 NavigationStack {
                     PlanTabContent(
@@ -341,8 +369,15 @@ private struct AthleteShellView: View {
         var latest = await progressStore.latestActiveSession(userSub: userSub)
         var remoteWorkoutTitle: String?
 
-        if latest == nil,
-           isOnline,
+        if let currentLatest = latest,
+           !(await canLaunchResumeSession(currentLatest, progressStore: progressStore))
+        {
+            self.resumeSession = nil
+            self.resumeSessionTitle = nil
+            latest = nil
+        }
+
+        if isOnline,
            let athleteTrainingClient = apiClient as? AthleteTrainingClientProtocol
         {
             let result = await athleteTrainingClient.activeEnrollmentProgress()
@@ -350,7 +385,9 @@ private struct AthleteShellView: View {
                 if let enrollment = WorkoutDomainRules.resolveActiveEnrollment(progress) {
                     remoteWorkoutTitle = enrollment.resumeWorkout?.title
                 }
-                latest = WorkoutDomainRules.remoteInProgressSession(userSub: userSub, progress: progress)
+                if let remoteSession = WorkoutDomainRules.remoteInProgressSession(userSub: userSub, progress: progress) {
+                    latest = remoteSession
+                }
             }
         }
 
@@ -372,6 +409,29 @@ private struct AthleteShellView: View {
             progressStore: progressStore,
             resumeStore: resumeStore,
             remoteWorkoutTitle: remoteWorkoutTitle,
+        )
+    }
+
+    private func canLaunchResumeSession(
+        _ session: ActiveWorkoutSession,
+        progressStore: WorkoutProgressStore,
+    ) async -> Bool {
+        let cacheStore = CompositeCacheStore()
+        let hasCachedWorkoutDetails = await cacheStore.get(
+            "workout.details:\(session.programId):\(session.workoutId)",
+            as: WorkoutDetailsModel.self,
+            namespace: session.userSub,
+        ) != nil
+        let snapshot = await progressStore.load(
+            userSub: session.userSub,
+            programId: session.programId,
+            workoutId: session.workoutId,
+        )
+        return WorkoutDomainRules.canLaunchSession(
+            session: session,
+            isOnline: isOnline,
+            hasCachedWorkoutDetails: hasCachedWorkoutDetails,
+            hasSnapshotDetails: snapshot?.workoutDetails != nil,
         )
     }
 
@@ -530,6 +590,10 @@ func resolveRepeatWorkoutTarget(
 private struct PlanTabContent: View {
     let apiClient: APIClientProtocol?
     let userSub: String
+    private let trainingStore: any TrainingStore
+    private let templateRepository: any WorkoutTemplateRepository
+    private let exerciseCatalogRepository: any ExerciseCatalogRepository
+    private let exercisePickerSuggestionsProvider: any ExercisePickerSuggestionsProviding
 
     @State private var planViewModel: PlanScheduleViewModel
     @State private var programWorkoutRoute: ProgramWorkoutRoute?
@@ -543,9 +607,26 @@ private struct PlanTabContent: View {
     ) {
         self.apiClient = apiClient
         self.userSub = userSub
+        trainingStore = LocalTrainingStore()
+        templateRepository = BackendWorkoutTemplateRepository(
+            apiClient: apiClient as? AthleteWorkoutTemplatesAPIClientProtocol,
+            cacheStore: trainingStore,
+        )
+        exerciseCatalogRepository = BackendExerciseCatalogRepository(
+            apiClient: apiClient as? ExerciseCatalogAPIClientProtocol,
+            userSub: userSub,
+            templateRepository: templateRepository,
+        )
+        exercisePickerSuggestionsProvider = TrainingStoreExercisePickerSuggestionsProvider(
+            userSub: userSub,
+            athleteTrainingClient: apiClient as? AthleteTrainingClientProtocol,
+            templateRepository: templateRepository,
+            trainingStore: trainingStore,
+        )
         _planViewModel = State(
             initialValue: PlanScheduleViewModel(
                 userSub: userSub,
+                trainingStore: trainingStore,
                 athleteTrainingClient: apiClient as? AthleteTrainingClientProtocol,
             ),
         )
@@ -554,6 +635,8 @@ private struct PlanTabContent: View {
     var body: some View {
         PlanScheduleScreen(
             viewModel: planViewModel,
+            exerciseCatalogRepository: exerciseCatalogRepository,
+            exercisePickerSuggestionsProvider: exercisePickerSuggestionsProvider,
             onOpenProgramWorkout: { programId, workoutId in
                 programWorkoutRoute = ProgramWorkoutRoute(programId: programId, workoutId: workoutId)
             },
@@ -602,8 +685,13 @@ private struct PlanTabContent: View {
         }
         .fullScreenCover(isPresented: $isQuickBuilderPresented) {
             NavigationStack {
-                QuickWorkoutBuilderView { workout in
-                    presetWorkoutRoute = PresetWorkoutRoute(programId: nil, workout: workout, source: .freestyle)
+                QuickWorkoutBuilderView(
+                    exerciseCatalogRepository: exerciseCatalogRepository,
+                    exercisePickerSuggestionsProvider: exercisePickerSuggestionsProvider,
+                ) { workout in
+                    Task {
+                        await openBuiltCustomWorkout(workout)
+                    }
                 }
             }
         }
@@ -619,6 +707,29 @@ private struct PlanTabContent: View {
             isQuickBuilderPresented = true
         case .templateLibrary:
             isQuickBuilderPresented = true
+        }
+    }
+
+    @MainActor
+    private func presentBuiltWorkout(_ workout: WorkoutDetailsModel) {
+        presetWorkoutRoute = PresetWorkoutRoute(programId: nil, workout: workout, source: .freestyle)
+    }
+
+    private func openBuiltCustomWorkout(_ workout: WorkoutDetailsModel) async {
+        if let athleteTrainingClient = apiClient as? AthleteTrainingClientProtocol {
+            let result = await athleteTrainingClient.createCustomWorkout(
+                request: workout.asCreateCustomWorkoutRequest(),
+            )
+            if case let .success(detailsResponse) = result {
+                await MainActor.run {
+                    presentBuiltWorkout(detailsResponse.asWorkoutDetailsModel())
+                }
+                return
+            }
+        }
+
+        await MainActor.run {
+            presentBuiltWorkout(workout)
         }
     }
 }
@@ -816,6 +927,7 @@ struct WorkoutLaunchView: View {
     @State private var executionContext: WorkoutExecutionContext?
     @State private var workoutSummary: WorkoutSummaryState?
     @State private var nextWorkoutRoute: NextWorkoutRoute?
+    @State private var resolvedSource: WorkoutSource?
     @Environment(\.dismiss) private var dismiss
 
     private struct NextWorkoutRoute: Identifiable, Hashable {
@@ -854,10 +966,24 @@ struct WorkoutLaunchView: View {
                         userSub: userSub,
                         programId: programId,
                         workout: details,
-                        source: source,
+                        source: currentSource,
                         athleteTrainingClient: apiClient as? AthleteTrainingClientProtocol,
                         networkMonitor: NetworkMonitor(),
                         executionContext: executionContext,
+                        exerciseCatalogRepository: BackendExerciseCatalogRepository(
+                            apiClient: apiClient as? ExerciseCatalogAPIClientProtocol,
+                            userSub: userSub,
+                            templateRepository: BackendWorkoutTemplateRepository(
+                                apiClient: apiClient as? AthleteWorkoutTemplatesAPIClientProtocol,
+                            ),
+                        ),
+                        exercisePickerSuggestionsProvider: TrainingStoreExercisePickerSuggestionsProvider(
+                            userSub: userSub,
+                            athleteTrainingClient: apiClient as? AthleteTrainingClientProtocol,
+                            templateRepository: BackendWorkoutTemplateRepository(
+                                apiClient: apiClient as? AthleteWorkoutTemplatesAPIClientProtocol,
+                            ),
+                        ),
                         restTimer: RestTimerModel.shared,
                     ),
                     onExit: {
@@ -971,8 +1097,11 @@ struct WorkoutLaunchView: View {
             programId: programId,
             workoutId: workoutId,
         )
+        resolvedSource = source
 
-        if let presetWorkout {
+        if let presetWorkout,
+           !(currentSource != .template && UUID(uuidString: workoutId) != nil && athleteTrainingClient != nil)
+        {
             details = presetWorkout
             error = nil
             routeState = .resume
@@ -992,10 +1121,9 @@ struct WorkoutLaunchView: View {
             return
         }
 
-        let canLoadFromProgramAPI = source == .program && UUID(uuidString: programId) != nil
+        let canLoadFromProgramAPI = currentSource == .program && UUID(uuidString: programId) != nil
 
-        if source == .program,
-           UUID(uuidString: workoutId) != nil,
+        if UUID(uuidString: workoutId) != nil,
            let athleteTrainingClient
         {
             let athleteResult = await athleteTrainingClient.getWorkoutDetails(workoutInstanceId: workoutId)
@@ -1005,6 +1133,7 @@ struct WorkoutLaunchView: View {
                 details = mapped
                 error = nil
                 routeState = resolveWorkoutInstanceRouteState(workoutDetails.workout.status)
+                resolvedSource = workoutDetails.workout.source == .custom ? .freestyle : .program
                 executionContext = WorkoutExecutionContext(
                     workoutInstanceId: workoutDetails.workout.id,
                     exerciseExecutionIDsByExerciseID: Dictionary(
@@ -1086,7 +1215,7 @@ struct WorkoutLaunchView: View {
         var hasNewPersonalRecord = false
         var personalRecordHighlights: [String] = []
 
-        if source == .program, UUID(uuidString: workoutId) != nil {
+        if currentSource != .template, UUID(uuidString: workoutId) != nil {
             _ = await SyncCoordinator.shared.enqueueCompleteWorkout(
                 namespace: userSub,
                 workoutInstanceId: workoutId,
@@ -1094,7 +1223,7 @@ struct WorkoutLaunchView: View {
             )
         }
 
-        if source == .program,
+        if currentSource != .template,
            UUID(uuidString: workoutId) != nil,
            let athleteTrainingClient = apiClient as? AthleteTrainingClientProtocol
         {
@@ -1123,19 +1252,21 @@ struct WorkoutLaunchView: View {
                     !personalRecordHighlights.isEmpty
             }
 
-            let activeEnrollmentResult = await athleteTrainingClient.activeEnrollmentProgress()
-            if case let .success(progress) = activeEnrollmentResult,
-               let target = WorkoutDomainRules.nextWorkoutTarget(
-                   from: progress,
-                   fallbackProgramId: programId,
-                   excludingWorkoutId: workoutId,
-               )
-            {
-                nextWorkout = WorkoutSummaryState.NextWorkout(
-                    programId: target.programId,
-                    workoutId: target.workoutId,
-                    title: target.title,
-                )
+            if currentSource == .program {
+                let activeEnrollmentResult = await athleteTrainingClient.activeEnrollmentProgress()
+                if case let .success(progress) = activeEnrollmentResult,
+                   let target = WorkoutDomainRules.nextWorkoutTarget(
+                       from: progress,
+                       fallbackProgramId: programId,
+                       excludingWorkoutId: workoutId,
+                   )
+                {
+                    nextWorkout = WorkoutSummaryState.NextWorkout(
+                        programId: target.programId,
+                        workoutId: target.workoutId,
+                        title: target.title,
+                    )
+                }
             }
         }
 
@@ -1182,7 +1313,7 @@ struct WorkoutLaunchView: View {
     }
 
     private func startPlannedWorkout() async {
-        guard source == .program, UUID(uuidString: workoutId) != nil else {
+        guard currentSource != .template, UUID(uuidString: workoutId) != nil else {
             routeState = .resume
             return
         }
@@ -1207,7 +1338,7 @@ struct WorkoutLaunchView: View {
             ],
         )
 
-        guard source == .program, UUID(uuidString: workoutId) != nil else {
+        guard currentSource != .template, UUID(uuidString: workoutId) != nil else {
             dismiss()
             return
         }
@@ -1265,19 +1396,21 @@ struct WorkoutLaunchView: View {
                     !personalRecordHighlights.isEmpty
             }
 
-            let activeEnrollmentResult = await athleteTrainingClient.activeEnrollmentProgress()
-            if case let .success(progress) = activeEnrollmentResult,
-               let target = WorkoutDomainRules.nextWorkoutTarget(
-                   from: progress,
-                   fallbackProgramId: programId,
-                   excludingWorkoutId: workoutDetails.workout.id,
-               )
-            {
-                nextWorkout = WorkoutSummaryState.NextWorkout(
-                    programId: target.programId,
-                    workoutId: target.workoutId,
-                    title: target.title,
-                )
+            if currentSource == .program {
+                let activeEnrollmentResult = await athleteTrainingClient.activeEnrollmentProgress()
+                if case let .success(progress) = activeEnrollmentResult,
+                   let target = WorkoutDomainRules.nextWorkoutTarget(
+                       from: progress,
+                       fallbackProgramId: programId,
+                       excludingWorkoutId: workoutDetails.workout.id,
+                   )
+                {
+                    nextWorkout = WorkoutSummaryState.NextWorkout(
+                        programId: target.programId,
+                        workoutId: target.workoutId,
+                        title: target.title,
+                    )
+                }
             }
         }
 
@@ -1358,6 +1491,10 @@ struct WorkoutLaunchView: View {
             return valueText
         }
         return "\(valueText) \(unit)"
+    }
+
+    private var currentSource: WorkoutSource {
+        resolvedSource ?? source
     }
 
     private func deriveMetrics(from exercises: [AthleteExerciseExecution]) -> (totalSets: Int, totalReps: Int, volume: Double, derivedDurationSeconds: Int) {
@@ -1668,18 +1805,21 @@ private struct TrainingTabContent: View {
     let userSub: String
     let apiClient: APIClientProtocol?
     let onOpenPlan: () -> Void
+    let onOpenPrograms: () -> Void
     @Binding var resumeSessionRequest: ActiveWorkoutSession?
     let onResumeHandled: () -> Void
     let onRoutePresentationChanged: (Bool) -> Void
+    private let trainingStore: any TrainingStore
+    private let templateRepository: any WorkoutTemplateRepository
+    private let exerciseCatalogRepository: any ExerciseCatalogRepository
+    private let exercisePickerSuggestionsProvider: any ExercisePickerSuggestionsProviding
 
     @State private var sessionRoute: ActiveWorkoutSession?
     @State private var programWorkoutRoute: ProgramWorkoutRoute?
     @State private var programHistoryRoute: ProgramHistoryRoute?
     @State private var presetWorkoutRoute: PresetWorkoutRoute?
     @State private var recentWorkoutDetailsRoute: RecentWorkoutDetailsRoute?
-    @State private var catalogRoute: CatalogRoute?
-    @State private var isQuickBuilderPresented = false
-    @State private var isTemplateLibraryPresented = false
+    @State private var modalRoute: TrainingModalRoute?
     @State private var activePresentationMarkers: Set<String> = []
 
     private struct ProgramHistoryRoute: Identifiable, Hashable {
@@ -1691,8 +1831,62 @@ private struct TrainingTabContent: View {
         }
     }
 
-    private struct CatalogRoute: Identifiable, Hashable {
-        let id = UUID()
+    private enum TrainingModalRoute: Identifiable, Equatable {
+        case quickBuilder
+        case todayPlanning
+        case todayPlanningBuilder(TodayWorkoutPlanningDraftSeed)
+        case templateLibrary
+
+        var id: String {
+            switch self {
+            case .quickBuilder:
+                return "quick_builder"
+            case .todayPlanning:
+                return "today_planning"
+            case let .todayPlanningBuilder(seed):
+                return "today_planning_builder:\(seed.id.uuidString)"
+            case .templateLibrary:
+                return "template_library"
+            }
+        }
+    }
+
+    init(
+        store: StoreOf<RootFeature>,
+        environment: AppEnvironment,
+        userSub: String,
+        apiClient: APIClientProtocol?,
+        onOpenPlan: @escaping () -> Void,
+        onOpenPrograms: @escaping () -> Void,
+        resumeSessionRequest: Binding<ActiveWorkoutSession?>,
+        onResumeHandled: @escaping () -> Void,
+        onRoutePresentationChanged: @escaping (Bool) -> Void,
+    ) {
+        self.store = store
+        self.environment = environment
+        self.userSub = userSub
+        self.apiClient = apiClient
+        self.onOpenPlan = onOpenPlan
+        self.onOpenPrograms = onOpenPrograms
+        _resumeSessionRequest = resumeSessionRequest
+        self.onResumeHandled = onResumeHandled
+        self.onRoutePresentationChanged = onRoutePresentationChanged
+        trainingStore = LocalTrainingStore()
+        templateRepository = BackendWorkoutTemplateRepository(
+            apiClient: apiClient as? AthleteWorkoutTemplatesAPIClientProtocol,
+            cacheStore: trainingStore,
+        )
+        exerciseCatalogRepository = BackendExerciseCatalogRepository(
+            apiClient: apiClient as? ExerciseCatalogAPIClientProtocol,
+            userSub: userSub,
+            templateRepository: templateRepository,
+        )
+        exercisePickerSuggestionsProvider = TrainingStoreExercisePickerSuggestionsProvider(
+            userSub: userSub,
+            athleteTrainingClient: apiClient as? AthleteTrainingClientProtocol,
+            templateRepository: templateRepository,
+            trainingStore: trainingStore,
+        )
     }
 
     var body: some View {
@@ -1714,11 +1908,14 @@ private struct TrainingTabContent: View {
                     source: target.source,
                 )
             },
+            onBuildTodayWorkout: {
+                modalRoute = .todayPlanning
+            },
             onStartQuickWorkout: {
-                isQuickBuilderPresented = true
+                modalRoute = .quickBuilder
             },
             onOpenTemplates: {
-                isTemplateLibraryPresented = true
+                modalRoute = .templateLibrary
             },
             onRepeatWorkout: { record in
                 Task {
@@ -1733,7 +1930,7 @@ private struct TrainingTabContent: View {
                 onOpenPlan()
             },
             onOpenCatalog: {
-                catalogRoute = CatalogRoute()
+                onOpenPrograms()
             },
             onOpenProgramHistory: { programId, programTitle in
                 programHistoryRoute = ProgramHistoryRoute(programId: programId, programTitle: programTitle)
@@ -1790,30 +1987,6 @@ private struct TrainingTabContent: View {
                 updatePresentationMarker("preset:\(route.id)", isPresented: false)
             }
         }
-        .navigationDestination(item: $catalogRoute) { route in
-            CatalogTabContent(
-                store: store,
-                environment: environment,
-                apiClient: apiClient,
-                userSub: userSub,
-                onOpenPlanTab: {
-                    catalogRoute = nil
-                    PlanNavigationCoordinator.shared.request(day: Date())
-                    onOpenPlan()
-                },
-                onOpenWorkoutHubTab: {
-                    catalogRoute = nil
-                },
-            )
-            .navigationTitle("Программы")
-            .navigationBarBackButtonHidden(false)
-            .onAppear {
-                updatePresentationMarker("catalog:\(route.id.uuidString)", isPresented: true)
-            }
-            .onDisappear {
-                updatePresentationMarker("catalog:\(route.id.uuidString)", isPresented: false)
-            }
-        }
         .navigationDestination(item: $programHistoryRoute) { route in
             ProgramWorkoutHistoryScreen(
                 viewModel: ProgramWorkoutHistoryViewModel(
@@ -1854,34 +2027,8 @@ private struct TrainingTabContent: View {
                 updatePresentationMarker("recent:\(route.id)", isPresented: false)
             }
         }
-        .fullScreenCover(isPresented: $isQuickBuilderPresented) {
-            NavigationStack {
-                QuickWorkoutBuilderView { workout in
-                    presetWorkoutRoute = PresetWorkoutRoute(programId: nil, workout: workout, source: .freestyle)
-                }
-            }
-            .onAppear {
-                updatePresentationMarker("quick_builder", isPresented: true)
-            }
-            .onDisappear {
-                updatePresentationMarker("quick_builder", isPresented: false)
-            }
-        }
-        .fullScreenCover(isPresented: $isTemplateLibraryPresented) {
-            NavigationStack {
-                TemplateLibraryView(
-                    viewModel: TemplateLibraryViewModel(userSub: userSub),
-                    onStartTemplate: { workout in
-                        presetWorkoutRoute = PresetWorkoutRoute(programId: nil, workout: workout, source: .template)
-                    },
-                )
-            }
-            .onAppear {
-                updatePresentationMarker("template_library", isPresented: true)
-            }
-            .onDisappear {
-                updatePresentationMarker("template_library", isPresented: false)
-            }
+        .fullScreenCover(item: $modalRoute) { route in
+            trainingModal(route)
         }
         .task {
             handleExternalResumeRequest()
@@ -1908,9 +2055,7 @@ private struct TrainingTabContent: View {
             || programHistoryRoute != nil
             || presetWorkoutRoute != nil
             || recentWorkoutDetailsRoute != nil
-            || catalogRoute != nil
-            || isQuickBuilderPresented
-            || isTemplateLibraryPresented
+            || modalRoute != nil
     }
 
     private func updatePresentationMarker(_ marker: String, isPresented: Bool) {
@@ -1928,6 +2073,10 @@ private struct TrainingTabContent: View {
         onResumeHandled()
     }
 
+    private func presentTodayPlanningDraft(_ seed: TodayWorkoutPlanningDraftSeed) {
+        modalRoute = .todayPlanningBuilder(seed)
+    }
+
     private func openRepeatWorkout(_ record: CompletedWorkoutRecord) async {
         switch await resolveRepeatWorkoutTarget(for: record, templateFallback: .templateLibrary) {
         case let .program(route):
@@ -1935,9 +2084,97 @@ private struct TrainingTabContent: View {
         case let .preset(route):
             presetWorkoutRoute = route
         case .quickBuilder:
-            isQuickBuilderPresented = true
+            modalRoute = .quickBuilder
         case .templateLibrary:
-            isTemplateLibraryPresented = true
+            modalRoute = .templateLibrary
+        }
+    }
+
+    @ViewBuilder
+    private func trainingModal(_ route: TrainingModalRoute) -> some View {
+        switch route {
+        case .quickBuilder:
+            NavigationStack {
+                QuickWorkoutBuilderView(
+                    exerciseCatalogRepository: exerciseCatalogRepository,
+                    exercisePickerSuggestionsProvider: exercisePickerSuggestionsProvider,
+                ) { workout in
+                    presetWorkoutRoute = PresetWorkoutRoute(programId: nil, workout: workout, source: .freestyle)
+                }
+            }
+            .onAppear {
+                updatePresentationMarker(route.id, isPresented: true)
+            }
+            .onDisappear {
+                updatePresentationMarker(route.id, isPresented: false)
+                if modalRoute == route {
+                    modalRoute = nil
+                }
+            }
+        case .todayPlanning:
+            TodayPlanningFlowView(
+                provider: TodayWorkoutPlanningService(repository: exerciseCatalogRepository),
+                exerciseCatalogRepository: exerciseCatalogRepository,
+                exercisePickerSuggestionsProvider: exercisePickerSuggestionsProvider,
+            ) { workout in
+                Task {
+                    await openBuiltCustomWorkout(workout)
+                }
+            }
+            .onAppear {
+                updatePresentationMarker(route.id, isPresented: true)
+            }
+            .onDisappear {
+                updatePresentationMarker(route.id, isPresented: false)
+                if modalRoute == route {
+                    modalRoute = nil
+                }
+            }
+        case let .todayPlanningBuilder(seed):
+            NavigationStack {
+                QuickWorkoutBuilderView(
+                    planningSeed: seed,
+                    exerciseCatalogRepository: exerciseCatalogRepository,
+                    exercisePickerSuggestionsProvider: exercisePickerSuggestionsProvider,
+                ) { workout in
+                    modalRoute = nil
+                    Task {
+                        await openBuiltCustomWorkout(workout)
+                    }
+                }
+            }
+            .onAppear {
+                updatePresentationMarker(route.id, isPresented: true)
+            }
+            .onDisappear {
+                updatePresentationMarker(route.id, isPresented: false)
+                if modalRoute == route {
+                    modalRoute = nil
+                }
+            }
+        case .templateLibrary:
+            NavigationStack {
+                TemplateLibraryView(
+                    viewModel: TemplateLibraryViewModel(
+                        userSub: userSub,
+                        templateRepository: templateRepository,
+                    ),
+                    exerciseCatalogRepository: exerciseCatalogRepository,
+                    exercisePickerSuggestionsProvider: exercisePickerSuggestionsProvider,
+                    onStartTemplate: { workout in
+                        presetWorkoutRoute = PresetWorkoutRoute(programId: nil, workout: workout, source: .template)
+                    },
+                )
+            }
+            .onAppear {
+                updatePresentationMarker(route.id, isPresented: true)
+            }
+            .onDisappear {
+                updatePresentationMarker(route.id, isPresented: false)
+                if modalRoute == route {
+                    modalRoute = nil
+                }
+            }
         }
     }
 
@@ -1946,6 +2183,59 @@ private struct TrainingTabContent: View {
             return WorkoutsClient(programsClient: programsClient)
         }
         return UnavailableWorkoutsClient()
+    }
+
+    @MainActor
+    private func presentBuiltWorkout(_ workout: WorkoutDetailsModel) {
+        presetWorkoutRoute = PresetWorkoutRoute(programId: nil, workout: workout, source: .freestyle)
+    }
+
+    private func openBuiltCustomWorkout(_ workout: WorkoutDetailsModel) async {
+        if let athleteTrainingClient = apiClient as? AthleteTrainingClientProtocol {
+            let result = await athleteTrainingClient.createCustomWorkout(
+                request: workout.asCreateCustomWorkoutRequest(),
+            )
+            if case let .success(detailsResponse) = result {
+                await MainActor.run {
+                    presentBuiltWorkout(detailsResponse.asWorkoutDetailsModel())
+                }
+                return
+            }
+        }
+
+        await MainActor.run {
+            presentBuiltWorkout(workout)
+        }
+    }
+}
+
+private struct TodayPlanningFlowView: View {
+    @Environment(\.dismiss) private var dismiss
+
+    let provider: any TodayWorkoutPlanningProviding
+    let exerciseCatalogRepository: any ExerciseCatalogRepository
+    let exercisePickerSuggestionsProvider: any ExercisePickerSuggestionsProviding
+    let onWorkoutSubmit: (WorkoutDetailsModel) -> Void
+
+    @State private var builderSeed: TodayWorkoutPlanningDraftSeed?
+
+    var body: some View {
+        NavigationStack {
+            TodayWorkoutPlanningView(provider: provider) { seed in
+                builderSeed = seed
+            }
+            .navigationDestination(item: $builderSeed) { seed in
+                QuickWorkoutBuilderView(
+                    planningSeed: seed,
+                    dismissOnSubmit: false,
+                    exerciseCatalogRepository: exerciseCatalogRepository,
+                    exercisePickerSuggestionsProvider: exercisePickerSuggestionsProvider,
+                ) { workout in
+                    onWorkoutSubmit(workout)
+                    dismiss()
+                }
+            }
+        }
     }
 }
 
