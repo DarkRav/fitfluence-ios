@@ -184,6 +184,27 @@ final class SyncEngineTests: XCTestCase {
         }
     }
 
+    func testStartWorkoutTerminalConflictMovesOperationToDead() async {
+        let namespace = "athlete-start-conflict"
+        let store = SyncOutboxStore(baseURL: temporaryDirectory())
+        let localWorker = SyncWorker(outboxStore: store)
+        let client = MockAthleteTrainingClient()
+        await client.setStartResult(
+            .failure(
+                .httpError(
+                    statusCode: 409,
+                    bodySnippet: #"{"message":"RESOURCE_CONFLICT: Workout уже прервана"}"#,
+                ),
+            ),
+        )
+
+        _ = await store.enqueue(.startWorkout(workoutInstanceId: "w-conflict", startedAt: Date()), namespace: namespace)
+        await localWorker.process(namespace: namespace, athleteTrainingClient: client, isOnline: true)
+
+        let op = await store.allOperations(namespace: namespace).first
+        XCTAssertEqual(op?.status, .dead)
+    }
+
     private func temporaryDirectory() -> URL {
         FileManager.default.temporaryDirectory
             .appendingPathComponent("fitfluence-sync-tests-\(UUID().uuidString)", isDirectory: true)
@@ -259,6 +280,10 @@ private actor MockAthleteTrainingClient: AthleteTrainingClientProtocol {
 
     func setCompleteResult(_ result: Result<AthleteWorkoutInstance, APIError>) {
         completeResult = result
+    }
+
+    func setStartResult(_ result: Result<AthleteWorkoutInstance, APIError>) {
+        startResult = result
     }
 
     func setSetResult(_ result: Result<AthleteSetExecution, APIError>) {

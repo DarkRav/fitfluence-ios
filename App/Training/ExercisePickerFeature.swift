@@ -102,7 +102,7 @@ struct TrainingStoreExercisePickerSuggestionsProvider: ExercisePickerSuggestions
                 ExercisePickerSection(
                     kind: .templates,
                     title: "Из шаблонов",
-                    subtitle: "Упражнения из вашей template library",
+                    subtitle: "Упражнения из вашей библиотеки шаблонов",
                     items: templateItems,
                 ),
             )
@@ -242,13 +242,49 @@ final class ExercisePickerViewModel {
     }
 
     struct FilterState: Equatable, Sendable {
-        var muscleGroup: ExerciseCatalogMuscleGroup?
-        var equipment: ExerciseCatalogEquipment?
-        var movementPattern: ExerciseCatalogMovementPattern?
-        var difficultyLevel: ExerciseCatalogDifficultyLevel?
+        var muscleGroups: [ExerciseCatalogMuscleGroup] = []
+        var equipment: [ExerciseCatalogEquipment] = []
+        var movementPatterns: [ExerciseCatalogMovementPattern] = []
+        var difficultyLevels: [ExerciseCatalogDifficultyLevel] = []
 
         var isActive: Bool {
-            muscleGroup != nil || equipment != nil || movementPattern != nil || difficultyLevel != nil
+            !muscleGroups.isEmpty || !equipment.isEmpty || !movementPatterns.isEmpty || !difficultyLevels.isEmpty
+        }
+    }
+
+    struct ContextualFilterOptions: Equatable, Sendable {
+        var equipment: [ExerciseCatalogEquipment]
+        var movementPatterns: [ExerciseCatalogMovementPattern]
+        var difficultyLevels: [ExerciseCatalogDifficultyLevel]
+    }
+
+    private enum FilterDimension: Hashable {
+        case muscleGroups
+        case equipment
+        case movementPatterns
+        case difficultyLevels
+    }
+
+    enum BrowseMode: String, CaseIterable, Sendable {
+        case guided
+        case catalog
+
+        var title: String {
+            switch self {
+            case .guided:
+                "Под вас"
+            case .catalog:
+                "Каталог"
+            }
+        }
+
+        var subtitle: String {
+            switch self {
+            case .guided:
+                "Недавние, шаблоны и локальные совпадения"
+            case .catalog:
+                "Все упражнения без лишнего шума"
+            }
         }
     }
 
@@ -261,6 +297,7 @@ final class ExercisePickerViewModel {
     private(set) var hasLoaded = false
 
     var searchText = ""
+    var browseMode: BrowseMode = .guided
     var filters = FilterState()
     var catalogItems: [ExerciseCatalogItem] = []
     var catalogState: ExerciseCatalogResultState = .content
@@ -307,23 +344,68 @@ final class ExercisePickerViewModel {
         await reloadCatalog()
     }
 
-    func selectMuscleGroup(_ value: ExerciseCatalogMuscleGroup?) async {
-        filters.muscleGroup = value
+    func applyFilters(_ value: FilterState) async {
+        filters = value
         await reloadCatalog()
     }
 
-    func selectEquipment(_ value: ExerciseCatalogEquipment?) async {
-        filters.equipment = value
+    func toggleMuscleGroup(_ value: ExerciseCatalogMuscleGroup) async {
+        if filters.muscleGroups.contains(value) {
+            filters.muscleGroups.removeAll { $0 == value }
+        } else {
+            filters.muscleGroups.append(value)
+            filters.muscleGroups.sort(by: { $0.sortOrder < $1.sortOrder })
+        }
         await reloadCatalog()
     }
 
-    func selectMovementPattern(_ value: ExerciseCatalogMovementPattern?) async {
-        filters.movementPattern = value
+    func removeMuscleGroup(_ value: ExerciseCatalogMuscleGroup) async {
+        filters.muscleGroups.removeAll { $0 == value }
         await reloadCatalog()
     }
 
-    func selectDifficulty(_ value: ExerciseCatalogDifficultyLevel?) async {
-        filters.difficultyLevel = value
+    func toggleEquipment(_ value: ExerciseCatalogEquipment) async {
+        if filters.equipment.contains(where: { $0.id == value.id }) {
+            filters.equipment.removeAll { $0.id == value.id }
+        } else {
+            filters.equipment.append(value)
+            filters.equipment.sort(by: { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending })
+        }
+        await reloadCatalog()
+    }
+
+    func removeEquipment(_ value: ExerciseCatalogEquipment) async {
+        filters.equipment.removeAll { $0.id == value.id }
+        await reloadCatalog()
+    }
+
+    func toggleMovementPattern(_ value: ExerciseCatalogMovementPattern) async {
+        if filters.movementPatterns.contains(value) {
+            filters.movementPatterns.removeAll { $0 == value }
+        } else {
+            filters.movementPatterns.append(value)
+            filters.movementPatterns.sort(by: { $0.pickerSortRank < $1.pickerSortRank })
+        }
+        await reloadCatalog()
+    }
+
+    func removeMovementPattern(_ value: ExerciseCatalogMovementPattern) async {
+        filters.movementPatterns.removeAll { $0 == value }
+        await reloadCatalog()
+    }
+
+    func toggleDifficulty(_ value: ExerciseCatalogDifficultyLevel) async {
+        if filters.difficultyLevels.contains(value) {
+            filters.difficultyLevels.removeAll { $0 == value }
+        } else {
+            filters.difficultyLevels.append(value)
+            filters.difficultyLevels.sort(by: { $0.pickerSortRank < $1.pickerSortRank })
+        }
+        await reloadCatalog()
+    }
+
+    func removeDifficulty(_ value: ExerciseCatalogDifficultyLevel) async {
+        filters.difficultyLevels.removeAll { $0 == value }
         await reloadCatalog()
     }
 
@@ -354,6 +436,21 @@ final class ExercisePickerViewModel {
         catalogMetadata.equipment
     }
 
+    func contextualFilterOptions(for filters: FilterState) async -> ContextualFilterOptions {
+        let result = await repository.search(query: contextualFilterQuery(for: filters))
+        let scopedItems = result.items
+
+        let derivedEquipment = deriveEquipmentOptions(from: scopedItems, filters: filters)
+        let derivedMovementPatterns = deriveMovementPatternOptions(from: scopedItems, filters: filters)
+        let derivedDifficultyLevels = deriveDifficultyOptions(from: scopedItems, filters: filters)
+
+        return ContextualFilterOptions(
+            equipment: derivedEquipment.isEmpty ? equipmentOptions : derivedEquipment,
+            movementPatterns: derivedMovementPatterns.isEmpty ? movementPatternOptions : derivedMovementPatterns,
+            difficultyLevels: derivedDifficultyLevels.isEmpty ? difficultyOptions : derivedDifficultyLevels,
+        )
+    }
+
     var movementPatternOptions: [ExerciseCatalogMovementPattern] {
         if !catalogMetadata.movementPatterns.isEmpty {
             return catalogMetadata.movementPatterns
@@ -373,6 +470,16 @@ final class ExercisePickerViewModel {
         var sections: [ExercisePickerSection] = []
 
         if hasActiveQuery {
+            if !filteredCatalogItems.isEmpty {
+                sections.append(
+                    ExercisePickerSection(
+                        kind: .catalogResults,
+                        title: "Результаты каталога",
+                        subtitle: catalogSectionSubtitle,
+                        items: filteredCatalogItems,
+                    ),
+                )
+            }
             if !localMatches.isEmpty {
                 sections.append(
                     ExercisePickerSection(
@@ -383,28 +490,21 @@ final class ExercisePickerViewModel {
                     ),
                 )
             }
-            if !catalogItems.isEmpty {
-                sections.append(
-                    ExercisePickerSection(
-                        kind: .catalogResults,
-                        title: "Результаты каталога",
-                        subtitle: catalogSectionSubtitle,
-                        items: catalogItems,
-                    ),
-                )
-            }
             return sections
         }
 
-        sections.append(contentsOf: suggestionsSnapshot.sections.filter { !$0.items.isEmpty })
+        if browseMode == .guided {
+            sections.append(contentsOf: suggestionsSnapshot.sections.filter { !$0.items.isEmpty })
+            return sections
+        }
 
-        if !catalogItems.isEmpty {
+        if !filteredCatalogItems.isEmpty {
             sections.append(
                 ExercisePickerSection(
                     kind: .catalogResults,
                     title: "Все упражнения",
                     subtitle: catalogSectionSubtitle,
-                    items: catalogItems,
+                    items: filteredCatalogItems,
                 ),
             )
         }
@@ -451,11 +551,15 @@ final class ExercisePickerViewModel {
     private var currentQuery: ExerciseCatalogQuery {
         ExerciseCatalogQuery(
             search: trimmedSearch,
-            movementPattern: filters.movementPattern,
-            difficultyLevel: filters.difficultyLevel,
-            muscleGroups: filters.muscleGroup.map { [$0] } ?? context.muscleGroups,
-            equipmentIds: filters.equipment.map { [$0.id] } ?? context.equipmentIDs,
+            movementPattern: filters.movementPatterns.count == 1 ? filters.movementPatterns.first : nil,
+            difficultyLevel: filters.difficultyLevels.count == 1 ? filters.difficultyLevels.first : nil,
+            muscleGroups: filters.muscleGroups.isEmpty ? context.muscleGroups : filters.muscleGroups,
+            equipmentIds: filters.equipment.isEmpty ? context.equipmentIDs : filters.equipment.map(\.id),
         )
+    }
+
+    private var filteredCatalogItems: [ExerciseCatalogItem] {
+        catalogItems.filter(matchesActiveQuery)
     }
 
     private var filteredLocalMatches: [ExerciseCatalogItem] {
@@ -468,6 +572,14 @@ final class ExercisePickerViewModel {
     }
 
     private func matchesActiveQuery(_ item: ExerciseCatalogItem) -> Bool {
+        matchesFilters(item, filters: filters)
+    }
+
+    private func matchesFilters(
+        _ item: ExerciseCatalogItem,
+        filters: FilterState,
+        excluding excludedDimensions: Set<FilterDimension> = []
+    ) -> Bool {
         if let search = trimmedSearch {
             let haystack = [
                 item.name,
@@ -483,24 +595,84 @@ final class ExercisePickerViewModel {
             }
         }
 
-        if let movementPattern = filters.movementPattern, item.movementPattern != movementPattern {
+        let effectiveMuscleGroups = excludedDimensions.contains(.muscleGroups)
+            ? []
+            : (filters.muscleGroups.isEmpty ? context.muscleGroups : filters.muscleGroups)
+        let effectiveEquipmentIDs = excludedDimensions.contains(.equipment)
+            ? Set<String>()
+            : Set((filters.equipment.isEmpty ? contextualEquipmentSeedIDs : filters.equipment.map(\.id)))
+
+        if !excludedDimensions.contains(.movementPatterns),
+           !filters.movementPatterns.isEmpty,
+           !filters.movementPatterns.contains(where: { $0 == item.movementPattern })
+        {
             return false
         }
-        if let difficultyLevel = filters.difficultyLevel, item.difficultyLevel != difficultyLevel {
+        if !excludedDimensions.contains(.difficultyLevels),
+           !filters.difficultyLevels.isEmpty,
+           !filters.difficultyLevels.contains(where: { $0 == item.difficultyLevel })
+        {
             return false
         }
-        if let muscleGroup = filters.muscleGroup {
-            guard item.muscles.contains(where: { $0.muscleGroup == muscleGroup }) else {
+        if !effectiveMuscleGroups.isEmpty {
+            let itemGroups = Set(item.muscles.compactMap(\.muscleGroup))
+            guard !itemGroups.isDisjoint(with: effectiveMuscleGroups) else {
                 return false
             }
         }
-        if let equipment = filters.equipment {
-            guard item.equipment.contains(where: { $0.id == equipment.id }) else {
+        if !effectiveEquipmentIDs.isEmpty {
+            let itemEquipmentIDs = Set(item.equipment.map(\.id))
+            guard !itemEquipmentIDs.isDisjoint(with: effectiveEquipmentIDs) else {
                 return false
             }
         }
 
         return true
+    }
+
+    private var contextualEquipmentSeedIDs: [String] {
+        context.equipmentIDs
+    }
+
+    private func contextualFilterQuery(for filters: FilterState) -> ExerciseCatalogQuery {
+        ExerciseCatalogQuery(
+            search: trimmedSearch,
+            page: 0,
+            size: 80,
+            muscleGroups: filters.muscleGroups.isEmpty ? context.muscleGroups : filters.muscleGroups,
+            equipmentIds: contextualEquipmentSeedIDs
+        )
+    }
+
+    private func deriveEquipmentOptions(from items: [ExerciseCatalogItem], filters: FilterState) -> [ExerciseCatalogEquipment] {
+        items
+            .filter { matchesFilters($0, filters: filters, excluding: [.equipment]) }
+            .flatMap(\.equipment)
+            .reduce(into: [String: ExerciseCatalogEquipment]()) { partial, equipment in
+                partial[equipment.id] = equipment
+            }
+            .values
+            .sorted { lhs, rhs in
+                lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
+            }
+    }
+
+    private func deriveMovementPatternOptions(from items: [ExerciseCatalogItem], filters: FilterState) -> [ExerciseCatalogMovementPattern] {
+        let patterns = items
+            .filter { matchesFilters($0, filters: filters, excluding: [.movementPatterns]) }
+            .compactMap(\.movementPattern)
+
+        return Array(Set(patterns))
+            .sorted(by: { $0.pickerSortRank < $1.pickerSortRank })
+    }
+
+    private func deriveDifficultyOptions(from items: [ExerciseCatalogItem], filters: FilterState) -> [ExerciseCatalogDifficultyLevel] {
+        let difficultyLevels = items
+            .filter { matchesFilters($0, filters: filters, excluding: [.difficultyLevels]) }
+            .compactMap(\.difficultyLevel)
+
+        return Array(Set(difficultyLevels))
+            .sorted(by: { $0.pickerSortRank < $1.pickerSortRank })
     }
 
     private func reloadAll() async {
@@ -537,9 +709,13 @@ final class ExercisePickerViewModel {
 struct ExercisePickerView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var viewModel: ExercisePickerViewModel
+    @State private var pendingSelectionOrder: [String] = []
+    @State private var pendingSelectionByID: [String: ExerciseCatalogItem] = [:]
+    @State private var isFilterStudioPresented = false
+    @State private var presentedExercise: ExerciseCatalogItem?
 
     let selectedExerciseIDs: Set<String>
-    let onAdd: (ExerciseCatalogItem) -> Void
+    let onSaveSelection: ([ExerciseCatalogItem]) -> Void
 
     init(
         repository: any ExerciseCatalogRepository = BackendExerciseCatalogRepository(
@@ -549,7 +725,7 @@ struct ExercisePickerView: View {
         suggestionsProvider: any ExercisePickerSuggestionsProviding = EmptyExercisePickerSuggestionsProvider(),
         context: ExercisePickerViewModel.Context = .init(),
         selectedExerciseIDs: Set<String> = [],
-        onAdd: @escaping (ExerciseCatalogItem) -> Void,
+        onSaveSelection: @escaping ([ExerciseCatalogItem]) -> Void,
     ) {
         _viewModel = State(
             initialValue: ExercisePickerViewModel(
@@ -559,7 +735,7 @@ struct ExercisePickerView: View {
             ),
         )
         self.selectedExerciseIDs = selectedExerciseIDs
-        self.onAdd = onAdd
+        self.onSaveSelection = onSaveSelection
     }
 
     var body: some View {
@@ -569,21 +745,13 @@ struct ExercisePickerView: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: FFSpacing.md) {
-                    FFCard {
+                    TrainingBuilderSectionCard(
+                        eyebrow: nil,
+                        title: "Найдите упражнения",
+                        helper: ""
+                    ) {
                         VStack(alignment: .leading, spacing: FFSpacing.sm) {
-                            VStack(alignment: .leading, spacing: FFSpacing.xxs) {
-                                Text("CATALOG")
-                                    .font(FFTypography.caption.weight(.semibold))
-                                    .foregroundStyle(FFColors.accent)
-                                Text(viewModel.hasActiveQuery ? "Подбор упражнений" : "Выбор упражнения")
-                                    .font(FFTypography.h2)
-                                    .foregroundStyle(FFColors.textPrimary)
-                                Text(searchCardSubtitle)
-                                    .font(FFTypography.body)
-                                    .foregroundStyle(FFColors.textSecondary)
-                            }
-
-                            if !viewModel.contextChips.isEmpty {
+                            if !viewModel.contextChips.isEmpty || viewModel.contextTitle != nil {
                                 ScrollView(.horizontal, showsIndicators: false) {
                                     HStack(spacing: FFSpacing.xs) {
                                         if let title = viewModel.contextTitle {
@@ -603,16 +771,58 @@ struct ExercisePickerView: View {
                                 helperText: searchFieldHelperText,
                             )
 
-                            filterRow
+                            browseModeControl
+
+                            filterSummaryRow
+
+                            if !activeSelectionChips.isEmpty {
+                                VStack(alignment: .leading, spacing: FFSpacing.xs) {
+                                    HStack {
+                                        Text("Активные фильтры")
+                                            .font(FFTypography.caption.weight(.semibold))
+                                            .foregroundStyle(FFColors.textSecondary)
+                                        Spacer()
+                                        Button("Очистить") {
+                                            Task { await viewModel.clearFilters() }
+                                        }
+                                        .font(FFTypography.caption.weight(.semibold))
+                                        .foregroundStyle(FFColors.accent)
+                                    }
+                                    ScrollView(.horizontal, showsIndicators: false) {
+                                        HStack(spacing: FFSpacing.xs) {
+                                            ForEach(viewModel.filters.muscleGroups, id: \.rawValue) { muscleGroup in
+                                                activeFilterChip(
+                                                    title: muscleGroup.label,
+                                                    action: { Task { await viewModel.removeMuscleGroup(muscleGroup) } }
+                                                )
+                                            }
+                                            ForEach(viewModel.filters.equipment, id: \.id) { equipment in
+                                                activeFilterChip(
+                                                    title: equipment.name,
+                                                    action: { Task { await viewModel.removeEquipment(equipment) } }
+                                                )
+                                            }
+                                            ForEach(viewModel.filters.movementPatterns, id: \.rawValue) { movementPattern in
+                                                activeFilterChip(
+                                                    title: movementPattern.label,
+                                                    action: { Task { await viewModel.removeMovementPattern(movementPattern) } }
+                                                )
+                                            }
+                                            ForEach(viewModel.filters.difficultyLevels, id: \.rawValue) { difficultyLevel in
+                                                activeFilterChip(
+                                                    title: difficultyLevel.label,
+                                                    action: { Task { await viewModel.removeDifficulty(difficultyLevel) } }
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                         }
-                        .padding(.top, FFSpacing.xs)
-                        .background(
-                            LinearGradient(
-                                colors: [FFColors.accent.opacity(0.1), .clear],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            )
-                        )
+                    }
+
+                    if !pendingSelectionOrder.isEmpty {
+                        selectionPreviewCard
                     }
 
                     if let statusMessage = viewModel.statusMessage {
@@ -628,16 +838,15 @@ struct ExercisePickerView: View {
                             sectionCard(section)
                         }
                     }
-
-                    if !viewModel.contractGaps.isEmpty {
-                        contractGapCard
-                    }
                 }
                 .padding(.horizontal, FFSpacing.md)
                 .padding(.vertical, FFSpacing.md)
             }
         }
-        .navigationTitle("Выбор упражнения")
+        .safeAreaInset(edge: .bottom) {
+            bottomSelectionBar
+        }
+        .navigationTitle("Каталог упражнений")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarLeading) {
@@ -646,15 +855,24 @@ struct ExercisePickerView: View {
                 }
                 .foregroundStyle(FFColors.textSecondary)
             }
-
-            if viewModel.filters.isActive {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("Сбросить") {
-                        Task { await viewModel.clearFilters() }
-                    }
-                    .foregroundStyle(FFColors.accent)
+        }
+        .fullScreenCover(isPresented: $isFilterStudioPresented) {
+            ExercisePickerFilterStudio(
+                filters: viewModel.filters,
+                muscleGroupOptions: viewModel.muscleGroupOptions,
+                equipmentOptions: viewModel.equipmentOptions,
+                movementPatternOptions: viewModel.movementPatternOptions,
+                difficultyOptions: viewModel.difficultyOptions,
+                loadContextualOptions: { filters in
+                    await viewModel.contextualFilterOptions(for: filters)
+                },
+                onApply: { filters in
+                    Task { await viewModel.applyFilters(filters) }
+                },
+                onReset: {
+                    Task { await viewModel.clearFilters() }
                 }
-            }
+            )
         }
         .task {
             await viewModel.onAppear()
@@ -662,125 +880,127 @@ struct ExercisePickerView: View {
         .onChange(of: viewModel.searchText) { _, _ in
             viewModel.searchQueryChanged()
         }
+        .sheet(item: $presentedExercise) { exercise in
+            NavigationStack {
+                ExerciseDetailsSheet(exercise: exercise)
+            }
+        }
     }
 
-    private var filterRow: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: FFSpacing.xs) {
-                filterMenu(
-                    title: "Группа мышц",
-                    value: viewModel.filters.muscleGroup?.label ?? "Все",
+    private var browseModeControl: some View {
+        HStack(spacing: FFSpacing.xs) {
+            ForEach(ExercisePickerViewModel.BrowseMode.allCases, id: \.rawValue) { mode in
+                TrainingBuilderChoiceTile(
+                    title: mode.title,
+                    subtitle: mode.subtitle,
+                    isSelected: viewModel.browseMode == mode
                 ) {
-                    Button("Все") {
-                        Task { await viewModel.selectMuscleGroup(nil) }
-                    }
+                    viewModel.browseMode = mode
+                }
+            }
+        }
+    }
 
-                    ForEach(viewModel.muscleGroupOptions, id: \.rawValue) { item in
-                        Button(item.label) {
-                            Task { await viewModel.selectMuscleGroup(item) }
-                        }
+    private var filterSummaryRow: some View {
+        HStack(spacing: FFSpacing.xs) {
+            Button {
+                isFilterStudioPresented = true
+            } label: {
+                HStack(spacing: FFSpacing.xs) {
+                    Image(systemName: "slider.horizontal.3")
+                        .font(.system(size: 14, weight: .semibold))
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(filterSummaryTitle)
+                            .font(FFTypography.body.weight(.semibold))
+                        Text(filterSummarySubtitle)
+                            .font(FFTypography.caption)
+                            .foregroundStyle(FFColors.textSecondary)
                     }
+                    Spacer(minLength: 0)
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(FFColors.textSecondary)
+                }
+                .padding(.horizontal, FFSpacing.sm)
+                .padding(.vertical, FFSpacing.sm)
+                .background(FFColors.surface)
+                .clipShape(RoundedRectangle(cornerRadius: FFTheme.Radius.control))
+                .overlay {
+                    RoundedRectangle(cornerRadius: FFTheme.Radius.control)
+                        .stroke(FFColors.gray700, lineWidth: 1)
+                }
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
+    private var selectionPreviewCard: some View {
+        TrainingBuilderSectionCard(
+            eyebrow: "Выбрано",
+            title: "\(pendingSelectionOrder.count) \(selectionNoun(for: pendingSelectionOrder.count))",
+            helper: ""
+        ) {
+            VStack(alignment: .leading, spacing: FFSpacing.sm) {
+                HStack(alignment: .top, spacing: FFSpacing.sm) {
+                    Spacer()
+                    Button("Очистить") {
+                        pendingSelectionOrder.removeAll()
+                        pendingSelectionByID.removeAll()
+                    }
+                    .font(FFTypography.caption.weight(.semibold))
+                    .foregroundStyle(FFColors.accent)
                 }
 
-                if !viewModel.equipmentOptions.isEmpty || viewModel.filters.equipment != nil {
-                    filterMenu(
-                        title: "Оборудование",
-                        value: viewModel.filters.equipment?.name ?? "Все",
-                    ) {
-                        Button("Все") {
-                            Task { await viewModel.selectEquipment(nil) }
-                        }
-
-                        ForEach(viewModel.equipmentOptions) { item in
-                            Button(item.name) {
-                                Task { await viewModel.selectEquipment(item) }
-                            }
-                        }
-                    }
-                }
-
-                filterMenu(
-                    title: "Паттерн",
-                    value: viewModel.filters.movementPattern?.label ?? "Все",
-                ) {
-                    Button("Все") {
-                        Task { await viewModel.selectMovementPattern(nil) }
-                    }
-
-                    ForEach(viewModel.movementPatternOptions, id: \.rawValue) { item in
-                        Button(item.label) {
-                            Task { await viewModel.selectMovementPattern(item) }
-                        }
-                    }
-                }
-
-                filterMenu(
-                    title: "Сложность",
-                    value: viewModel.filters.difficultyLevel?.label ?? "Все",
-                ) {
-                    Button("Все") {
-                        Task { await viewModel.selectDifficulty(nil) }
-                    }
-
-                    ForEach(viewModel.difficultyOptions, id: \.rawValue) { item in
-                        Button(item.label) {
-                            Task { await viewModel.selectDifficulty(item) }
+                VStack(spacing: FFSpacing.xs) {
+                    ForEach(pendingSelectionOrder, id: \.self) { id in
+                        if let item = pendingSelectionByID[id] {
+                            pendingSelectionRow(item)
                         }
                     }
                 }
             }
-            .padding(.vertical, FFSpacing.xxs)
         }
-    }
-
-    private var searchCardSubtitle: String {
-        if viewModel.isContextualBrowsing {
-            return "Каталог уже сужен под выбранные мышцы и доступное оборудование. Ниже можно только уточнить выбор."
-        }
-        return "Сначала ищите по каталогу, а ниже доступны честные локальные подсказки из ваших данных."
     }
 
     private var searchFieldHelperText: String {
         if viewModel.isContextualBrowsing {
-            return "Контекст тренировки уже применён к catalog search."
+            return "Учитываем текущую тренировку и оборудование."
         }
-        return "Поиск работает через athlete exercise catalog"
+        return "Поиск по названию и быстрые фильтры."
+    }
+
+    private var filterSummaryTitle: String {
+        viewModel.filters.isActive ? "Фильтры: \(activeSelectionChips.count)" : "Фильтры"
+    }
+
+    private var filterSummarySubtitle: String {
+        if viewModel.filters.isActive {
+            return activeSelectionChips.joined(separator: " • ")
+        }
+        return "Группы мышц, оборудование и сложность"
     }
 
     private func contextChip(_ title: String, accent: Bool = false) -> some View {
-        Text(title)
-            .font(FFTypography.caption.weight(.semibold))
-            .foregroundStyle(accent ? FFColors.background : FFColors.textSecondary)
-            .padding(.horizontal, FFSpacing.sm)
-            .padding(.vertical, FFSpacing.xs)
-            .background(accent ? FFColors.accent : FFColors.surface)
-            .clipShape(Capsule())
+        TrainingBuilderBadge(title: title, isAccent: accent)
     }
 
-    private func filterMenu<Content: View>(
-        title: String,
-        value: String,
-        @ViewBuilder content: () -> Content,
-    ) -> some View {
-        Menu {
-            content()
-        } label: {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title)
-                    .font(FFTypography.caption)
-                    .foregroundStyle(FFColors.textSecondary)
-                Text(value)
-                    .font(FFTypography.body.weight(.semibold))
-                    .foregroundStyle(FFColors.textPrimary)
+    @ViewBuilder
+    private func activeFilterChip(title: String?, action: @escaping () -> Void) -> some View {
+        if let title {
+            Button(action: action) {
+                HStack(spacing: FFSpacing.xs) {
+                    Text(title)
+                    Image(systemName: "xmark")
+                        .font(.system(size: 10, weight: .bold))
+                }
+                .font(FFTypography.caption.weight(.semibold))
+                .foregroundStyle(FFColors.background)
+                .padding(.horizontal, FFSpacing.sm)
+                .padding(.vertical, FFSpacing.xs)
+                .background(FFColors.primary)
+                .clipShape(Capsule())
             }
-            .padding(.horizontal, FFSpacing.sm)
-            .padding(.vertical, FFSpacing.xs)
-            .background(FFColors.surface)
-            .clipShape(RoundedRectangle(cornerRadius: FFTheme.Radius.control))
-            .overlay {
-                RoundedRectangle(cornerRadius: FFTheme.Radius.control)
-                    .stroke(FFColors.gray700, lineWidth: 1)
-            }
+            .buttonStyle(.plain)
         }
     }
 
@@ -796,17 +1016,19 @@ struct ExercisePickerView: View {
     }
 
     private var emptyCard: some View {
-        FFCard {
-            VStack(alignment: .leading, spacing: FFSpacing.sm) {
-                Text("Ничего не найдено")
-                    .font(FFTypography.h2)
-                    .foregroundStyle(FFColors.textPrimary)
-                Text(viewModel.statusMessage ?? "Попробуйте другой запрос или снимите фильтры.")
-                    .font(FFTypography.body)
-                    .foregroundStyle(FFColors.textSecondary)
-
+        TrainingBuilderSectionCard(
+            eyebrow: nil,
+            title: "Ничего не найдено",
+            helper: viewModel.statusMessage ?? "Попробуйте другой запрос или ослабьте фильтры."
+        ) {
+            HStack(spacing: FFSpacing.sm) {
                 FFButton(title: "Повторить", variant: .secondary) {
                     Task { await viewModel.retry() }
+                }
+                if viewModel.filters.isActive {
+                    FFButton(title: "Сбросить фильтры", variant: .secondary) {
+                        Task { await viewModel.clearFilters() }
+                    }
                 }
             }
         }
@@ -826,124 +1048,657 @@ struct ExercisePickerView: View {
         }
     }
 
+    @ViewBuilder
     private func sectionCard(_ section: ExercisePickerSection) -> some View {
-        FFCard {
+        if section.kind == .catalogResults {
             VStack(alignment: .leading, spacing: FFSpacing.sm) {
-                VStack(alignment: .leading, spacing: FFSpacing.xxs) {
-                    Text(sectionEyebrow(for: section))
-                        .font(FFTypography.caption.weight(.semibold))
-                        .foregroundStyle(sectionAccent(for: section))
-                    Text(section.title)
-                        .font(FFTypography.h2)
-                        .foregroundStyle(FFColors.textPrimary)
-                    if let subtitle = section.subtitle {
-                        Text(subtitle)
-                            .font(FFTypography.caption)
-                            .foregroundStyle(FFColors.textSecondary)
-                    }
-                }
-
+                sectionHeader(section)
                 ForEach(section.items) { item in
                     exerciseRow(item)
                 }
+            }
+        } else {
+            FFCard {
+                VStack(alignment: .leading, spacing: FFSpacing.sm) {
+                    sectionHeader(section)
+
+                    ForEach(section.items) { item in
+                        exerciseRow(item)
+                    }
+                }
+            }
+        }
+    }
+
+    private func sectionHeader(_ section: ExercisePickerSection) -> some View {
+        VStack(alignment: .leading, spacing: FFSpacing.xxs) {
+            HStack(alignment: .firstTextBaseline, spacing: FFSpacing.xs) {
+                Text(section.title)
+                    .font(FFTypography.h2)
+                    .foregroundStyle(FFColors.textPrimary)
+                Text("\(section.items.count)")
+                    .font(FFTypography.caption.weight(.semibold))
+                    .foregroundStyle(FFColors.textSecondary)
+            }
+            if let subtitle = section.subtitle {
+                Text(subtitle)
+                    .font(FFTypography.caption)
+                    .foregroundStyle(FFColors.textSecondary)
             }
         }
     }
 
     private func exerciseRow(_ exercise: ExerciseCatalogItem) -> some View {
-        let isSelected = selectedExerciseIDs.contains(exercise.id)
+        let isAlreadyAdded = selectedExerciseIDs.contains(exercise.id)
+        let isPending = pendingSelectionByID[exercise.id] != nil
 
-        return HStack(alignment: .top, spacing: FFSpacing.sm) {
-            VStack(alignment: .leading, spacing: FFSpacing.xxs) {
-                Text(exercise.name)
-                    .font(FFTypography.body.weight(.semibold))
-                    .foregroundStyle(FFColors.textPrimary)
-
-                Text(exercisePickerSummary(for: exercise))
-                    .font(FFTypography.caption)
-                    .foregroundStyle(FFColors.textSecondary)
-
-                if let sourceLabel = exercisePickerSourceLabel(for: exercise) {
-                    Text(sourceLabel)
-                        .font(FFTypography.caption.weight(.semibold))
-                        .foregroundStyle(FFColors.primary)
-                        .padding(.horizontal, FFSpacing.xs)
-                        .padding(.vertical, FFSpacing.xxs)
-                        .background(FFColors.primary.opacity(0.12))
-                        .clipShape(Capsule())
-                }
-            }
-
-            Spacer(minLength: FFSpacing.sm)
-
-            Button {
-                guard !isSelected else { return }
-                onAdd(exercise)
-            } label: {
-                Text(isSelected ? "Добавлено" : "Добавить")
-                    .font(FFTypography.caption.weight(.semibold))
-                    .foregroundStyle(isSelected ? FFColors.textSecondary : FFColors.accent)
-                    .padding(.horizontal, FFSpacing.sm)
-                    .padding(.vertical, FFSpacing.xs)
-                    .background(FFColors.surface)
-                    .clipShape(Capsule())
-                    .overlay {
-                        Capsule()
-                            .stroke(isSelected ? FFColors.gray700 : FFColors.accent.opacity(0.4), lineWidth: 1)
+        return VStack(alignment: .leading, spacing: FFSpacing.sm) {
+            HStack(alignment: .top, spacing: FFSpacing.sm) {
+                VStack(alignment: .leading, spacing: FFSpacing.xs) {
+                    HStack(alignment: .top, spacing: FFSpacing.xs) {
+                        VStack(alignment: .leading, spacing: FFSpacing.xxs) {
+                            Text(exercise.name)
+                                .font(FFTypography.body.weight(.semibold))
+                                .foregroundStyle(FFColors.textPrimary)
+                            if let sourceLabel = exercisePickerSourceLabel(for: exercise) {
+                                Text(sourceLabel)
+                                    .font(FFTypography.caption.weight(.semibold))
+                                    .foregroundStyle(FFColors.primary)
+                                    .padding(.horizontal, FFSpacing.xs)
+                                    .padding(.vertical, FFSpacing.xxs)
+                                    .background(FFColors.primary.opacity(0.12))
+                                    .clipShape(Capsule())
+                            }
+                        }
+                        Spacer(minLength: FFSpacing.sm)
+                        Button {
+                            toggleSelection(for: exercise)
+                        } label: {
+                            selectionPill(
+                                title: isAlreadyAdded ? "Уже в тренировке" : (isPending ? "Выбрано" : "Выбрать"),
+                                isActive: isPending,
+                                isDisabled: isAlreadyAdded,
+                            )
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(isAlreadyAdded)
                     }
-            }
-            .buttonStyle(.plain)
-            .disabled(isSelected)
-            .accessibilityLabel("\(exercise.name), \(isSelected ? "уже добавлено" : "добавить")")
-        }
-        .padding(.vertical, FFSpacing.xxs)
-        .padding(.horizontal, FFSpacing.xs)
-        .padding(.vertical, FFSpacing.sm)
-        .background(FFColors.surface.opacity(0.62))
-        .clipShape(RoundedRectangle(cornerRadius: FFTheme.Radius.control))
-    }
 
-    private func sectionEyebrow(for section: ExercisePickerSection) -> String {
-        switch section.kind {
-        case .recent:
-            return "RECENT"
-        case .templates:
-            return "TEMPLATES"
-        case .localMatches:
-            return "MATCHES"
-        case .catalogResults:
-            return "CATALOG"
-        }
-    }
+                    if !exercisePickerTags(for: exercise).isEmpty {
+                        exerciseTagRow(tags: exercisePickerTags(for: exercise))
+                    }
 
-    private func sectionAccent(for section: ExercisePickerSection) -> Color {
-        switch section.kind {
-        case .recent:
-            return FFColors.primary
-        case .templates:
-            return FFColors.accent
-        case .localMatches:
-            return FFColors.primary
-        case .catalogResults:
-            return FFColors.textSecondary
-        }
-    }
-
-    private var contractGapCard: some View {
-        FFCard {
-            VStack(alignment: .leading, spacing: FFSpacing.xs) {
-                Text("Ограничения контракта")
-                    .font(FFTypography.h2)
-                    .foregroundStyle(FFColors.textPrimary)
-
-                ForEach(viewModel.contractGaps.prefix(3), id: \.self) { gap in
-                    Text("• \(gap)")
+                    Text(exercisePickerSummary(for: exercise))
                         .font(FFTypography.caption)
                         .foregroundStyle(FFColors.textSecondary)
                 }
             }
+
+            HStack(spacing: FFSpacing.xs) {
+                Label("Открыть детали", systemImage: "info.circle")
+                    .font(FFTypography.caption.weight(.semibold))
+                    .foregroundStyle(FFColors.textSecondary)
+                Spacer(minLength: 0)
+            }
+        }
+        .padding(FFSpacing.md)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(rowBackgroundColor(isAlreadyAdded: isAlreadyAdded, isPending: isPending))
+        .clipShape(RoundedRectangle(cornerRadius: FFTheme.Radius.card))
+        .overlay {
+            RoundedRectangle(cornerRadius: FFTheme.Radius.card)
+                .stroke(rowBorderColor(isAlreadyAdded: isAlreadyAdded, isPending: isPending), lineWidth: 1)
+        }
+        .shadow(color: FFTheme.Shadow.color.opacity(isPending ? 1 : 0.55), radius: FFTheme.Shadow.radius, y: FFTheme.Shadow.y)
+        .contentShape(RoundedRectangle(cornerRadius: FFTheme.Radius.card))
+        .onTapGesture {
+            presentedExercise = exercise
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(exercise.name), \(isAlreadyAdded ? "уже добавлено" : (isPending ? "выбрано" : "не выбрано"))")
+    }
+
+    private var bottomSelectionBar: some View {
+        TrainingBuilderBottomBar(
+            helper: "Отметьте упражнения и добавьте их в тренировку.",
+            title: addSelectionTitle,
+            summary: pendingSelectionOrder.isEmpty ? nil : "Вернём их в тренировку",
+            buttonVariant: pendingSelectionOrder.isEmpty ? .disabled : .primary
+        ) {
+            commitSelection()
         }
     }
+
+    private var activeSelectionChips: [String] {
+        viewModel.filters.muscleGroups.map(\.label)
+            + viewModel.filters.equipment.map(\.name)
+            + viewModel.filters.movementPatterns.map(\.label)
+            + viewModel.filters.difficultyLevels.map(\.label)
+    }
+
+    private func selectionNoun(for count: Int) -> String {
+        let remainder10 = count % 10
+        let remainder100 = count % 100
+        if remainder10 == 1, remainder100 != 11 {
+            return "упражнение"
+        }
+        if (2 ... 4).contains(remainder10), !(12 ... 14).contains(remainder100) {
+            return "упражнения"
+        }
+        return "упражнений"
+    }
+
+    private var addSelectionTitle: String {
+        let count = pendingSelectionOrder.count
+        let noun: String
+        let remainder10 = count % 10
+        let remainder100 = count % 100
+        if remainder10 == 1, remainder100 != 11 {
+            noun = "упражнение"
+        } else if (2 ... 4).contains(remainder10), !(12 ... 14).contains(remainder100) {
+            noun = "упражнения"
+        } else {
+            noun = "упражнений"
+        }
+        return "Добавить \(count) \(noun) в тренировку"
+    }
+
+    private func toggleSelection(for exercise: ExerciseCatalogItem) {
+        guard !selectedExerciseIDs.contains(exercise.id) else { return }
+        if pendingSelectionByID[exercise.id] != nil {
+            pendingSelectionByID.removeValue(forKey: exercise.id)
+            pendingSelectionOrder.removeAll { $0 == exercise.id }
+            return
+        }
+        pendingSelectionByID[exercise.id] = exercise
+        pendingSelectionOrder.append(exercise.id)
+    }
+
+    private func commitSelection() {
+        let items = pendingSelectionOrder.compactMap { pendingSelectionByID[$0] }
+        guard !items.isEmpty else { return }
+        onSaveSelection(items)
+        dismiss()
+    }
+
+    private func rowBackgroundColor(isAlreadyAdded: Bool, isPending: Bool) -> Color {
+        if isAlreadyAdded {
+            return FFColors.surface.opacity(0.35)
+        }
+        if isPending {
+            return FFColors.accent.opacity(0.12)
+        }
+        return FFColors.surface.opacity(0.62)
+    }
+
+    private func rowBorderColor(isAlreadyAdded: Bool, isPending: Bool) -> Color {
+        if isAlreadyAdded {
+            return FFColors.gray700.opacity(0.8)
+        }
+        if isPending {
+            return FFColors.accent.opacity(0.55)
+        }
+        return FFColors.gray700.opacity(0.65)
+    }
+
+    private func selectionPill(title: String, isActive: Bool, isDisabled: Bool) -> some View {
+        Text(title)
+            .font(FFTypography.caption.weight(.semibold))
+            .foregroundStyle(
+                isDisabled ? FFColors.textSecondary : (isActive ? FFColors.background : FFColors.accent)
+            )
+            .padding(.horizontal, FFSpacing.sm)
+            .padding(.vertical, FFSpacing.xs)
+            .background(
+                isDisabled ? FFColors.surface : (isActive ? FFColors.accent : FFColors.surface)
+            )
+            .clipShape(Capsule())
+            .overlay {
+                Capsule()
+                    .stroke(
+                        isDisabled ? FFColors.gray700 : (isActive ? FFColors.accent : FFColors.accent.opacity(0.4)),
+                        lineWidth: 1
+                    )
+            }
+    }
+
+    private func pendingSelectionRow(_ exercise: ExerciseCatalogItem) -> some View {
+        VStack(alignment: .leading, spacing: FFSpacing.xxs) {
+            HStack(alignment: .top, spacing: FFSpacing.xs) {
+                Text(exercise.name)
+                    .font(FFTypography.body.weight(.semibold))
+                    .foregroundStyle(FFColors.textPrimary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                Button {
+                    pendingSelectionByID.removeValue(forKey: exercise.id)
+                    pendingSelectionOrder.removeAll { $0 == exercise.id }
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundStyle(FFColors.textSecondary)
+                        .frame(width: 24, height: 24)
+                        .background(FFColors.surface)
+                        .clipShape(Circle())
+                }
+                .buttonStyle(.plain)
+            }
+
+            let tags = exercisePickerTags(for: exercise)
+            if !tags.isEmpty {
+                exerciseTagRow(tags: tags)
+            }
+        }
+        .padding(FFSpacing.sm)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(FFColors.surface)
+        .clipShape(RoundedRectangle(cornerRadius: FFTheme.Radius.control))
+        .overlay {
+            RoundedRectangle(cornerRadius: FFTheme.Radius.control)
+                .stroke(FFColors.gray700, lineWidth: 1)
+        }
+    }
+
+    private func exerciseTagRow(tags: [String]) -> some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: FFSpacing.xs) {
+                ForEach(tags, id: \.self) { tag in
+                    contextChip(tag)
+                }
+            }
+        }
+    }
+}
+
+private struct ExercisePickerFilterStudio: View {
+    @Environment(\.dismiss) private var dismiss
+
+    @State private var draftFilters: ExercisePickerViewModel.FilterState
+    @State private var contextualEquipmentOptions: [ExerciseCatalogEquipment]
+    @State private var contextualMovementPatternOptions: [ExerciseCatalogMovementPattern]
+    @State private var contextualDifficultyOptions: [ExerciseCatalogDifficultyLevel]
+    @State private var isLoadingEquipment = false
+
+    let muscleGroupOptions: [ExerciseCatalogMuscleGroup]
+    let loadContextualOptions: (ExercisePickerViewModel.FilterState) async -> ExercisePickerViewModel.ContextualFilterOptions
+    let onApply: (ExercisePickerViewModel.FilterState) -> Void
+    let onReset: () -> Void
+
+    init(
+        filters: ExercisePickerViewModel.FilterState,
+        muscleGroupOptions: [ExerciseCatalogMuscleGroup],
+        equipmentOptions: [ExerciseCatalogEquipment],
+        movementPatternOptions: [ExerciseCatalogMovementPattern],
+        difficultyOptions: [ExerciseCatalogDifficultyLevel],
+        loadContextualOptions: @escaping (ExercisePickerViewModel.FilterState) async -> ExercisePickerViewModel.ContextualFilterOptions,
+        onApply: @escaping (ExercisePickerViewModel.FilterState) -> Void,
+        onReset: @escaping () -> Void,
+    ) {
+        _draftFilters = State(initialValue: filters)
+        _contextualEquipmentOptions = State(initialValue: equipmentOptions)
+        _contextualMovementPatternOptions = State(initialValue: movementPatternOptions)
+        _contextualDifficultyOptions = State(initialValue: difficultyOptions)
+        self.muscleGroupOptions = muscleGroupOptions
+        self.loadContextualOptions = loadContextualOptions
+        self.onApply = onApply
+        self.onReset = onReset
+    }
+
+    var body: some View {
+        NavigationStack {
+            ZStack {
+                FFColors.background
+                    .ignoresSafeArea()
+
+                ScrollView { filterContent }
+            }
+            .task {
+                await refreshEquipmentOptions()
+            }
+            .onChange(of: draftFilters) { _, _ in
+                Task {
+                    await refreshEquipmentOptions()
+                }
+            }
+            .safeAreaInset(edge: .bottom) {
+                TrainingBuilderBottomBar(
+                    helper: "Примените фильтры или сбросьте всё.",
+                    title: "Применить фильтры",
+                    summary: activeFilterSummary,
+                    buttonVariant: .primary
+                ) {
+                    onApply(draftFilters)
+                    dismiss()
+                }
+            }
+            .navigationTitle("Фильтры")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("Закрыть") {
+                        dismiss()
+                    }
+                    .foregroundStyle(FFColors.textSecondary)
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Сбросить") {
+                        draftFilters = .init()
+                        onReset()
+                        dismiss()
+                    }
+                    .foregroundStyle(FFColors.accent)
+                }
+            }
+        }
+    }
+
+    private var filterContent: some View {
+        VStack(alignment: .leading, spacing: FFSpacing.md) {
+            muscleGroupSection
+
+            if !contextualEquipmentOptions.isEmpty {
+                equipmentSection
+            }
+
+            movementPatternSection
+            difficultySection
+        }
+        .padding(.horizontal, FFSpacing.md)
+        .padding(.vertical, FFSpacing.md)
+    }
+
+    private var muscleGroupSection: some View {
+        filterCard(
+            eyebrow: nil,
+            title: "Группа мышц",
+            helper: ""
+        ) {
+            chipGrid(items: muscleGroupOptions, id: \.rawValue) { item in
+                filterChoiceChip(
+                    title: item.label,
+                    isSelected: draftFilters.muscleGroups.contains(item)
+                ) {
+                    toggleMuscleGroup(item)
+                }
+            }
+        }
+    }
+
+    private var equipmentSection: some View {
+        filterCard(
+            eyebrow: nil,
+            title: "Оборудование",
+            helper: isLoadingEquipment ? "Обновляем доступное оборудование." : ""
+        ) {
+            chipGrid(items: contextualEquipmentOptions, id: \.id) { item in
+                filterChoiceChip(
+                    title: item.name,
+                    isSelected: draftFilters.equipment.contains(where: { $0.id == item.id })
+                ) {
+                    toggleEquipment(item)
+                }
+            }
+        }
+    }
+
+    private var movementPatternSection: some View {
+        filterCard(
+            eyebrow: nil,
+            title: "Паттерн движения",
+            helper: ""
+        ) {
+                            chipGrid(items: contextualMovementPatternOptions, id: \.rawValue) { item in
+                filterChoiceChip(
+                    title: item.label,
+                    isSelected: draftFilters.movementPatterns.contains(item)
+                ) {
+                    toggleMovementPattern(item)
+                }
+            }
+        }
+    }
+
+    private var difficultySection: some View {
+        filterCard(
+            eyebrow: nil,
+            title: "Сложность",
+            helper: ""
+        ) {
+                            chipGrid(items: contextualDifficultyOptions, id: \.rawValue) { item in
+                filterChoiceChip(
+                    title: item.label,
+                    isSelected: draftFilters.difficultyLevels.contains(item)
+                ) {
+                    toggleDifficulty(item)
+                }
+            }
+        }
+    }
+
+    private func filterCard<Content: View>(
+        eyebrow: String?,
+        title: String,
+        helper: String,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        TrainingBuilderSectionCard(eyebrow: eyebrow, title: title, helper: helper) {
+            content()
+        }
+    }
+
+    private func chipGrid<Item, ID: Hashable, Content: View>(
+        items: [Item],
+        id: KeyPath<Item, ID>,
+        @ViewBuilder content: @escaping (Item) -> Content,
+    ) -> some View {
+        LazyVGrid(columns: [GridItem(.adaptive(minimum: 120), spacing: FFSpacing.xs)], spacing: FFSpacing.xs) {
+            ForEach(items, id: id) { item in
+                content(item)
+            }
+        }
+    }
+
+    private func filterChoiceChip(title: String, isSelected: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(title)
+                .font(FFTypography.caption.weight(.semibold))
+                .foregroundStyle(isSelected ? FFColors.background : FFColors.textPrimary)
+                .padding(.horizontal, FFSpacing.sm)
+                .padding(.vertical, FFSpacing.xs)
+                .frame(maxWidth: .infinity)
+                .background(isSelected ? FFColors.primary : FFColors.surface)
+                .clipShape(RoundedRectangle(cornerRadius: FFTheme.Radius.control))
+                .overlay {
+                    RoundedRectangle(cornerRadius: FFTheme.Radius.control)
+                        .stroke(isSelected ? FFColors.primary : FFColors.gray700, lineWidth: 1)
+                }
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var activeFilterSummary: String? {
+        let parts = [
+            normalizePickerText(draftFilters.muscleGroups.map(\.label).joined(separator: ", ")),
+            normalizePickerText(draftFilters.equipment.map(\.name).joined(separator: ", ")),
+            normalizePickerText(draftFilters.movementPatterns.map(\.label).joined(separator: ", ")),
+            normalizePickerText(draftFilters.difficultyLevels.map(\.label).joined(separator: ", ")),
+        ]
+        .compactMap { $0 }
+        return parts.isEmpty ? nil : parts.joined(separator: " • ")
+    }
+
+    private func refreshEquipmentOptions() async {
+        isLoadingEquipment = true
+        let options = await loadContextualOptions(draftFilters)
+        contextualEquipmentOptions = options.equipment
+        contextualMovementPatternOptions = options.movementPatterns
+        contextualDifficultyOptions = options.difficultyLevels
+        let allowedIDs = Set(options.equipment.map(\.id))
+        draftFilters.equipment.removeAll { !allowedIDs.contains($0.id) }
+        let allowedPatterns = Set(options.movementPatterns)
+        draftFilters.movementPatterns.removeAll { !allowedPatterns.contains($0) }
+        let allowedDifficultyLevels = Set(options.difficultyLevels)
+        draftFilters.difficultyLevels.removeAll { !allowedDifficultyLevels.contains($0) }
+        isLoadingEquipment = false
+    }
+
+    private func toggleMuscleGroup(_ item: ExerciseCatalogMuscleGroup) {
+        if draftFilters.muscleGroups.contains(item) {
+            draftFilters.muscleGroups.removeAll { $0 == item }
+        } else {
+            draftFilters.muscleGroups.append(item)
+            draftFilters.muscleGroups.sort(by: { $0.sortOrder < $1.sortOrder })
+        }
+    }
+
+    private func toggleEquipment(_ item: ExerciseCatalogEquipment) {
+        if draftFilters.equipment.contains(where: { $0.id == item.id }) {
+            draftFilters.equipment.removeAll { $0.id == item.id }
+        } else {
+            draftFilters.equipment.append(item)
+            draftFilters.equipment.sort(by: { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending })
+        }
+    }
+
+    private func toggleMovementPattern(_ item: ExerciseCatalogMovementPattern) {
+        if draftFilters.movementPatterns.contains(item) {
+            draftFilters.movementPatterns.removeAll { $0 == item }
+        } else {
+            draftFilters.movementPatterns.append(item)
+            draftFilters.movementPatterns.sort(by: { $0.pickerSortRank < $1.pickerSortRank })
+        }
+    }
+
+    private func toggleDifficulty(_ item: ExerciseCatalogDifficultyLevel) {
+        if draftFilters.difficultyLevels.contains(item) {
+            draftFilters.difficultyLevels.removeAll { $0 == item }
+        } else {
+            draftFilters.difficultyLevels.append(item)
+            draftFilters.difficultyLevels.sort(by: { $0.pickerSortRank < $1.pickerSortRank })
+        }
+    }
+}
+
+private struct ExerciseDetailsSheet: View {
+    @Environment(\.dismiss) private var dismiss
+
+    let exercise: ExerciseCatalogItem
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: FFSpacing.md) {
+                if let mediaURL = previewMediaURL {
+                    AsyncImage(url: mediaURL) { phase in
+                        switch phase {
+                        case let .success(image):
+                            image
+                                .resizable()
+                                .scaledToFill()
+                        case .failure:
+                            mediaFallback
+                        case .empty:
+                            ZStack {
+                                FFColors.surface
+                                ProgressView()
+                            }
+                        @unknown default:
+                            mediaFallback
+                        }
+                    }
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 220)
+                    .clipShape(RoundedRectangle(cornerRadius: FFTheme.Radius.card))
+                }
+
+                TrainingBuilderSectionCard(
+                    eyebrow: nil,
+                    title: exercise.name,
+                    helper: exercisePickerSummary(for: exercise)
+                ) {
+                    VStack(alignment: .leading, spacing: FFSpacing.sm) {
+                        let tags = exercisePickerTags(for: exercise)
+                        if !tags.isEmpty {
+                            exerciseDetailsTagRow(tags: tags)
+                        }
+
+                        if let description = normalizePickerText(exercise.description) {
+                            detailBlock(title: "Описание", text: description)
+                        }
+
+                        if !equipmentList.isEmpty {
+                            detailBlock(title: "Оборудование", text: equipmentList)
+                        }
+
+                        if !muscleList.isEmpty {
+                            detailBlock(title: "Группы мышц", text: muscleList)
+                        }
+
+                        if let sourceLabel = exercisePickerSourceLabel(for: exercise) {
+                            detailBlock(title: "Источник", text: sourceLabel)
+                        }
+                    }
+                }
+            }
+            .padding(.horizontal, FFSpacing.md)
+            .padding(.vertical, FFSpacing.md)
+        }
+        .background(FFColors.background.ignoresSafeArea())
+        .navigationTitle("Упражнение")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarLeading) {
+                Button("Закрыть") {
+                    dismiss()
+                }
+                .foregroundStyle(FFColors.textSecondary)
+            }
+        }
+    }
+
+    private var previewMediaURL: URL? {
+        exercise.media
+            .compactMap { URL(string: $0.url) }
+            .first
+    }
+
+    private var mediaFallback: some View {
+        ZStack {
+            FFColors.surface
+            Image(systemName: "figure.strengthtraining.traditional")
+                .font(.system(size: 40, weight: .regular))
+                .foregroundStyle(FFColors.textSecondary)
+        }
+    }
+
+    private var equipmentList: String {
+        exercise.equipment.map(\.name).uniqueStrings().joined(separator: ", ")
+    }
+
+    private var muscleList: String {
+        exercise.muscles.compactMap { $0.muscleGroup?.label }.uniqueStrings().joined(separator: ", ")
+    }
+
+    private func detailBlock(title: String, text: String) -> some View {
+        VStack(alignment: .leading, spacing: FFSpacing.xxs) {
+            Text(title)
+                .font(FFTypography.caption.weight(.semibold))
+                .foregroundStyle(FFColors.textSecondary)
+            Text(text)
+                .font(FFTypography.body)
+                .foregroundStyle(FFColors.textPrimary)
+        }
+    }
+
+    private func exerciseDetailsTagRow(tags: [String]) -> some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: FFSpacing.xs) {
+                ForEach(tags, id: \.self) { tag in
+                    TrainingBuilderBadge(title: tag)
+                }
+            }
+        }
+    }
+
 }
 
 private struct DatedCatalogItem: Sendable {
@@ -984,6 +1739,28 @@ private func exercisePickerSummary(for exercise: ExerciseCatalogItem) -> String 
     exercise.pickerSummaryText
 }
 
+private func exercisePickerTags(for exercise: ExerciseCatalogItem) -> [String] {
+    var tags: [String] = []
+    if let movementPattern = exercise.movementPattern?.label {
+        tags.append(movementPattern)
+    }
+    if let difficulty = exercise.difficultyLevel?.label {
+        tags.append(difficulty)
+    }
+    let muscleTags = exercise.muscles
+        .compactMap { $0.muscleGroup?.label }
+        .uniqueStrings()
+    tags.append(contentsOf: muscleTags.prefix(2))
+    let equipmentTags = exercise.equipment
+        .map(\.name)
+        .uniqueStrings()
+    tags.append(contentsOf: equipmentTags.prefix(2))
+    if tags.isEmpty, exercise.isBodyweight == true {
+        tags.append("Свой вес")
+    }
+    return Array(tags.prefix(4))
+}
+
 private func exercisePickerSourceLabel(for exercise: ExerciseCatalogItem) -> String? {
     switch exercise.source {
     case .athleteCatalog:
@@ -1009,6 +1786,15 @@ private extension Array where Element == ExerciseCatalogItem {
     }
 }
 
+private func normalizePickerText(_ text: String?) -> String? {
+    guard let text = text?.trimmingCharacters(in: .whitespacesAndNewlines),
+          !text.isEmpty
+    else {
+        return nil
+    }
+    return text
+}
+
 private extension Array where Element == String {
     func removingDuplicateStrings() -> [String] {
         var seen = Set<String>()
@@ -1021,31 +1807,57 @@ private extension Array where Element == String {
 }
 
 private extension ExerciseCatalogMovementPattern {
+    var pickerSortRank: Int {
+        switch self {
+        case .push:
+            0
+        case .pull:
+            1
+        case .squat:
+            2
+        case .hinge:
+            3
+        case .other:
+            4
+        }
+    }
+
     var label: String {
         switch self {
         case .push:
-            "Push"
+            "Жим"
         case .pull:
-            "Pull"
+            "Тяга"
         case .squat:
-            "Squat"
+            "Присед"
         case .hinge:
-            "Hinge"
+            "Наклон"
         case .other:
-            "Other"
+            "Другое"
         }
     }
 }
 
 private extension ExerciseCatalogDifficultyLevel {
+    var pickerSortRank: Int {
+        switch self {
+        case .beginner:
+            0
+        case .intermediate:
+            1
+        case .advanced:
+            2
+        }
+    }
+
     var label: String {
         switch self {
         case .beginner:
-            "Beginner"
+            "Начальный"
         case .intermediate:
-            "Intermediate"
+            "Средний"
         case .advanced:
-            "Advanced"
+            "Продвинутый"
         }
     }
 }

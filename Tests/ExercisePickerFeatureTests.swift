@@ -222,17 +222,172 @@ final class ExercisePickerFeatureTests: XCTestCase {
 
         await viewModel.onAppear()
         viewModel.searchText = "жим"
-        await viewModel.selectMuscleGroup(.chest)
-        await viewModel.selectEquipment(viewModel.catalogMetadata.equipment.first)
-        await viewModel.selectMovementPattern(.push)
-        await viewModel.selectDifficulty(.beginner)
+        await viewModel.toggleMuscleGroup(.chest)
+        await viewModel.toggleMuscleGroup(.shoulders)
+        await viewModel.toggleEquipment(viewModel.catalogMetadata.equipment.first!)
+        await viewModel.toggleMovementPattern(.push)
+        await viewModel.toggleDifficulty(.beginner)
 
         let lastQuery = await repository.lastQuery
         XCTAssertEqual(lastQuery?.search, "жим")
-        XCTAssertEqual(lastQuery?.muscleGroups, [.chest])
+        XCTAssertEqual(lastQuery?.muscleGroups, [.chest, .shoulders])
         XCTAssertEqual(lastQuery?.equipmentIds, ["equipment-barbell"])
         XCTAssertEqual(lastQuery?.movementPattern, .push)
         XCTAssertEqual(lastQuery?.difficultyLevel, .beginner)
+    }
+
+    @MainActor
+    func testViewModelBuildsCatalogQueryWithMultipleEquipmentFilters() async {
+        let repository = StubExerciseCatalogRepository(
+            results: [
+                .content(items: [makeCatalogItem(id: "ex-1", name: "Жим лёжа")]),
+                .content(items: [makeCatalogItem(id: "ex-1", name: "Жим лёжа")]),
+                .content(items: [makeCatalogItem(id: "ex-1", name: "Жим лёжа")]),
+            ],
+            metadata: ExerciseCatalogMetadata(
+                muscles: [],
+                equipment: [
+                    makeEquipment(id: "equipment-barbell", name: "Штанга"),
+                    makeEquipment(id: "equipment-dumbbell", name: "Гантели"),
+                ],
+                muscleGroups: [],
+                equipmentCategories: [.freeWeight],
+                movementPatterns: [],
+                difficultyLevels: [],
+            ),
+        )
+        let viewModel = ExercisePickerViewModel(repository: repository)
+
+        await viewModel.onAppear()
+        await viewModel.toggleEquipment(makeEquipment(id: "equipment-barbell", name: "Штанга"))
+        await viewModel.toggleEquipment(makeEquipment(id: "equipment-dumbbell", name: "Гантели"))
+
+        let lastQuery = await repository.lastQuery
+        XCTAssertEqual(Set(lastQuery?.equipmentIds ?? []), Set(["equipment-barbell", "equipment-dumbbell"]))
+    }
+
+    @MainActor
+    func testViewModelAppliesMultiSelectMovementAndDifficultyLocally() async {
+        let repository = StubExerciseCatalogRepository(
+            results: [
+                .content(
+                    items: [
+                        makeCatalogItem(id: "ex-push", name: "Жим лёжа", movementPattern: .push, difficultyLevel: .beginner),
+                        makeCatalogItem(id: "ex-pull", name: "Тяга блока", movementPattern: .pull, difficultyLevel: .intermediate),
+                        makeCatalogItem(id: "ex-hinge", name: "Румынская тяга", movementPattern: .hinge, difficultyLevel: .advanced),
+                    ]
+                ),
+                .content(
+                    items: [
+                        makeCatalogItem(id: "ex-push", name: "Жим лёжа", movementPattern: .push, difficultyLevel: .beginner),
+                        makeCatalogItem(id: "ex-pull", name: "Тяга блока", movementPattern: .pull, difficultyLevel: .intermediate),
+                        makeCatalogItem(id: "ex-hinge", name: "Румынская тяга", movementPattern: .hinge, difficultyLevel: .advanced),
+                    ]
+                ),
+                .content(
+                    items: [
+                        makeCatalogItem(id: "ex-push", name: "Жим лёжа", movementPattern: .push, difficultyLevel: .beginner),
+                        makeCatalogItem(id: "ex-pull", name: "Тяга блока", movementPattern: .pull, difficultyLevel: .intermediate),
+                        makeCatalogItem(id: "ex-hinge", name: "Румынская тяга", movementPattern: .hinge, difficultyLevel: .advanced),
+                    ]
+                ),
+            ],
+        )
+        let viewModel = ExercisePickerViewModel(repository: repository)
+
+        await viewModel.onAppear()
+        await viewModel.toggleMovementPattern(.push)
+        await viewModel.toggleMovementPattern(.pull)
+        await viewModel.toggleDifficulty(.beginner)
+        await viewModel.toggleDifficulty(.intermediate)
+
+        let resultIDs = viewModel.visibleSections.flatMap(\.items).map(\.id)
+        let lastQuery = await repository.lastQuery
+
+        XCTAssertEqual(Set(resultIDs), Set(["ex-push", "ex-pull"]))
+        XCTAssertNil(lastQuery?.movementPattern)
+        XCTAssertNil(lastQuery?.difficultyLevel)
+    }
+
+    @MainActor
+    func testViewModelContextualEquipmentUsesAllSelectedMuscleGroups() async {
+        let repository = StubExerciseCatalogRepository(
+            results: [
+                .content(
+                    items: [
+                        makeCatalogItem(
+                            id: "ex-chest",
+                            name: "Жим лёжа",
+                            muscleGroups: [.chest],
+                            equipment: [makeEquipment(id: "equipment-barbell", name: "Штанга")]
+                        ),
+                        makeCatalogItem(
+                            id: "ex-shoulders",
+                            name: "Жим гантелей сидя",
+                            muscleGroups: [.shoulders],
+                            equipment: [makeEquipment(id: "equipment-dumbbell", name: "Гантели")]
+                        ),
+                        makeCatalogItem(
+                            id: "ex-legs",
+                            name: "Жим ногами",
+                            muscleGroups: [.legs],
+                            equipment: [makeEquipment(id: "equipment-leg-press", name: "Тренажёр для жима ногами")]
+                        ),
+                    ]
+                ),
+            ],
+        )
+        let viewModel = ExercisePickerViewModel(repository: repository)
+
+        let options = await viewModel.contextualFilterOptions(
+            for: ExercisePickerViewModel.FilterState(muscleGroups: [.chest, .shoulders])
+        )
+
+        XCTAssertEqual(Set(options.equipment.map(\.id)), Set(["equipment-barbell", "equipment-dumbbell"]))
+    }
+
+    @MainActor
+    func testViewModelContextualFiltersUseAllSelectedMuscleGroups() async {
+        let repository = StubExerciseCatalogRepository(
+            results: [
+                .content(
+                    items: [
+                        makeCatalogItem(
+                            id: "ex-arms",
+                            name: "Сгибание рук с гантелями",
+                            movementPattern: .pull,
+                            difficultyLevel: .beginner,
+                            muscleGroups: [.arms],
+                            equipment: [makeEquipment(id: "equipment-dumbbell", name: "Гантели")]
+                        ),
+                        makeCatalogItem(
+                            id: "ex-legs",
+                            name: "Присед со штангой",
+                            movementPattern: .squat,
+                            difficultyLevel: .intermediate,
+                            muscleGroups: [.legs],
+                            equipment: [makeEquipment(id: "equipment-barbell", name: "Штанга")]
+                        ),
+                        makeCatalogItem(
+                            id: "ex-back",
+                            name: "Тяга верхнего блока",
+                            movementPattern: .pull,
+                            difficultyLevel: .advanced,
+                            muscleGroups: [.back],
+                            equipment: [makeEquipment(id: "equipment-cable", name: "Блочный тренажёр")]
+                        ),
+                    ]
+                ),
+            ],
+        )
+        let viewModel = ExercisePickerViewModel(repository: repository)
+        let filters = ExercisePickerViewModel.FilterState(muscleGroups: [.arms, .legs])
+
+        let options = await viewModel.contextualFilterOptions(for: filters)
+
+        XCTAssertEqual(Set(options.equipment.map(\.id)), Set(["equipment-dumbbell", "equipment-barbell"]))
+        XCTAssertEqual(Set(options.movementPatterns), Set([.pull, .squat]))
+        XCTAssertEqual(Set(options.difficultyLevels), Set([.beginner, .intermediate]))
     }
 
     @MainActor
@@ -348,6 +503,7 @@ private func makeCatalogItem(
     movementPattern: ExerciseCatalogMovementPattern? = nil,
     difficultyLevel: ExerciseCatalogDifficultyLevel? = nil,
     muscleGroups: [ExerciseCatalogMuscleGroup] = [],
+    equipment: [ExerciseCatalogEquipment] = [],
 ) -> ExerciseCatalogItem {
     ExerciseCatalogItem(
         id: id,
@@ -367,10 +523,21 @@ private func makeCatalogItem(
                 media: nil,
             )
         },
-        equipment: [],
+        equipment: equipment,
         media: [],
         source: .athleteCatalog,
         draftDefaults: nil,
+    )
+}
+
+private func makeEquipment(id: String, name: String) -> ExerciseCatalogEquipment {
+    ExerciseCatalogEquipment(
+        id: id,
+        code: id,
+        name: name,
+        category: .freeWeight,
+        description: nil,
+        media: nil,
     )
 }
 

@@ -22,6 +22,7 @@ final class PlanScheduleViewModel {
         let programId: String?
         let workoutId: String?
         let workoutDetails: WorkoutDetailsModel?
+        let scheduledTimeText: String?
     }
 
     struct UpcomingDayItem: Identifiable, Equatable {
@@ -203,9 +204,9 @@ final class PlanScheduleViewModel {
         let items = plans.map { plan in
             let kind: SourceKind = plan.source == .program ? .program : .manual
             return DayScheduleItem(
-                id: "\(calendar.startOfDay(for: plan.day).timeIntervalSince1970)::\(plan.id)",
+                id: "\(plan.day.timeIntervalSince1970)::\(plan.id)",
                 planId: plan.id,
-                day: calendar.startOfDay(for: plan.day),
+                day: plan.day,
                 title: plan.title,
                 sourceTitle: sourceTitle(for: plan, kind: kind),
                 programTitle: plan.programTitle,
@@ -215,6 +216,7 @@ final class PlanScheduleViewModel {
                 programId: plan.programId,
                 workoutId: plan.workoutId,
                 workoutDetails: plan.workoutDetails,
+                scheduledTimeText: scheduledTimeText(for: plan.day),
             )
         }
         return items.sorted { lhs, rhs in
@@ -223,6 +225,16 @@ final class PlanScheduleViewModel {
             }
             return lhs.title.localizedCaseInsensitiveCompare(rhs.title) == .orderedAscending
         }
+    }
+
+    private func scheduledTimeText(for date: Date) -> String? {
+        let components = calendar.dateComponents([.hour, .minute], from: date)
+        guard let hour = components.hour, let minute = components.minute else { return nil }
+        guard hour != 0 || minute != 0 else { return nil }
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "ru_RU")
+        formatter.dateFormat = "HH:mm"
+        return formatter.string(from: date)
     }
 
     var upcomingDays: [UpcomingDayItem] {
@@ -302,23 +314,6 @@ final class PlanScheduleViewModel {
     }
 
     func scheduleConfiguredQuickWorkout(_ workout: WorkoutDetailsModel, on day: Date) async {
-        if let athleteTrainingClient {
-            let result = await athleteTrainingClient.createCustomWorkout(
-                request: workout.asCreateCustomWorkoutRequest(scheduledDate: day),
-            )
-            if case let .success(detailsResponse) = result {
-                let details = detailsResponse.asWorkoutDetailsModel()
-                await cacheStore.set(
-                    workoutCacheKey(programId: nil, source: .freestyle, workoutId: details.id),
-                    value: details,
-                    namespace: userSub,
-                    ttl: 60 * 60 * 24,
-                )
-                await reload()
-                return
-            }
-        }
-
         await schedulePlan(
             day: day,
             title: workout.title,
@@ -495,7 +490,7 @@ final class PlanScheduleViewModel {
                 workoutInstanceId: workoutId,
                 request: AthleteUpdateCustomWorkoutRequest(
                     title: nil,
-                    scheduledDate: Self.scheduleDateFormatter.string(from: calendar.startOfDay(for: targetDay)),
+                    scheduledDate: scheduledDayString(targetDay),
                     notes: item.workoutDetails?.coachNote?.trimmedNilIfEmpty,
                 ),
             )
@@ -530,7 +525,7 @@ final class PlanScheduleViewModel {
                 workoutInstanceId: workoutId,
                 request: AthleteUpdateCustomWorkoutRequest(
                     title: nil,
-                    scheduledDate: Self.scheduleDateFormatter.string(from: normalizedTarget),
+                    scheduledDate: scheduledDayString(targetDay),
                     notes: item.workoutDetails?.coachNote?.trimmedNilIfEmpty,
                 ),
             )
@@ -555,6 +550,8 @@ final class PlanScheduleViewModel {
             programTitle: item.programTitle,
             workoutDetails: item.workoutDetails,
         )
+        selectedDay = calendar.startOfDay(for: targetDay)
+        selectedMonth = calendar.dateInterval(of: .month, for: targetDay)?.start ?? selectedDay
         await reload()
     }
 
@@ -587,13 +584,13 @@ final class PlanScheduleViewModel {
         workoutDetails: WorkoutDetailsModel?,
         planId: String? = nil,
     ) async {
-        let normalizedDay = calendar.startOfDay(for: day)
-        guard canSchedule(on: normalizedDay) else { return }
+        let scheduledDay = normalizedScheduledDate(day)
+        guard canSchedule(on: scheduledDay) else { return }
         let resolvedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
         let plan = TrainingDayPlan(
             id: planId ?? UUID().uuidString,
             userSub: userSub,
-            day: normalizedDay,
+            day: scheduledDay,
             status: status,
             programId: programId,
             programTitle: programTitle?.trimmedNilIfEmpty,
@@ -603,6 +600,8 @@ final class PlanScheduleViewModel {
             workoutDetails: workoutDetails,
         )
         await trainingStore.schedule(plan)
+        selectedDay = calendar.startOfDay(for: scheduledDay)
+        selectedMonth = calendar.dateInterval(of: .month, for: scheduledDay)?.start ?? selectedDay
         await reload()
     }
 
@@ -610,7 +609,7 @@ final class PlanScheduleViewModel {
         let updated = TrainingDayPlan(
             id: item.planId,
             userSub: userSub,
-            day: calendar.startOfDay(for: item.day),
+            day: item.day,
             status: status,
             programId: item.programId,
             programTitle: item.programTitle,
@@ -621,6 +620,11 @@ final class PlanScheduleViewModel {
         )
         await trainingStore.schedule(updated)
         await reload()
+    }
+
+    private func normalizedScheduledDate(_ date: Date) -> Date {
+        let components = calendar.dateComponents([.year, .month, .day, .hour, .minute], from: date)
+        return calendar.date(from: components) ?? date
     }
 
     func resolveWorkoutDetails(for item: DayScheduleItem) async -> WorkoutDetailsModel? {
@@ -1048,15 +1052,6 @@ final class PlanScheduleViewModel {
         return "\(date.timeIntervalSince1970)::\(workoutId)"
     }
 
-    private static let scheduleDateFormatter: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.calendar = Calendar(identifier: .gregorian)
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.timeZone = TimeZone(secondsFromGMT: 0)
-        formatter.dateFormat = "yyyy-MM-dd"
-        return formatter
-    }()
-
     private func workoutCacheKey(programId: String?, source: WorkoutSource, workoutId: String?) -> String {
         let resolvedProgramID = programId?.trimmedNilIfEmpty ?? source.rawValue
         let resolvedWorkoutID = workoutId?.trimmedNilIfEmpty ?? "unknown"
@@ -1348,7 +1343,10 @@ struct PlanScheduleScreen: View {
         }
         .sheet(isPresented: $isScheduleDialogPresented) {
             PlanScheduleConfigurationSheet(
-                day: scheduleTargetDay ?? viewModel.selectedDay,
+                scheduledAt: Binding(
+                    get: { scheduleTargetDay ?? defaultScheduleDate(for: viewModel.selectedDay) },
+                    set: { scheduleTargetDay = $0 }
+                ),
                 hasLastWorkout: viewModel.lastRepeatableRecord != nil,
                 onClose: {
                     isScheduleDialogPresented = false
@@ -1650,6 +1648,11 @@ struct PlanScheduleScreen: View {
                             .font(FFTypography.caption)
                             .foregroundStyle(FFColors.textSecondary)
                             .lineLimit(1)
+                        if let scheduledTimeText = item.scheduledTimeText {
+                            Text("Время: \(scheduledTimeText)")
+                                .font(FFTypography.caption.weight(.semibold))
+                                .foregroundStyle(FFColors.accent)
+                        }
                     }
                     Spacer(minLength: FFSpacing.xs)
                     if hasSecondaryActions(for: item) {
@@ -1821,6 +1824,11 @@ struct PlanScheduleScreen: View {
                                                 Text(dayItem.sourceTitle)
                                                     .font(FFTypography.caption)
                                                     .foregroundStyle(FFColors.textSecondary)
+                                                if let scheduledTimeText = dayItem.scheduledTimeText {
+                                                    Text("Время: \(scheduledTimeText)")
+                                                        .font(FFTypography.caption)
+                                                        .foregroundStyle(FFColors.accent)
+                                                }
                                                 Text("Статус: \(viewModel.statusTitle(dayItem.status).lowercased())")
                                                     .font(FFTypography.caption)
                                                     .foregroundStyle(FFColors.textSecondary)
@@ -1994,11 +2002,41 @@ struct PlanScheduleScreen: View {
             alertFlow = .pastSchedule
             return
         }
-        scheduleTargetDay = normalized
+        scheduleTargetDay = defaultScheduleDate(for: day)
         Task { @MainActor in
             await viewModel.ensureLastCompletedRecordLoaded()
             isScheduleDialogPresented = true
         }
+    }
+
+    private func defaultScheduleDate(for day: Date) -> Date {
+        let calendar = Calendar.current
+        let normalizedDay = calendar.startOfDay(for: day)
+        let defaultHour = calendar.isDateInToday(normalizedDay) ? max(currentRoundedHourMinute.hour, 6) : 18
+        let defaultMinute = calendar.isDateInToday(normalizedDay) ? currentRoundedHourMinute.minute : 0
+        let components = calendar.dateComponents([.year, .month, .day], from: normalizedDay)
+        return calendar.date(
+            from: DateComponents(
+                year: components.year,
+                month: components.month,
+                day: components.day,
+                hour: defaultHour,
+                minute: defaultMinute
+            )
+        ) ?? normalizedDay
+    }
+
+    private var currentRoundedHourMinute: (hour: Int, minute: Int) {
+        let calendar = Calendar.current
+        let now = Date()
+        var components = calendar.dateComponents([.hour, .minute], from: now)
+        let hour = components.hour ?? 18
+        let minute = components.minute ?? 0
+        let roundedMinute = minute <= 30 ? 30 : 0
+        let resolvedHour = minute <= 30 ? hour : min(hour + 1, 23)
+        components.hour = resolvedHour
+        components.minute = roundedMinute
+        return (resolvedHour, roundedMinute)
     }
 
     private func relativeDayTitle(_ day: Date) -> String {
@@ -2309,7 +2347,7 @@ private enum PlanDateActionMode {
 }
 
 private struct PlanScheduleConfigurationSheet: View {
-    let day: Date
+    @Binding var scheduledAt: Date
     let hasLastWorkout: Bool
     let onClose: () -> Void
     let onQuickWorkout: () -> Void
@@ -2326,12 +2364,31 @@ private struct PlanScheduleConfigurationSheet: View {
                             Text("Запланировать тренировку")
                                 .font(FFTypography.h2)
                                 .foregroundStyle(FFColors.textPrimary)
-                            Text("Дата: \(formattedDay)")
+                            Text("Дата и время: \(formattedDay)")
                                 .font(FFTypography.caption)
                                 .foregroundStyle(FFColors.textSecondary)
-                            Text("Выберите, как добавить тренировку в план.")
-                                .font(FFTypography.caption)
-                                .foregroundStyle(FFColors.textSecondary)
+                        }
+                    }
+
+                    FFCard {
+                        VStack(alignment: .leading, spacing: FFSpacing.sm) {
+                            DatePicker(
+                                "Дата",
+                                selection: $scheduledAt,
+                                in: minimumSelectableDay...,
+                                displayedComponents: .date
+                            )
+                            .datePickerStyle(.graphical)
+                            .tint(FFColors.accent)
+
+                            DatePicker(
+                                "Время",
+                                selection: $scheduledAt,
+                                displayedComponents: .hourAndMinute
+                            )
+                            .datePickerStyle(.wheel)
+                            .labelsHidden()
+                            .frame(maxHeight: 110)
                         }
                     }
 
@@ -2364,7 +2421,11 @@ private struct PlanScheduleConfigurationSheet: View {
     }
 
     private var formattedDay: String {
-        day.formatted(date: .abbreviated, time: .omitted)
+        scheduledAt.formatted(date: .abbreviated, time: .shortened)
+    }
+
+    private var minimumSelectableDay: Date {
+        Calendar.current.startOfDay(for: Date())
     }
 }
 
@@ -2520,14 +2581,25 @@ private struct PlanMoveWorkoutSheet: View {
                     }
 
                     FFCard {
-                        DatePicker(
-                            mode.dateLabel,
-                            selection: $targetDay,
-                            in: minimumSelectableDay...,
-                            displayedComponents: .date,
-                        )
-                        .datePickerStyle(.graphical)
-                        .tint(FFColors.accent)
+                        VStack(alignment: .leading, spacing: FFSpacing.sm) {
+                            DatePicker(
+                                mode.dateLabel,
+                                selection: $targetDay,
+                                in: minimumSelectableDay...,
+                                displayedComponents: .date,
+                            )
+                            .datePickerStyle(.graphical)
+                            .tint(FFColors.accent)
+
+                            DatePicker(
+                                "Время",
+                                selection: $targetDay,
+                                displayedComponents: .hourAndMinute
+                            )
+                            .datePickerStyle(.wheel)
+                            .labelsHidden()
+                            .frame(maxHeight: 110)
+                        }
 
                         let conflicts = conflictsCount(targetDay)
                         if conflicts > 0 {
@@ -2604,7 +2676,7 @@ private struct PlanWorkoutDetailsSheet: View {
                                 Text(item.title)
                                     .font(FFTypography.h2)
                                     .foregroundStyle(FFColors.textPrimary)
-                                Text(item.day.formatted(date: .abbreviated, time: .omitted))
+                                Text(item.day.formatted(date: .abbreviated, time: .shortened))
                                     .font(FFTypography.caption)
                                     .foregroundStyle(FFColors.textSecondary)
                             }

@@ -52,7 +52,7 @@ struct RecentWorkoutDetailsView: View {
 
                 FFCard {
                     VStack(alignment: .leading, spacing: FFSpacing.xs) {
-                        Text("Подходы и веса")
+                        Text("Подходы по упражнениям")
                             .font(FFTypography.h2)
                             .foregroundStyle(FFColors.textPrimary)
 
@@ -196,6 +196,7 @@ struct RecentWorkoutDetailsView: View {
         return workoutDetails.exercises
             .sorted(by: { $0.orderIndex < $1.orderIndex })
             .compactMap { exercise in
+                let isBodyweight = exercise.isBodyweight
                 let sets = (stored[exercise.id]?.sets ?? [])
                     .enumerated()
                     .compactMap { index, set -> SetLine? in
@@ -205,10 +206,12 @@ struct RecentWorkoutDetailsView: View {
                         let hasData = set.isCompleted || reps != nil || weight != nil || rpe != nil
                         guard hasData else { return nil }
 
-                        let repsLabel = reps ?? "—"
-                        let weightLabel = weight ?? "—"
-                        let rpeSuffix = rpe.map { " • нагрузка \($0)" } ?? ""
-                        let line = "\(repsLabel) повт • \(weightLabel) кг\(rpeSuffix)"
+                        let line = WorkoutExerciseDisplayFormatting.setLine(
+                            repsText: reps,
+                            weightText: weight,
+                            rpeText: rpe,
+                            isBodyweight: isBodyweight,
+                        )
                         return SetLine(index: index + 1, valueLine: line)
                     }
 

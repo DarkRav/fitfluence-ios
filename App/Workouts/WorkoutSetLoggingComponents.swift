@@ -55,6 +55,80 @@ enum WorkoutSetInputFormatting {
     }
 }
 
+enum WorkoutExerciseDisplayFormatting {
+    static func setLine(
+        repsText: String?,
+        weightText: String?,
+        rpeText: String?,
+        isBodyweight: Bool,
+    ) -> String {
+        let repsLabel = normalizedText(repsText) ?? "—"
+        let rpeSuffix = normalizedText(rpeText).map { " • нагрузка \($0)" } ?? ""
+
+        if isBodyweight {
+            return "\(repsLabel) повт\(rpeSuffix)"
+        }
+
+        let weightLabel = normalizedText(weightText) ?? "—"
+        return "\(repsLabel) повт • \(weightLabel) кг\(rpeSuffix)"
+    }
+
+    static func compactLastPerformanceLine(
+        setCount: Int,
+        repsValues: [Int],
+        weightValues: [Double],
+        isBodyweight: Bool,
+    ) -> String? {
+        guard setCount > 0 else { return nil }
+
+        if isBodyweight {
+            if let reps = repsValues.first,
+               repsValues.count == setCount,
+               repsValues.allSatisfy({ $0 == reps })
+            {
+                return "\(setCount)×\(reps)"
+            }
+
+            let reps = repsValues.first.map(String.init) ?? "—"
+            return "\(setCount) подходов • \(reps) повторов"
+        }
+
+        if let reps = repsValues.first,
+           repsValues.count == setCount,
+           repsValues.allSatisfy({ $0 == reps }),
+           let weight = weightValues.first,
+           weightValues.count == setCount,
+           weightValues.allSatisfy({ abs($0 - weight) < 0.01 })
+        {
+            return "\(setCount)×\(reps) @ \(WorkoutSetInputFormatting.formatWeight(weight)) кг"
+        }
+
+        let reps = repsValues.first.map(String.init) ?? "—"
+        let weight = weightValues.first.map(WorkoutSetInputFormatting.formatWeight) ?? "—"
+        return "\(setCount) подходов • \(reps) повторов @ \(weight) кг"
+    }
+
+    static func detailedLastPerformanceLine(
+        reps: Int?,
+        weight: Double?,
+        isBodyweight: Bool,
+    ) -> String? {
+        if isBodyweight {
+            guard let reps else { return nil }
+            return "\(reps) повт"
+        }
+
+        guard let reps, let weight else { return nil }
+        return "\(WorkoutSetInputFormatting.formatWeight(weight)) × \(reps)"
+    }
+
+    private static func normalizedText(_ value: String?) -> String? {
+        guard let value else { return nil }
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+}
+
 struct WorkoutSetRowView: View {
     let index: Int
     let set: SessionSetState
@@ -382,12 +456,23 @@ private struct WorkoutSetRPEPicker: View {
     let targetRPE: Int?
     let onSelect: (Int?) -> Void
 
+    @State private var isInfoPresented = false
+
     var body: some View {
         VStack(alignment: .leading, spacing: FFSpacing.xxs) {
             HStack(spacing: FFSpacing.xs) {
-                Text("Нагрузка")
-                    .font(FFTypography.caption)
+                Button {
+                    isInfoPresented = true
+                } label: {
+                    HStack(spacing: 6) {
+                        Text("Нагрузка (RPE)")
+                            .font(FFTypography.caption)
+                        Image(systemName: "info.circle")
+                            .font(.system(size: 12, weight: .semibold))
+                    }
                     .foregroundStyle(FFColors.textSecondary)
+                }
+                .buttonStyle(.plain)
 
                 if let targetRPE {
                     Text("цель \(targetRPE)")
@@ -441,6 +526,11 @@ private struct WorkoutSetRPEPicker: View {
                     }
                 }
             }
+        }
+        .alert("Субъективная нагрузка", isPresented: $isInfoPresented) {
+            Button("Понятно", role: .cancel) {}
+        } message: {
+            Text("Оцените, насколько тяжёлым был подход по шкале от 1 до 10. 10 — максимум, 7–8 — осталось 2–3 повтора в запасе.")
         }
     }
 

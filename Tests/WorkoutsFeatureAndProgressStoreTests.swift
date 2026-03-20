@@ -123,6 +123,52 @@ final class WorkoutsFeatureAndProgressStoreTests: XCTestCase {
         XCTAssertNil(WorkoutSetInputFormatting.normalizedRepsText(from: "abc"))
     }
 
+    func testWorkoutExerciseDisplayFormattingOmitsWeightForBodyweightSetLine() {
+        let line = WorkoutExerciseDisplayFormatting.setLine(
+            repsText: "12",
+            weightText: "20",
+            rpeText: "8",
+            isBodyweight: true,
+        )
+
+        XCTAssertEqual(line, "12 повт • нагрузка 8")
+    }
+
+    func testWorkoutExerciseDisplayFormattingOmitsWeightForBodyweightLastPerformance() {
+        let compact = WorkoutExerciseDisplayFormatting.compactLastPerformanceLine(
+            setCount: 3,
+            repsValues: [12, 12, 12],
+            weightValues: [20, 20, 20],
+            isBodyweight: true,
+        )
+        let detailed = WorkoutExerciseDisplayFormatting.detailedLastPerformanceLine(
+            reps: 12,
+            weight: 20,
+            isBodyweight: true,
+        )
+
+        XCTAssertEqual(compact, "3×12")
+        XCTAssertEqual(detailed, "12 повт")
+    }
+
+    func testWorkoutExerciseDisplayFormattingKeepsWeightForWeightedExercise() {
+        let line = WorkoutExerciseDisplayFormatting.setLine(
+            repsText: "8",
+            weightText: "60",
+            rpeText: nil,
+            isBodyweight: false,
+        )
+        let compact = WorkoutExerciseDisplayFormatting.compactLastPerformanceLine(
+            setCount: 3,
+            repsValues: [8, 8, 8],
+            weightValues: [60, 60, 60],
+            isBodyweight: false,
+        )
+
+        XCTAssertEqual(line, "8 повт • 60 кг")
+        XCTAssertEqual(compact, "3×8 @ 60 кг")
+    }
+
     func testWorkoutPlayerViewModelDirectEditingPersistsWeightRepsAndRPE() async {
         let progressStore = MockWorkoutProgressStore(statuses: [:])
         let sessionManager = WorkoutSessionManager(progressStore: progressStore)
@@ -730,6 +776,168 @@ final class WorkoutsFeatureAndProgressStoreTests: XCTestCase {
 
         XCTAssertEqual(viewModel.todayWorkout?.status, .planned)
         XCTAssertEqual(viewModel.primaryActionKind, .startToday)
+    }
+
+    func testWorkoutHomeViewModelSkipsAbandonedTodayWorkoutFromHomeSummary() async {
+        let client = MockWorkoutHomeAthleteTrainingClient(
+            homeSummaryResult: .success(
+                AthleteHomeSummaryResponse(
+                    generatedAt: "2026-03-19T09:20:00Z",
+                    primaryAction: AthleteHomePrimaryAction(
+                        type: .startTodaysWorkout,
+                        title: "Начать тренировку на сегодня",
+                        workout: AthleteHomeWorkoutSummary(
+                            workoutInstanceId: "workout-abandoned",
+                            workoutTemplateId: nil,
+                            enrollmentId: "enrollment-1",
+                            programId: "program-remote",
+                            title: "Жим B",
+                            source: .program,
+                            status: .abandoned,
+                            scheduledDate: "2026-03-19",
+                            startedAt: nil,
+                            completedAt: nil,
+                        ),
+                        enrollmentId: "enrollment-1",
+                        programId: "program-remote",
+                    ),
+                    recentActivity: AthleteHomeRecentActivity(lastCompletedWorkout: nil, recentWorkouts: []),
+                    progressOverview: AthleteHomeProgressOverview(
+                        streakDays: 0,
+                        workouts7d: 0,
+                        totalWorkouts: 0,
+                        totalMinutes7d: 0,
+                        lastWorkoutAt: nil,
+                    ),
+                    activeWorkout: nil,
+                    todayWorkout: AthleteHomeWorkoutSummary(
+                        workoutInstanceId: "workout-abandoned",
+                        workoutTemplateId: nil,
+                        enrollmentId: "enrollment-1",
+                        programId: "program-remote",
+                        title: "Жим B",
+                        source: .program,
+                        status: .abandoned,
+                        scheduledDate: "2026-03-19",
+                        startedAt: nil,
+                        completedAt: nil,
+                    ),
+                    activeProgram: nil,
+                ),
+            ),
+            syncStatusResult: .success(
+                AthleteSyncStatusResponse(
+                    status: .synced,
+                    hasPendingLocalChanges: false,
+                    isDelayed: false,
+                    pendingOperations: 0,
+                    lastSyncedAt: "2026-03-19T09:20:00Z",
+                ),
+            ),
+        )
+
+        let viewModel = WorkoutHomeViewModel(
+            userSub: "u1",
+            trainingStore: LocalTrainingStore(),
+            progressStore: MockWorkoutProgressStore(statuses: [:]),
+            resumeStore: LocalWorkoutResumeStore(),
+            cacheStore: MemoryCacheStore(),
+            networkMonitor: StaticNetworkMonitor(currentStatus: true),
+            athleteTrainingClient: client,
+            syncCoordinator: .shared,
+        )
+
+        await viewModel.reload()
+
+        XCTAssertNil(viewModel.todayWorkout)
+        XCTAssertEqual(viewModel.primaryActionKind, .startWorkout)
+    }
+
+    func testWorkoutHomeViewModelSkipsAbandonedRemoteStartTarget() async {
+        let client = MockWorkoutHomeAthleteTrainingClient(
+            homeSummaryResult: .success(
+                AthleteHomeSummaryResponse(
+                    generatedAt: "2026-03-19T09:20:00Z",
+                    primaryAction: AthleteHomePrimaryAction(
+                        type: .startWorkout,
+                        title: "Начать тренировку",
+                        workout: AthleteHomeWorkoutSummary(
+                            workoutInstanceId: "workout-abandoned",
+                            workoutTemplateId: nil,
+                            enrollmentId: "enrollment-1",
+                            programId: "program-remote",
+                            title: "Жим B",
+                            source: .program,
+                            status: .abandoned,
+                            scheduledDate: "2026-03-20",
+                            startedAt: nil,
+                            completedAt: nil,
+                        ),
+                        enrollmentId: "enrollment-1",
+                        programId: "program-remote",
+                    ),
+                    recentActivity: AthleteHomeRecentActivity(lastCompletedWorkout: nil, recentWorkouts: []),
+                    progressOverview: AthleteHomeProgressOverview(
+                        streakDays: 0,
+                        workouts7d: 0,
+                        totalWorkouts: 0,
+                        totalMinutes7d: 0,
+                        lastWorkoutAt: nil,
+                    ),
+                    activeWorkout: nil,
+                    todayWorkout: nil,
+                    activeProgram: AthleteHomeProgramSummary(
+                        enrollmentId: "enrollment-1",
+                        programId: "program-remote",
+                        title: "Сила",
+                        completedWorkouts: 1,
+                        totalWorkouts: 8,
+                        summaryLine: "Нужен новый workout target",
+                        completionPercent: 12.5,
+                        lastCompletedAt: nil,
+                        resumeWorkout: nil,
+                        todayWorkout: nil,
+                        nextWorkout: AthleteHomeWorkoutSummary(
+                            workoutInstanceId: "workout-next-abandoned",
+                            workoutTemplateId: nil,
+                            enrollmentId: "enrollment-1",
+                            programId: "program-remote",
+                            title: "Ноги C",
+                            source: .program,
+                            status: .abandoned,
+                            scheduledDate: "2026-03-21",
+                            startedAt: nil,
+                            completedAt: nil,
+                        ),
+                    ),
+                ),
+            ),
+            syncStatusResult: .success(
+                AthleteSyncStatusResponse(
+                    status: .synced,
+                    hasPendingLocalChanges: false,
+                    isDelayed: false,
+                    pendingOperations: 0,
+                    lastSyncedAt: "2026-03-19T09:20:00Z",
+                ),
+            ),
+        )
+
+        let viewModel = WorkoutHomeViewModel(
+            userSub: "u1",
+            trainingStore: LocalTrainingStore(),
+            progressStore: MockWorkoutProgressStore(statuses: [:]),
+            resumeStore: LocalWorkoutResumeStore(),
+            cacheStore: MemoryCacheStore(),
+            networkMonitor: StaticNetworkMonitor(currentStatus: true),
+            athleteTrainingClient: client,
+            syncCoordinator: .shared,
+        )
+
+        await viewModel.reload()
+
+        XCTAssertNil(viewModel.startWorkoutTarget)
+        XCTAssertEqual(viewModel.primaryActionKind, .startWorkout)
     }
 
     func testWorkoutPlayerViewModelNavigatesBetweenExercises() async {

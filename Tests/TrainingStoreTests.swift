@@ -298,6 +298,53 @@ final class TrainingStoreTests: XCTestCase {
         XCTAssertFalse(afterDelete.contains(where: { $0.workoutId == "workout-1" }))
     }
 
+    func testMovePlanPreservesScheduledTime() async throws {
+        let suite = "fitfluence.tests.training.plan.move-time.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = try XCTUnwrap(TimeZone(secondsFromGMT: 4 * 60 * 60))
+
+        let store = LocalTrainingStore(defaults: defaults, calendar: calendar)
+        let today = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 3, day: 20, hour: 18, minute: 30)))
+        let tomorrow = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 3, day: 21, hour: 7, minute: 45)))
+
+        let plan = TrainingDayPlan(
+            id: "plan-time-1",
+            userSub: "u1",
+            day: today,
+            status: .planned,
+            programId: nil,
+            programTitle: nil,
+            workoutId: "workout-time-1",
+            title: "Вечерняя тренировка",
+            source: .freestyle,
+            workoutDetails: nil
+        )
+
+        await store.schedule(plan)
+        await store.movePlan(
+            userSub: "u1",
+            from: today,
+            to: tomorrow,
+            planId: plan.id,
+            workoutId: plan.workoutId,
+            title: plan.title,
+            source: plan.source,
+            status: plan.status,
+            programId: plan.programId,
+            programTitle: plan.programTitle,
+            workoutDetails: nil
+        )
+
+        let movedPlans = await store.plans(userSub: "u1", month: tomorrow)
+        let moved = try XCTUnwrap(movedPlans.first(where: { $0.id == "plan-time-1" }))
+        let components = calendar.dateComponents([.hour, .minute], from: moved.day)
+        XCTAssertEqual(components.hour, 7)
+        XCTAssertEqual(components.minute, 45)
+    }
+
     func testScheduleAllowsMultiplePlansOnSameDayForSameWorkoutId() async throws {
         let suite = "fitfluence.tests.training.plan.multi.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
@@ -340,6 +387,16 @@ final class TrainingStoreTests: XCTestCase {
         XCTAssertEqual(plans.count, 2)
         XCTAssertTrue(plans.contains(where: { $0.id == "plan-1" }))
         XCTAssertTrue(plans.contains(where: { $0.id == "plan-2" }))
+    }
+
+    func testScheduledDayStringUsesLocalCalendarDayWithoutUtcShift() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = try XCTUnwrap(TimeZone(secondsFromGMT: 4 * 60 * 60))
+        let localDate = try XCTUnwrap(
+            calendar.date(from: DateComponents(year: 2026, month: 3, day: 20, hour: 0, minute: 30))
+        )
+
+        XCTAssertEqual(scheduledDayString(localDate, calendar: calendar), "2026-03-20")
     }
 
     func testProgressInsightEngineShowsRecentPRAction() {
@@ -471,6 +528,52 @@ final class TrainingStoreTests: XCTestCase {
         XCTAssertEqual(rebuilt.exercises.first?.restSeconds, 150)
         XCTAssertEqual(rebuilt.exercises.first?.targetRpe, 8)
         XCTAssertEqual(rebuilt.exercises.first?.notes, "Без прогиба")
+    }
+
+    func testWorkoutCompositionDraftPreservesCatalogTagsForComposerUI() {
+        var draft = WorkoutCompositionDraft()
+        let item = ExerciseCatalogItem(
+            id: "ex-bench",
+            code: "bench-press",
+            name: "Жим лёжа",
+            description: nil,
+            movementPattern: .push,
+            difficultyLevel: .intermediate,
+            isBodyweight: false,
+            muscles: [
+                ExerciseCatalogMuscle(
+                    id: "muscle-chest",
+                    code: "chest",
+                    name: "Грудь",
+                    muscleGroup: .chest,
+                    description: nil,
+                    media: nil,
+                ),
+            ],
+            equipment: [
+                ExerciseCatalogEquipment(
+                    id: "equipment-barbell",
+                    code: "barbell",
+                    name: "Штанга",
+                    category: .freeWeight,
+                    description: nil,
+                    media: nil,
+                ),
+            ],
+            media: [],
+            source: .athleteCatalog,
+            draftDefaults: .standard,
+        )
+
+        XCTAssertTrue(draft.addExercise(item))
+        XCTAssertEqual(draft.exercises.first?.catalogTags, ["Жим", "Средний", "Грудь", "Штанга"])
+
+        draft.updateExercise(id: "ex-bench") {
+            $0.sets = 4
+            $0.notes = "Контроль паузы"
+        }
+
+        XCTAssertEqual(draft.exercises.first?.catalogTags, ["Жим", "Средний", "Грудь", "Штанга"])
     }
 
     func testWorkoutCompositionDraftBuildsTemplateDraftPreservingPrescription() {

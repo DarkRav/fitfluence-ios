@@ -274,16 +274,7 @@ struct TemplateLibraryView: View {
 
             ScrollView {
                 VStack(spacing: FFSpacing.md) {
-                    FFCard {
-                        VStack(alignment: .leading, spacing: FFSpacing.xs) {
-                            Text("Шаблоны тренировок")
-                                .font(FFTypography.h2)
-                                .foregroundStyle(FFColors.textPrimary)
-                            Text("Откройте шаблон, настройте параметры упражнений и запустите тренировку.")
-                                .font(FFTypography.body)
-                                .foregroundStyle(FFColors.textSecondary)
-                        }
-                    }
+                    constructorLaunchpadCard
 
                     if let errorMessage = viewModel.errorMessage {
                         FFCard {
@@ -294,17 +285,11 @@ struct TemplateLibraryView: View {
                         }
                     }
 
-                    Picker("Раздел", selection: $sectionMode) {
-                        ForEach(SectionMode.allCases) { mode in
-                            Text(mode.rawValue).tag(mode)
-                        }
-                    }
-                    .pickerStyle(.segmented)
-                    .padding(.horizontal, FFSpacing.xs)
+                    sectionModeControl
 
                     if sectionMode == .mine {
-                        myTemplatesSection
                         createTemplateBuilderSection
+                        myTemplatesSection
                     } else {
                         readyTemplatesSection
                     }
@@ -374,14 +359,14 @@ struct TemplateLibraryView: View {
     }
 
     private var myTemplatesSection: some View {
-        FFCard {
+        TrainingBuilderSectionCard(
+            eyebrow: "Библиотека",
+            title: "Мои шаблоны",
+            helper: "Запускайте сразу или правьте перед стартом."
+        ) {
             VStack(alignment: .leading, spacing: FFSpacing.sm) {
-                Text("Мои шаблоны")
-                    .font(FFTypography.h2)
-                    .foregroundStyle(FFColors.textPrimary)
-
                 if viewModel.templates.isEmpty {
-                    Text("У вас пока нет шаблонов. Создайте первый ниже.")
+                    Text("У вас пока нет шаблонов. Начните с нового сценария в конструкторе ниже.")
                         .font(FFTypography.body)
                         .foregroundStyle(FFColors.textSecondary)
                 } else {
@@ -427,33 +412,58 @@ struct TemplateLibraryView: View {
     }
 
     private var createTemplateBuilderSection: some View {
-        FFCard {
-            VStack(alignment: .leading, spacing: FFSpacing.sm) {
-                Text("Создать шаблон")
-                    .font(FFTypography.h2)
-                    .foregroundStyle(FFColors.textPrimary)
-                Text("Новый конструктор использует тот же сценарий сборки, что и быстрая тренировка: название, порядок, редактирование параметров и выбор упражнений через каталог.")
-                    .font(FFTypography.body)
-                    .foregroundStyle(FFColors.textSecondary)
-
-                FFButton(title: "Собрать шаблон", variant: .secondary) {
-                    templateBuilderRoute = TemplateBuilderRoute(template: nil, isMine: true)
-                }
+        TrainingBuilderSectionCard(
+            eyebrow: "Конструктор",
+            title: "Новый шаблон",
+            helper: "Соберите и сохраните для повторного старта."
+        ) {
+            FFButton(title: "Открыть конструктор шаблона", variant: .primary) {
+                templateBuilderRoute = TemplateBuilderRoute(template: nil, isMine: true)
             }
         }
     }
 
     private var readyTemplatesSection: some View {
-        return FFCard {
-            VStack(alignment: .leading, spacing: FFSpacing.sm) {
-                Text("Готовые пресеты")
-                    .font(FFTypography.h2)
-                    .foregroundStyle(FFColors.textPrimary)
-                Text("Готовая библиотека шаблонов для спортсмена пока не описана в текущем серверном контракте, поэтому раздел оставлен без локальных демо-шаблонов.")
-                    .font(FFTypography.body)
-                    .foregroundStyle(FFColors.textSecondary)
+        TrainingBuilderSectionCard(
+            eyebrow: "Curated",
+            title: "Готовые пресеты",
+            helper: "Раздел curated templates пока ограничен backend."
+        ) {
+            EmptyView()
+        }
+    }
+
+    private var constructorLaunchpadCard: some View {
+        TrainingBuilderHeroCard(
+            eyebrow: "Шаблоны",
+            title: "Шаблоны для быстрого старта",
+            subtitle: "Готовые структуры, которые можно запустить или быстро поправить.",
+            badges: templateLibraryBadges
+        )
+    }
+
+    private var sectionModeControl: some View {
+        HStack(spacing: FFSpacing.xs) {
+            ForEach(SectionMode.allCases) { mode in
+                TrainingBuilderChoiceTile(
+                    title: mode.rawValue,
+                    subtitle: mode == .mine ? "Ваши структуры и быстрый запуск" : "Готовая библиотека",
+                    isSelected: sectionMode == mode
+                ) {
+                    sectionMode = mode
+                }
             }
         }
+        .padding(.horizontal, FFSpacing.xs)
+    }
+
+    private var templateLibraryBadges: [String] {
+        var badges: [String] = []
+        if !viewModel.templates.isEmpty {
+            badges.append("\(viewModel.templates.count) шаблонов")
+        }
+        badges.append(sectionMode == .mine ? "Ваши структуры" : "Curated library")
+        return badges
     }
 
     private func editableSelectedExerciseRow(_ exercise: TemplateExerciseDraft, index: Int) -> some View {

@@ -1,11 +1,13 @@
 import SwiftUI
 
 struct ProgramProgressCard: View {
+    var sectionTitle = "Прогресс программы"
     let programTitle: String
     let detailsLine: String
     let progressText: String
     let progressValue: Double
     let isCompleted: Bool
+    var actionTitle: String? = nil
     var isActionEnabled = true
     let onAction: () -> Void
     let onOpenHistory: () -> Void
@@ -15,7 +17,7 @@ struct ProgramProgressCard: View {
             VStack(alignment: .leading, spacing: 8) {
                 Button(action: onOpenHistory) {
                     VStack(alignment: .leading, spacing: 8) {
-                        Text("Прогресс программы")
+                        Text(sectionTitle)
                             .font(FFTypography.body.weight(.semibold))
                             .foregroundStyle(FFColors.textPrimary)
 
@@ -52,7 +54,7 @@ struct ProgramProgressCard: View {
                 .buttonStyle(.plain)
 
                 FFButton(
-                    title: isCompleted ? "Выбрать следующую программу" : "Продолжить программу",
+                    title: actionTitle ?? (isCompleted ? "Выбрать следующую программу" : "Продолжить программу"),
                     variant: isActionEnabled ? .secondary : .disabled,
                     action: onAction,
                 )

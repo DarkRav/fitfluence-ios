@@ -666,17 +666,27 @@ final class ProgramDetailsViewModel {
     ) async -> WorkoutIntroRoute? {
         let cacheKey = "workout.details:\(programId):\(workoutInstanceId)"
 
-        _ = await SyncCoordinator.shared.enqueueStartWorkout(
-            namespace: userSub,
-            workoutInstanceId: workoutInstanceId,
-            startedAt: Date(),
-        )
-
         if networkMonitor.currentStatus, let athleteTrainingClient {
-
             let detailsResult = await athleteTrainingClient.getWorkoutDetails(workoutInstanceId: workoutInstanceId)
             switch detailsResult {
             case let .success(details):
+                switch details.workout.status {
+                case .completed, .abandoned:
+                    error = UserFacingError(
+                        title: details.workout.status == .completed ? "Тренировка уже завершена" : "Тренировка прервана",
+                        message: "Откройте актуальную тренировку программы.",
+                    )
+                    return nil
+                case .inProgress:
+                    break
+                case .planned, .missed, .none:
+                    _ = await SyncCoordinator.shared.enqueueStartWorkout(
+                        namespace: userSub,
+                        workoutInstanceId: workoutInstanceId,
+                        startedAt: Date(),
+                    )
+                }
+
                 let mapped = details.asWorkoutDetailsModel()
                 await cacheStore.set(cacheKey, value: mapped, namespace: userSub, ttl: 60 * 60 * 24)
                 return WorkoutIntroRoute(
@@ -692,6 +702,12 @@ final class ProgramDetailsViewModel {
                     error = apiError.userFacing(context: .workoutPlayer)
                 }
             }
+        } else {
+            _ = await SyncCoordinator.shared.enqueueStartWorkout(
+                namespace: userSub,
+                workoutInstanceId: workoutInstanceId,
+                startedAt: Date(),
+            )
         }
 
         if let cached = await cacheStore.get(cacheKey, as: WorkoutDetailsModel.self, namespace: userSub) {

@@ -166,6 +166,9 @@ actor SyncWorker {
 
         case let .httpError(statusCode, body):
             if operation.type == .startWorkout, statusCode == 409 {
+                if isTerminalStartConflict(body) {
+                    return .dead(error: "HTTP 409. Workout can no longer be started")
+                }
                 return .success
             }
 
@@ -255,6 +258,14 @@ actor SyncWorker {
         case .startWorkout, .abandonWorkout:
             return true
         }
+    }
+
+    private func isTerminalStartConflict(_ body: String?) -> Bool {
+        guard let normalized = body?.lowercased() else { return false }
+        return normalized.contains("прерван")
+            || normalized.contains("abandoned")
+            || normalized.contains("completed")
+            || normalized.contains("заверш")
     }
 
     private func sortByCreatedAt(lhs: SyncOperation, rhs: SyncOperation) -> Bool {

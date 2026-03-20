@@ -1813,33 +1813,22 @@ final class WorkoutPlayerViewModel {
         let sorted = response.sets.sorted(by: { $0.setNumber < $1.setNumber })
         let repsValues = sorted.compactMap(\.reps)
         let weightValues = sorted.compactMap(\.weight)
-
-        if let reps = repsValues.first,
-           repsValues.allSatisfy({ $0 == reps }),
-           let weight = weightValues.first,
-           weightValues.allSatisfy({ abs($0 - weight) < 0.01 })
-        {
-            return "\(sorted.count)×\(reps) @ \(WorkoutSetInputFormatting.formatWeight(weight)) кг"
-        }
-
-        if let first = sorted.first {
-            let reps = first.reps.map(String.init) ?? "—"
-            let weight = first.weight.map(WorkoutSetInputFormatting.formatWeight) ?? "—"
-            return "\(sorted.count) подходов • \(reps) повторов @ \(weight) кг"
-        }
-
-        return nil
+        return WorkoutExerciseDisplayFormatting.compactLastPerformanceLine(
+            setCount: sorted.count,
+            repsValues: repsValues,
+            weightValues: weightValues,
+            isBodyweight: currentExerciseIsBodyweight,
+        )
     }
 
     private func lastPerformanceLines(from response: AthleteExerciseLastPerformanceResponse) -> [String] {
         let sorted = response.sets.sorted(by: { $0.setNumber < $1.setNumber })
         return sorted.compactMap { set in
-            guard let reps = set.reps,
-                  let weight = set.weight
-            else {
-                return nil
-            }
-            return "\(WorkoutSetInputFormatting.formatWeight(weight)) × \(reps)"
+            WorkoutExerciseDisplayFormatting.detailedLastPerformanceLine(
+                reps: set.reps,
+                weight: set.weight,
+                isBodyweight: currentExerciseIsBodyweight,
+            )
         }
     }
 
@@ -2116,7 +2105,8 @@ struct WorkoutPlayerViewV2: View {
                     repository: viewModel.exercisePickerRepository,
                     suggestionsProvider: viewModel.exercisePickerSuggestions,
                     selectedExerciseIDs: viewModel.selectedExerciseIDs(for: flow),
-                ) { exercise in
+                ) { exercises in
+                    guard let exercise = exercises.first else { return }
                     Task { await viewModel.applyPickedExercise(exercise, flow: flow) }
                 }
             }

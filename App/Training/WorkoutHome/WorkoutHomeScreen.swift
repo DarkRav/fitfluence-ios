@@ -6,13 +6,11 @@ struct WorkoutHomeScreen: View {
     let onContinueSession: (ActiveWorkoutSession) -> Void
     let onOpenRemoteWorkout: (WorkoutHomeViewModel.RemoteWorkoutTarget) -> Void
     let onOpenPresetWorkout: (WorkoutHomeViewModel.PresetWorkoutTarget) -> Void
-    let onBuildTodayWorkout: () -> Void
     let onStartQuickWorkout: () -> Void
     let onOpenTemplates: () -> Void
     let onRepeatWorkout: (CompletedWorkoutRecord) -> Void
     let onOpenRecentWorkout: (CompletedWorkoutRecord) -> Void
     let onOpenPlan: () -> Void
-    let onOpenCatalog: () -> Void
     let onOpenProgramHistory: (_ programId: String, _ programTitle: String) -> Void
 
     private let sectionSpacing: CGFloat = 14
@@ -45,7 +43,6 @@ struct WorkoutHomeScreen: View {
                         isLoading: false,
                         syncStatus: viewModel.syncIndicator,
                         showsCacheTag: viewModel.isShowingCachedData,
-                        onBuildTodayWorkout: onBuildTodayWorkout,
                         onStartWorkout: runStartWorkout,
                     )
                 }
@@ -56,38 +53,7 @@ struct WorkoutHomeScreen: View {
                     syncStatusCard
                 }
 
-                if let progress = viewModel.programProgress,
-                   viewModel.hasActiveProgram
-                {
-                    ProgramProgressCard(
-                        programTitle: progress.title,
-                        detailsLine: progress.detailsLine,
-                        progressText: progress.progressText,
-                        progressValue: progress.progressValue,
-                        isCompleted: progress.isCompleted,
-                        isActionEnabled: true,
-                        onAction: runProgramAction,
-                        onOpenHistory: {
-                            onOpenProgramHistory(progress.programId, progress.title)
-                        }
-                    )
-                }
-
                 QuickActionsSection(
-                    onBuildTodayWorkout: {
-                        ClientAnalytics.track(.workoutStartButtonTapped, properties: ["source": "hub_today_planning"])
-                        onBuildTodayWorkout()
-                    },
-                    onStartEmptyWorkout: {
-                        ClientAnalytics.track(.workoutQuickButtonTapped)
-                        onStartQuickWorkout()
-                    },
-                    onBrowsePrograms: {
-                        onOpenCatalog()
-                    },
-                    onOpenPlan: {
-                        onOpenPlan()
-                    },
                     onOpenTemplates: {
                         ClientAnalytics.track(.workoutTemplatesButtonTapped)
                         onOpenTemplates()
@@ -189,33 +155,6 @@ struct WorkoutHomeScreen: View {
         }
     }
 
-    private func runProgramAction() {
-        if viewModel.isProgramCompleted {
-            ClientAnalytics.track(
-                .workoutStartButtonTapped,
-                properties: ["source": "hub_program_completed"],
-            )
-            onOpenCatalog()
-            return
-        }
-
-        guard viewModel.canContinueProgram else {
-            onStartQuickWorkout()
-            return
-        }
-
-        ClientAnalytics.track(
-            .workoutStartNextButtonTapped,
-            properties: ["source": "hub_program"],
-        )
-
-        Task {
-            if let target = await viewModel.continueProgram() {
-                onOpenRemoteWorkout(target)
-            }
-        }
-    }
-
 }
 
 #Preview("Экран тренировки") {
@@ -225,13 +164,11 @@ struct WorkoutHomeScreen: View {
             onContinueSession: { _ in },
             onOpenRemoteWorkout: { _ in },
             onOpenPresetWorkout: { _ in },
-            onBuildTodayWorkout: {},
             onStartQuickWorkout: {},
             onOpenTemplates: {},
             onRepeatWorkout: { _ in },
             onOpenRecentWorkout: { _ in },
             onOpenPlan: {},
-            onOpenCatalog: {},
             onOpenProgramHistory: { _, _ in },
         )
     }

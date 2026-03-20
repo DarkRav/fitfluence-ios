@@ -216,6 +216,49 @@ final class TodayWorkoutPlanningTests: XCTestCase {
         XCTAssertEqual(snapshot.allEquipmentOptions.map(\.name), ["Barbell", "Bench", "Leg Press Machine"])
     }
 
+    func testPlanningServiceFiltersOutEquipmentFromUnrelatedMusclesWhenBackendOverReturns() async {
+        let repository = OverReturningPlanningExerciseCatalogRepository(
+            items: [
+                makeCatalogItem(
+                    id: "ex-bench",
+                    name: "Bench Press",
+                    equipment: [
+                        makeEquipment(id: "eq-barbell", name: "Barbell"),
+                        makeEquipment(id: "eq-bench", name: "Bench"),
+                    ],
+                    muscleGroups: [.chest],
+                ),
+                makeCatalogItem(
+                    id: "ex-leg-press",
+                    name: "Leg Press",
+                    equipment: [
+                        makeEquipment(id: "eq-leg-press", name: "Leg Press Machine"),
+                    ],
+                    muscleGroups: [.legs],
+                ),
+            ],
+            metadata: ExerciseCatalogMetadata(
+                muscles: [],
+                equipment: [
+                    makeEquipment(id: "eq-barbell", name: "Barbell"),
+                    makeEquipment(id: "eq-bench", name: "Bench"),
+                    makeEquipment(id: "eq-leg-press", name: "Leg Press Machine"),
+                ],
+                muscleGroups: [],
+                equipmentCategories: [.freeWeight, .machine],
+                movementPatterns: [],
+                difficultyLevels: [],
+            ),
+        )
+        let service = TodayWorkoutPlanningService(repository: repository)
+
+        let snapshot = await service.loadCatalogSnapshot(
+            for: TodayWorkoutPlanningRequest(targetMuscleGroups: [.chest]),
+        )
+
+        XCTAssertEqual(snapshot.equipmentOptions.map(\.name), ["Barbell", "Bench"])
+    }
+
     func testPlanningDraftSeedBuildsLaunchableWorkoutHandoff() async {
         let seed = TodayWorkoutPlanningDraftSeed(
             request: TodayWorkoutPlanningRequest(
@@ -313,6 +356,37 @@ private actor StubPlanningExerciseCatalogRepository: ExerciseCatalogRepository {
             return catalogMetadata
         }
         return ExerciseCatalogMetadata.derived(from: items)
+    }
+}
+
+private actor OverReturningPlanningExerciseCatalogRepository: ExerciseCatalogRepository {
+    private let items: [ExerciseCatalogItem]
+    private let catalogMetadata: ExerciseCatalogMetadata
+
+    init(items: [ExerciseCatalogItem], metadata: ExerciseCatalogMetadata = .empty) {
+        self.items = items
+        catalogMetadata = metadata
+    }
+
+    func search(query: ExerciseCatalogQuery) async -> ExerciseCatalogResult {
+        let filteredByEquipment = items.filter { item in
+            query.equipmentIds.isEmpty || item.equipment.contains(where: { equipment in
+                query.equipmentIds.contains(equipment.id)
+            })
+        }
+
+        return ExerciseCatalogResult(
+            items: filteredByEquipment,
+            metadata: nil,
+            state: .content,
+            source: .athleteCatalog,
+            note: nil,
+            contractGaps: [],
+        )
+    }
+
+    func metadata() async -> ExerciseCatalogMetadata {
+        catalogMetadata
     }
 }
 

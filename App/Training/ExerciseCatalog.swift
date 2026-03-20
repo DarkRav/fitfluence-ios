@@ -259,7 +259,7 @@ struct BackendExerciseCatalogRepository: ExerciseCatalogRepository {
                     metadata: nil,
                     state: .content,
                     source: .savedTemplates,
-                    note: "Показаны упражнения из ваших сохранённых шаблонов. Athlete exercise catalog ещё не подключён в текущем сценарии.",
+                    note: "Показаны упражнения из ваших сохранённых шаблонов. Основной каталог упражнений ещё не подключён в текущем сценарии.",
                     contractGaps: Self.athleteContractGaps,
                 )
             }
@@ -289,7 +289,7 @@ struct BackendExerciseCatalogRepository: ExerciseCatalogRepository {
             }
 
             let emptyMessage = if query.search == nil {
-                "Backend exercise catalog пока не вернул ни одного упражнения для athlete app."
+                "Каталог упражнений пока не вернул ни одного упражнения."
             } else {
                 "По вашему запросу упражнения не найдены."
             }
@@ -364,11 +364,11 @@ struct BackendExerciseCatalogRepository: ExerciseCatalogRepository {
         case .offline:
             "Нет сети. Показаны упражнения из ваших сохранённых шаблонов."
         case .unauthorized:
-            "Не удалось авторизовать athlete catalog. Показаны упражнения из ваших сохранённых шаблонов."
+            "Не удалось авторизовать каталог упражнений. Показаны упражнения из ваших сохранённых шаблонов."
         case .forbidden:
-            "Athlete token не получил доступ к exercise catalog. Показаны упражнения из ваших сохранённых шаблонов."
+            "Текущая сессия не получила доступ к каталогу упражнений. Показаны упражнения из ваших сохранённых шаблонов."
         default:
-            "Backend catalog временно недоступен. Показаны упражнения из ваших сохранённых шаблонов."
+            "Каталог упражнений временно недоступен. Показаны упражнения из ваших сохранённых шаблонов."
         }
     }
 
@@ -377,17 +377,17 @@ struct BackendExerciseCatalogRepository: ExerciseCatalogRepository {
         case .offline:
             "Нет подключения к интернету. Каталог упражнений недоступен."
         case .unauthorized:
-            "Сессия athlete app истекла, поэтому каталог упражнений недоступен."
+            "Сессия истекла, поэтому каталог упражнений недоступен."
         case .forbidden:
-            "Текущий athlete token не может читать exercise catalog."
+            "Текущая сессия не может читать каталог упражнений."
         case let .httpError(statusCode, _):
-            "Exercise catalog недоступен. Backend вернул статус \(statusCode)."
+            "Каталог упражнений недоступен. Сервер вернул статус \(statusCode)."
         case let .serverError(statusCode, _):
-            "Exercise catalog временно недоступен. Backend вернул статус \(statusCode)."
+            "Каталог упражнений временно недоступен. Сервер вернул статус \(statusCode)."
         case .decodingError:
-            "Не удалось прочитать ответ exercise catalog из backend."
+            "Не удалось прочитать ответ каталога упражнений."
         default:
-            "Exercise catalog временно недоступен."
+            "Каталог упражнений временно недоступен."
         }
     }
 

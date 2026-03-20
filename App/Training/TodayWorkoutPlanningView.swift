@@ -287,9 +287,10 @@ struct TodayWorkoutPlanningService: TodayWorkoutPlanningProviding {
             ),
         )
 
-        let options = equipmentOptions(
-            from: result.items.flatMap(\.equipment),
-        )
+        let relevantItems = result.items.filter {
+            $0.matchesAnyMuscleGroup(request.targetMuscleGroups)
+        }
+        let options = equipmentOptions(from: relevantItems.flatMap(\.equipment))
 
         return options.isEmpty ? fallback : options
     }
@@ -309,6 +310,14 @@ struct TodayWorkoutPlanningService: TodayWorkoutPlanningProviding {
             .sorted {
                 $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
             }
+    }
+}
+
+private extension ExerciseCatalogItem {
+    func matchesAnyMuscleGroup(_ muscleGroups: Set<ExerciseCatalogMuscleGroup>) -> Bool {
+        guard !muscleGroups.isEmpty else { return true }
+        let itemGroups = Set(muscles.compactMap(\.muscleGroup))
+        return !itemGroups.isDisjoint(with: muscleGroups)
     }
 }
 
@@ -399,8 +408,11 @@ struct TodayWorkoutPlanningView: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: FFSpacing.md) {
-                    compactSummaryCard
-                    configurationCard
+                    introCard
+                    muscleGroupCard
+                    durationCard
+                    focusCard
+                    equipmentCard
                 }
                 .padding(.horizontal, FFSpacing.md)
                 .padding(.vertical, FFSpacing.md)
@@ -409,7 +421,7 @@ struct TodayWorkoutPlanningView: View {
                 bottomActionBar
             }
         }
-        .navigationTitle("Собрать тренировку")
+        .navigationTitle("Тренировка на сегодня")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarLeading) {
@@ -425,117 +437,87 @@ struct TodayWorkoutPlanningView: View {
         }
     }
 
-    private var compactSummaryCard: some View {
-        FFCard {
-            VStack(alignment: .leading, spacing: FFSpacing.sm) {
-                Text("Тренировка на сегодня")
-                    .font(FFTypography.caption.weight(.semibold))
-                    .foregroundStyle(FFColors.accent)
+    private var introCard: some View {
+        TrainingBuilderHeroCard(
+            eyebrow: "Сегодня",
+            title: "Выберите мышцы и время",
+            subtitle: "Остальное только уточняет старт.",
+            badges: selectionSummary
+        )
+    }
 
-                Text("Соберите понятный стартовый контур, а детали уже докрутите в builder.")
-                    .font(FFTypography.h2)
-                    .foregroundStyle(FFColors.textPrimary)
-
-                if selectionSummary.isEmpty {
-                    Text("Сначала мышцы и время. Фокус и оборудование только уточняют подбор, а не перегружают первый шаг.")
-                        .font(FFTypography.body)
-                        .foregroundStyle(FFColors.textSecondary)
-                } else {
-                    flowLayout(items: selectionSummary, id: \.self) { item in
-                        selectionChip(
-                            title: item,
-                            subtitle: nil,
-                            isSelected: true,
-                            action: {},
-                            isInteractive: false
-                        )
-                    }
+    private var muscleGroupCard: some View {
+        TrainingBuilderSectionCard(
+            eyebrow: "Мышцы",
+            title: "Что тренируем",
+            helper: "Главный выбор перед стартом."
+        ) {
+            flowLayout(items: viewModel.availableMuscleGroups, id: \.rawValue) { muscleGroup in
+                selectionChip(
+                    title: muscleGroup.title,
+                    subtitle: nil,
+                    isSelected: viewModel.request.targetMuscleGroups.contains(muscleGroup),
+                ) {
+                    viewModel.toggleMuscleGroup(muscleGroup)
                 }
             }
-            .padding(.top, FFSpacing.xs)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(
-                LinearGradient(
-                    colors: [
-                        FFColors.accent.opacity(0.12),
-                        .clear,
-                    ],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                )
-            )
         }
     }
 
-    private var configurationCard: some View {
-        FFCard {
-            VStack(alignment: .leading, spacing: FFSpacing.md) {
-                configurationSection(title: "Что тренируем") {
-                    flowLayout(items: viewModel.availableMuscleGroups, id: \.rawValue) { muscleGroup in
-                        selectionChip(
-                            title: muscleGroup.title,
-                            subtitle: nil,
-                            isSelected: viewModel.request.targetMuscleGroups.contains(muscleGroup),
-                        ) {
-                            viewModel.toggleMuscleGroup(muscleGroup)
-                        }
-                    }
+    private var durationCard: some View {
+        TrainingBuilderSectionCard(
+            eyebrow: "Время",
+            title: "Сколько времени есть",
+            helper: "От этого зависит объём."
+        ) {
+            flowLayout(items: viewModel.availableDurations, id: \.self) { duration in
+                selectionChip(
+                    title: "\(duration) мин",
+                    subtitle: nil,
+                    isSelected: viewModel.request.desiredDurationMinutes == duration,
+                ) {
+                    viewModel.setDuration(duration)
                 }
+            }
+        }
+    }
 
-                Divider()
-                    .overlay(FFColors.gray700.opacity(0.8))
-
-                configurationSection(title: "Сколько времени есть") {
-                    flowLayout(items: viewModel.availableDurations, id: \.self) { duration in
-                        selectionChip(
-                            title: "\(duration) мин",
-                            subtitle: nil,
-                            isSelected: viewModel.request.desiredDurationMinutes == duration,
-                        ) {
-                            viewModel.setDuration(duration)
-                        }
-                    }
+    private var focusCard: some View {
+        TrainingBuilderSectionCard(
+            eyebrow: "Акцент",
+            title: "Какой акцент нужен",
+            helper: "Необязательно."
+        ) {
+            flowLayout(items: TodayWorkoutPlanningFocus.allCases, id: \.rawValue) { focus in
+                selectionChip(
+                    title: focus.title,
+                    subtitle: focus.subtitle,
+                    isSelected: viewModel.request.focus == focus,
+                ) {
+                    viewModel.setFocus(focus)
                 }
+            }
+        }
+    }
 
-                Divider()
-                    .overlay(FFColors.gray700.opacity(0.8))
-
-                configurationSection(title: "Какой акцент нужен") {
-                    flowLayout(items: TodayWorkoutPlanningFocus.allCases, id: \.rawValue) { focus in
-                        selectionChip(
-                            title: focus.title,
-                            subtitle: focus.subtitle,
-                            isSelected: viewModel.request.focus == focus,
-                        ) {
-                            viewModel.setFocus(focus)
-                        }
-                    }
-                }
-
-                Divider()
-                    .overlay(FFColors.gray700.opacity(0.8))
-
-                configurationSection(title: "Какое оборудование есть") {
-                    VStack(alignment: .leading, spacing: FFSpacing.sm) {
-                        Text(equipmentSectionHelperText)
-                            .font(FFTypography.caption)
-                            .foregroundStyle(FFColors.textSecondary)
-
-                        if viewModel.catalogSnapshot.equipmentOptions.isEmpty {
-                            Text("Сначала выберите мышечные группы, чтобы показать подходящее оборудование.")
-                                .font(FFTypography.caption)
-                                .foregroundStyle(FFColors.textSecondary)
-                        } else {
-                            flowLayout(items: viewModel.catalogSnapshot.equipmentOptions, id: \.id) { option in
-                                selectionChip(
-                                    title: option.title,
-                                    subtitle: option.category?.title,
-                                    isSelected: viewModel.request.availableEquipmentIDs.contains(option.id),
-                                ) {
-                                    viewModel.toggleEquipment(id: option.id)
-                                }
-                            }
-                        }
+    private var equipmentCard: some View {
+        TrainingBuilderSectionCard(
+            eyebrow: "Оборудование",
+            title: "Доступное оборудование",
+            helper: equipmentSectionHelperText
+        ) {
+            if viewModel.catalogSnapshot.equipmentOptions.isEmpty {
+                Text("Сначала выберите мышечные группы, чтобы показать подходящее оборудование.")
+                    .font(FFTypography.caption)
+                    .foregroundStyle(FFColors.textSecondary)
+            } else {
+                flowLayout(items: viewModel.catalogSnapshot.equipmentOptions, id: \.id) { option in
+                    selectionChip(
+                        title: option.title,
+                        subtitle: option.category?.title,
+                        isSelected: viewModel.request.availableEquipmentIDs.contains(option.id),
+                    ) {
+                        viewModel.toggleEquipment(id: option.id)
                     }
                 }
             }
@@ -543,39 +525,25 @@ struct TodayWorkoutPlanningView: View {
     }
 
     private var bottomActionBar: some View {
-        VStack(spacing: FFSpacing.xs) {
-            Text(bottomHelperText)
-                .font(FFTypography.caption)
-                .foregroundStyle(FFColors.textSecondary)
-                .frame(maxWidth: .infinity, alignment: .leading)
-
-            FFButton(
-                title: "Продолжить в конструктор",
-                variant: viewModel.request.canBuild ? .primary : .disabled,
-                isLoading: viewModel.isBuilding,
-            ) {
-                Task {
-                    guard let seed = await viewModel.buildWorkout() else { return }
-                    onBuild(seed)
-                }
+        TrainingBuilderBottomBar(
+            helper: bottomHelperText,
+            title: "Открыть конструктор",
+            summary: nil,
+            buttonVariant: viewModel.request.canBuild ? .primary : .disabled,
+            isLoading: viewModel.isBuilding
+        ) {
+            Task {
+                guard let seed = await viewModel.buildWorkout() else { return }
+                onBuild(seed)
             }
-        }
-        .padding(.horizontal, FFSpacing.md)
-        .padding(.top, FFSpacing.xs)
-        .padding(.bottom, FFSpacing.sm)
-        .background(FFColors.background.opacity(0.96))
-        .overlay(alignment: .top) {
-            Rectangle()
-                .fill(FFColors.gray700.opacity(0.6))
-                .frame(height: 1)
         }
     }
 
     private var bottomHelperText: String {
         if viewModel.request.canBuild {
-            return "Дальше откроется уже собранный под эти параметры builder."
+            return "Откроем тренировку с готовой заготовкой."
         }
-        return "Нужны мышцы и время."
+        return "Сначала выберите мышцы и время."
     }
 
     private var equipmentSectionHelperText: String {
@@ -584,27 +552,10 @@ struct TodayWorkoutPlanningView: View {
             .map(\.title)
 
         guard !muscles.isEmpty else {
-            return "Покажем только то оборудование, которое реально встречается у выбранных упражнений."
+            return "Покажем подходящие варианты."
         }
 
-        return "Показываем только оборудование, которое встречается у упражнений на \(muscles.joined(separator: ", "))."
-    }
-
-    private func configurationSection<Content: View>(
-        title: String,
-        @ViewBuilder content: () -> Content
-    ) -> some View {
-        VStack(alignment: .leading, spacing: FFSpacing.sm) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Шаг")
-                    .font(FFTypography.caption.weight(.semibold))
-                    .foregroundStyle(FFColors.textSecondary)
-                Text(title)
-                    .font(FFTypography.h2)
-                    .foregroundStyle(FFColors.textPrimary)
-            }
-            content()
-        }
+        return "Подборка под \(muscles.joined(separator: ", "))."
     }
 
     private func flowLayout<Item: RandomAccessCollection, ID: Hashable, Content: View>(
@@ -637,44 +588,14 @@ struct TodayWorkoutPlanningView: View {
         action: @escaping () -> Void,
         isInteractive: Bool = true
     ) -> some View {
-        Button(action: action) {
-            VStack(alignment: .leading, spacing: FFSpacing.xxs) {
-                Text(title)
-                    .font(FFTypography.body.weight(.semibold))
-                    .foregroundStyle(isSelected ? FFColors.background : FFColors.textPrimary)
-                    .lineLimit(2)
-
-                if let subtitle {
-                    Text(subtitle)
-                        .font(FFTypography.caption)
-                        .foregroundStyle(isSelected ? FFColors.background.opacity(0.86) : FFColors.textSecondary)
-                        .lineLimit(2)
-                }
-            }
-            .frame(maxWidth: .infinity, minHeight: 64, alignment: .topLeading)
-            .padding(.horizontal, FFSpacing.sm)
-            .padding(.vertical, FFSpacing.sm)
-            .background(
-                isSelected
-                    ? LinearGradient(
-                        colors: [FFColors.accent, FFColors.primary.opacity(0.82)],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
-                    : LinearGradient(
-                        colors: [FFColors.surface, FFColors.surface.opacity(0.86)],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
-            )
-            .clipShape(RoundedRectangle(cornerRadius: FFTheme.Radius.control))
-            .overlay {
-                RoundedRectangle(cornerRadius: FFTheme.Radius.control)
-                    .stroke(isSelected ? FFColors.accent : FFColors.gray700, lineWidth: 1)
-            }
-        }
-        .buttonStyle(.plain)
-        .disabled(!isInteractive)
+        TrainingBuilderChoiceTile(
+            title: title,
+            subtitle: subtitle,
+            isSelected: isSelected,
+            action: action
+        )
+        .allowsHitTesting(isInteractive)
+        .opacity(isInteractive ? 1 : 0.92)
     }
 
     private var selectionSummary: [String] {
@@ -692,6 +613,7 @@ struct TodayWorkoutPlanningView: View {
         }
         return items
     }
+
 }
 
 private extension ExerciseCatalogEquipmentCategory {

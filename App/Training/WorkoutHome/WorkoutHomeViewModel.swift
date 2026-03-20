@@ -210,6 +210,10 @@ final class WorkoutHomeViewModel {
 
     func startNextWorkout() async -> RemoteWorkoutTarget? {
         guard let startWorkoutTarget else { return nil }
+        if !(await canLaunchRemotely(target: startWorkoutTarget)) {
+            await reload()
+            return nil
+        }
         _ = await syncCoordinator.enqueueStartWorkout(
             namespace: userSub,
             workoutInstanceId: startWorkoutTarget.workoutId,
@@ -380,7 +384,9 @@ final class WorkoutHomeViewModel {
             lastCompleted = remoteRecent.first
         }
 
-        remoteTodayCandidates = summary.todayWorkout.map { [makeRemoteTodayWorkout(from: $0, programTitle: summary.activeProgram?.title)] } ?? []
+        remoteTodayCandidates = summary.todayWorkout
+            .flatMap { makeRemoteTodayWorkout(from: $0, programTitle: summary.activeProgram?.title) }
+            .map { [$0] } ?? []
 
         await updateRemoteResumeCandidate()
         rebuildTodayWorkout()
@@ -587,9 +593,11 @@ final class WorkoutHomeViewModel {
     private func makeRemoteTodayWorkout(
         from workout: AthleteHomeWorkoutSummary,
         programTitle: String?,
-    ) -> TodayWorkout {
+    ) -> TodayWorkout? {
         let source: WorkoutSource = workout.source == .custom ? .freestyle : .program
-        let status = todayWorkoutStatus(for: mapStatus(workout.status)) ?? .planned
+        guard let status = todayWorkoutStatus(for: mapStatus(workout.status)) else {
+            return nil
+        }
         let title = workout.title.trimmedNilIfEmpty ?? "Тренировка"
         let subtitle: String
         if source == .program {
@@ -812,12 +820,46 @@ final class WorkoutHomeViewModel {
     private func remoteStartTarget(from summary: AthleteHomeSummaryResponse) -> RemoteWorkoutTarget? {
         switch summary.primaryAction.type {
         case .continueProgram, .startTodaysWorkout:
-            if let workout = summary.primaryAction.workout {
-                return remoteWorkoutTarget(from: workout)
+            if let target = remoteStartTarget(from: summary.primaryAction.workout) {
+                return target
             }
-            return summary.activeProgram?.nextWorkout.map(remoteWorkoutTarget)
+            return remoteStartTarget(from: summary.activeProgram?.nextWorkout)
         case .continueActiveWorkout, .startWorkout:
-            return summary.activeProgram?.nextWorkout.map(remoteWorkoutTarget)
+            if let target = remoteStartTarget(from: summary.primaryAction.workout) {
+                return target
+            }
+            return remoteStartTarget(from: summary.activeProgram?.nextWorkout)
+        }
+    }
+
+    private func remoteStartTarget(from workout: AthleteHomeWorkoutSummary?) -> RemoteWorkoutTarget? {
+        guard let workout, isRemoteWorkoutStartable(workout.status) else {
+            return nil
+        }
+        return remoteWorkoutTarget(from: workout)
+    }
+
+    private func isRemoteWorkoutStartable(_ status: AthleteWorkoutInstanceStatus?) -> Bool {
+        switch status {
+        case .planned, .inProgress, .missed, .none:
+            return true
+        case .completed, .abandoned:
+            return false
+        }
+    }
+
+    private func canLaunchRemotely(target: RemoteWorkoutTarget) async -> Bool {
+        guard networkMonitor.currentStatus,
+              let athleteTrainingClient
+        else {
+            return true
+        }
+
+        switch await athleteTrainingClient.getWorkoutDetails(workoutInstanceId: target.workoutId) {
+        case let .success(detailsResponse):
+            return isRemoteWorkoutStartable(detailsResponse.workout.status)
+        case .failure:
+            return true
         }
     }
 

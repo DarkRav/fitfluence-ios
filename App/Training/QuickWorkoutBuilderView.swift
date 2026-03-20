@@ -33,34 +33,34 @@ private final class QuickWorkoutBuilderViewModel {
         var heroTitle: String {
             switch self {
             case .todayPlanning:
-                "Стартовая структура на сегодня"
+                "Тренировка на сегодня"
             case .quickStart:
-                "Соберите тренировку без хаоса"
+                "Быстрая тренировка"
             case .plannedQuickWorkout:
-                "Соберите тренировку для плана"
+                "Тренировка для плана"
             case .editWorkout:
-                "Обновите структуру тренировки"
+                "Конструктор тренировки"
             case .createTemplate:
-                "Соберите шаблон для повторного использования"
+                "Конструктор шаблона"
             case .editTemplate:
-                "Обновите шаблон"
+                "Конструктор шаблона"
             }
         }
 
         var heroSubtitle: String {
             switch self {
             case .todayPlanning:
-                "Планировщик уже собрал задачу на сегодня. Проверьте стартовую заготовку, поправьте структуру и сразу запускайте."
+                "Контекст уже задан. Добавьте упражнения, поправьте детали и начинайте."
             case .quickStart:
-                "Добавьте упражнения через каталог, настройте параметры и сразу запускайте."
+                "Добавьте упражнения и начинайте без лишних шагов."
             case .plannedQuickWorkout:
-                "Соберите свободную тренировку с понятной структурой и сохраните её в план."
+                "Соберите тренировку и сохраните её в план."
             case .editWorkout:
-                "Измените порядок, параметры и состав упражнений без потери структуры."
+                "Правьте состав и параметры без лишних экранов."
             case .createTemplate:
-                "Сохраните заготовку тренировки, которую потом можно быстро запускать и планировать."
+                "Соберите шаблон для повторного старта."
             case .editTemplate:
-                "Приведите шаблон в порядок и сохраните обновлённую структуру."
+                "Обновите шаблон и сохраните изменения."
             }
         }
 
@@ -137,7 +137,7 @@ private final class QuickWorkoutBuilderViewModel {
     var structureSummary: String {
         let totalSets = draft.exercises.reduce(0) { $0 + max(1, $1.sets) }
         if draft.exercises.isEmpty {
-            return "Сначала добавьте упражнения, затем настройте подходы, повторы и отдых."
+            return "Добавьте упражнения"
         }
 
         return "\(exerciseCountText) • \(totalSets) подходов"
@@ -353,79 +353,33 @@ struct QuickWorkoutBuilderView: View {
                     suggestionsProvider: exercisePickerSuggestionsProvider,
                     context: exercisePickerContext,
                     selectedExerciseIDs: viewModel.selectedExerciseIDs,
-                ) { exercise in
-                    viewModel.addExercise(exercise)
+                ) { exercises in
+                    for exercise in exercises {
+                        viewModel.addExercise(exercise)
+                    }
                 }
             }
         }
     }
 
     private var headerCard: some View {
-        FFCard {
-            VStack(alignment: .leading, spacing: FFSpacing.sm) {
-                Text(viewModel.mode.heroTitle.uppercased())
-                    .font(FFTypography.caption.weight(.semibold))
-                    .foregroundStyle(FFColors.accent)
-
-                HStack(alignment: .top, spacing: FFSpacing.sm) {
-                    VStack(alignment: .leading, spacing: FFSpacing.xxs) {
-                        Text("Собирайте структуру, а не заполняйте форму.")
-                            .font(FFTypography.h2)
-                            .foregroundStyle(FFColors.textPrimary)
-                        if let subtitle = compactSubtitle {
-                            Text(subtitle)
-                                .font(FFTypography.body)
-                                .foregroundStyle(FFColors.textSecondary)
-                        }
-                    }
-                    Spacer()
-                }
-
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: FFSpacing.xs) {
-                        summaryBadge(title: viewModel.exerciseCountText)
-                        summaryBadge(title: viewModel.structureSummary)
-                        if let planningSeed {
-                            ForEach(planningChips(for: planningSeed), id: \.self) { chip in
-                                summaryBadge(title: chip)
-                            }
-                        }
-                    }
-                }
-
-                FFTextField(
-                    label: viewModel.mode.titleLabel,
-                    placeholder: viewModel.mode.titlePlaceholder,
-                    text: Binding(
-                        get: { viewModel.draft.title },
-                        set: { viewModel.draft.title = $0 },
-                    ),
-                    helperText: viewModel.helperText,
-                )
-            }
-        }
+        TrainingBuilderHeroCard(
+            eyebrow: nil,
+            title: builderHeroTitle,
+            subtitle: headerSubtitle ?? "",
+            badges: summaryBadges
+        )
     }
 
     private var exercisesCard: some View {
-        FFCard {
+        TrainingBuilderSectionCard(
+            eyebrow: nil,
+            title: "Упражнения",
+            helper: viewModel.draft.exercises.isEmpty
+                ? "Добавьте первое упражнение."
+                : ""
+        ) {
             VStack(alignment: .leading, spacing: FFSpacing.sm) {
-                HStack {
-                    VStack(alignment: .leading, spacing: FFSpacing.xxs) {
-                        Text("Структура тренировки")
-                            .font(FFTypography.h2)
-                            .foregroundStyle(FFColors.textPrimary)
-                        Text(viewModel.draft.exercises.isEmpty ? "Начните с первого упражнения." : "Сверху вниз по порядку.")
-                            .font(FFTypography.caption)
-                            .foregroundStyle(FFColors.textSecondary)
-                    }
-                    Spacer()
-                    Button(viewModel.draft.exercises.isEmpty ? "Выбрать" : "Добавить") {
-                        isExercisePickerPresented = true
-                    }
-                    .font(FFTypography.caption.weight(.semibold))
-                    .foregroundStyle(FFColors.accent)
-                }
-
                 if viewModel.draft.exercises.isEmpty {
                     emptyStateCard
                 } else {
@@ -523,30 +477,19 @@ struct QuickWorkoutBuilderView: View {
                     .padding(.top, FFSpacing.xs)
                 }
             }
-            .padding(.top, FFSpacing.xs)
-            .background(
-                LinearGradient(
-                    colors: [FFColors.accent.opacity(0.1), .clear],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                )
-            )
         }
     }
 
     private var emptyStateCard: some View {
         VStack(alignment: .leading, spacing: FFSpacing.sm) {
-            Text("Старт")
-                .font(FFTypography.caption.weight(.semibold))
-                .foregroundStyle(FFColors.accent)
-            Text(viewModel.mode.emptyTitle)
+            Text(emptyStateTitle)
                 .font(FFTypography.body.weight(.semibold))
                 .foregroundStyle(FFColors.textPrimary)
             Text(emptyStateMessage)
                 .font(FFTypography.caption)
                 .foregroundStyle(FFColors.textSecondary)
 
-            FFButton(title: "Добавить первое упражнение", variant: .secondary) {
+            FFButton(title: "Открыть каталог упражнений", variant: .secondary) {
                 isExercisePickerPresented = true
             }
         }
@@ -570,38 +513,13 @@ struct QuickWorkoutBuilderView: View {
     }
 
     private var bottomActionBar: some View {
-        VStack(spacing: FFSpacing.xs) {
-            if viewModel.canSubmit {
-                HStack(spacing: FFSpacing.sm) {
-                    VStack(alignment: .leading, spacing: FFSpacing.xxs) {
-                        Text(viewModel.primaryActionTitle)
-                            .font(FFTypography.caption.weight(.semibold))
-                            .foregroundStyle(FFColors.textPrimary)
-                        Text(viewModel.structureSummary)
-                            .font(FFTypography.caption)
-                            .foregroundStyle(FFColors.textSecondary)
-                    }
-                    Spacer()
-                }
-
-                FFButton(title: viewModel.primaryActionTitle, variant: .primary) {
-                    submit()
-                }
-            } else {
-                Text("Сначала добавьте первое упражнение. Кнопка уже есть в основном блоке выше.")
-                    .font(FFTypography.caption)
-                    .foregroundStyle(FFColors.textSecondary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-        }
-        .padding(.horizontal, FFSpacing.md)
-        .padding(.top, FFSpacing.xs)
-        .padding(.bottom, FFSpacing.sm)
-        .background(FFColors.background.opacity(0.96))
-        .overlay(alignment: .top) {
-            Rectangle()
-                .fill(FFColors.gray700.opacity(0.6))
-                .frame(height: 1)
+        TrainingBuilderBottomBar(
+            helper: viewModel.canSubmit ? "Проверьте структуру и подтвердите старт или сохранение." : "Сначала добавьте упражнения.",
+            title: viewModel.primaryActionTitle,
+            summary: viewModel.canSubmit ? viewModel.structureSummary : nil,
+            buttonVariant: viewModel.canSubmit ? .primary : .disabled
+        ) {
+            submit()
         }
     }
 
@@ -669,32 +587,33 @@ struct QuickWorkoutBuilderView: View {
         UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
     }
 
-    private func summaryBadge(title: String) -> some View {
-        Text(title)
-            .font(FFTypography.caption.weight(.semibold))
-            .foregroundStyle(FFColors.textSecondary)
-            .padding(.horizontal, FFSpacing.sm)
-            .padding(.vertical, FFSpacing.xs)
-            .background(FFColors.surface)
-            .clipShape(Capsule())
+    private var headerSubtitle: String? {
+        switch viewModel.mode {
+        case .plannedQuickWorkout:
+            return "Соберите тренировку и сохраните её в план."
+        case .createTemplate, .editTemplate:
+            return "Добавьте упражнения и сохраните шаблон."
+        default:
+            return "Добавьте упражнения и начинайте."
+        }
     }
 
-    private var compactSubtitle: String? {
+    private var emptyStateTitle: String {
         switch viewModel.mode {
-        case .todayPlanning:
-            return nil
         case .createTemplate, .editTemplate:
-            return "Соберите структуру и сохраните её как шаблон."
+            return "Добавьте упражнения в шаблон"
+        case .todayPlanning:
+            return "Дополните структуру на сегодня"
         default:
-            return nil
+            return "Добавьте упражнения в тренировку"
         }
     }
 
     private var emptyStateMessage: String {
         if planningSeed != nil {
-            return "Если стартовая заготовка пустая или неполная, просто доберите упражнения из каталога."
+            return "Добавьте недостающие упражнения и начинайте."
         }
-        return "Добавьте первое упражнение и настройте структуру по ходу."
+        return "После выбора они сразу появятся в тренировке."
     }
 
     private func planningChips(for seed: TodayWorkoutPlanningDraftSeed) -> [String] {
@@ -714,6 +633,28 @@ struct QuickWorkoutBuilderView: View {
             chips.append(focus.title)
         }
         return chips
+    }
+
+    private var summaryBadges: [String] {
+        var badges: [String] = []
+        if viewModel.canSubmit {
+            badges = [viewModel.structureSummary]
+        }
+        if let planningSeed {
+            badges.append(contentsOf: planningChips(for: planningSeed))
+        }
+        return Array(badges.prefix(2))
+    }
+
+    private var builderHeroTitle: String {
+        switch viewModel.mode {
+        case .todayPlanning:
+            return "Соберите тренировку"
+        case .createTemplate, .editTemplate:
+            return "Соберите шаблон"
+        default:
+            return "Соберите тренировку"
+        }
     }
 
     private var exercisePickerContext: ExercisePickerViewModel.Context {
@@ -762,6 +703,9 @@ private struct QuickWorkoutExerciseCard: View {
                         Text(exercise.name)
                             .font(FFTypography.body.weight(.semibold))
                             .foregroundStyle(FFColors.textPrimary)
+                    }
+                    if !exercise.catalogTags.isEmpty {
+                        exerciseTagRow(tags: exercise.catalogTags)
                     }
                     Text(exercise.summaryText)
                         .font(FFTypography.caption)
@@ -896,6 +840,26 @@ private struct QuickWorkoutExerciseCard: View {
         .overlay {
             RoundedRectangle(cornerRadius: FFTheme.Radius.control)
                 .stroke(accent.opacity(0.28), lineWidth: 1)
+        }
+    }
+
+    private func exerciseTagRow(tags: [String]) -> some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: FFSpacing.xs) {
+                ForEach(tags, id: \.self) { tag in
+                    Text(tag)
+                        .font(FFTypography.caption.weight(.semibold))
+                        .foregroundStyle(FFColors.textSecondary)
+                        .padding(.horizontal, FFSpacing.sm)
+                        .padding(.vertical, FFSpacing.xs)
+                        .background(FFColors.background.opacity(0.8))
+                        .clipShape(Capsule())
+                        .overlay {
+                            Capsule()
+                                .stroke(FFColors.gray700.opacity(0.8), lineWidth: 1)
+                        }
+                }
+            }
         }
     }
 

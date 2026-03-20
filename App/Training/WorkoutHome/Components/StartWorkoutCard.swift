@@ -4,7 +4,6 @@ struct StartWorkoutCard: View {
     var isLoading = false
     let syncStatus: SyncStatusKind
     let showsCacheTag: Bool
-    let onBuildTodayWorkout: () -> Void
     let onStartWorkout: () -> Void
 
     var body: some View {
@@ -12,11 +11,11 @@ struct StartWorkoutCard: View {
             VStack(alignment: .leading, spacing: 10) {
                 HStack(alignment: .top, spacing: 12) {
                     VStack(alignment: .leading, spacing: 10) {
-                        Text("Тренировка")
+                        Text("Начните тренировку")
                             .font(FFTypography.h2)
                             .foregroundStyle(FFColors.textPrimary)
 
-                        Text("Сначала соберите задачу на сегодня, а затем быстро доведите стартовую заготовку в конструкторе.")
+                        Text("Быстрый вход в текущую сессию. Планирование и шаблоны доступны ниже.")
                             .font(FFTypography.body)
                             .foregroundStyle(FFColors.textSecondary)
                     }
@@ -34,13 +33,8 @@ struct StartWorkoutCard: View {
                 }
 
                 WorkoutPrimaryButton(
-                    title: "Собрать тренировку на сегодня",
+                    title: "Начать тренировку",
                     isLoading: isLoading,
-                    action: onBuildTodayWorkout,
-                )
-
-                WorkoutSecondaryButton(
-                    title: "Пустая тренировка",
                     action: onStartWorkout,
                 )
             }

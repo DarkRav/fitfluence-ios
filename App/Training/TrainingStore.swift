@@ -67,9 +67,18 @@ struct WorkoutTemplateDraft: Codable, Equatable, Sendable, Identifiable {
     var updatedAt: Date
 }
 
+func scheduledDayString(_ date: Date, calendar: Calendar = .autoupdatingCurrent) -> String {
+    let components = calendar.dateComponents([.year, .month, .day], from: date)
+    let year = components.year ?? 0
+    let month = components.month ?? 0
+    let day = components.day ?? 0
+    return String(format: "%04d-%02d-%02d", year, month, day)
+}
+
 struct WorkoutCompositionExerciseDraft: Equatable, Sendable, Identifiable {
     let id: String
     var name: String
+    var catalogTags: [String]
     var sets: Int
     var repsMin: Int?
     var repsMax: Int?
@@ -80,6 +89,7 @@ struct WorkoutCompositionExerciseDraft: Equatable, Sendable, Identifiable {
     init(
         id: String,
         name: String,
+        catalogTags: [String] = [],
         sets: Int,
         repsMin: Int?,
         repsMax: Int?,
@@ -89,6 +99,7 @@ struct WorkoutCompositionExerciseDraft: Equatable, Sendable, Identifiable {
     ) {
         self.id = id
         self.name = name
+        self.catalogTags = catalogTags
         self.sets = max(1, sets)
 
         let resolvedRepsMin = repsMin.map { max(1, $0) }
@@ -111,6 +122,7 @@ struct WorkoutCompositionExerciseDraft: Equatable, Sendable, Identifiable {
         self.init(
             id: catalogItem.id,
             name: catalogItem.name,
+            catalogTags: catalogItem.composerTags,
             sets: defaults.sets,
             repsMin: defaults.repsMin,
             repsMax: defaults.repsMax,
@@ -251,6 +263,7 @@ struct WorkoutCompositionDraft: Equatable, Sendable {
         exercises[index] = WorkoutCompositionExerciseDraft(
             id: updated.id,
             name: updated.name,
+            catalogTags: updated.catalogTags,
             sets: updated.sets,
             repsMin: updated.repsMin,
             repsMax: updated.repsMax,
@@ -302,6 +315,87 @@ struct WorkoutCompositionDraft: Equatable, Sendable {
             exercises: exercises.map { $0.asTemplateExercise() },
             updatedAt: updatedAt,
         )
+    }
+}
+
+private extension ExerciseCatalogItem {
+    var composerTags: [String] {
+        var tags: [String] = []
+        if let movementPattern {
+            tags.append(movementPattern.displayLabel)
+        }
+        if let difficultyLevel {
+            tags.append(difficultyLevel.displayLabel)
+        }
+        let muscleTags = muscles
+            .compactMap(\.muscleGroup)
+            .map(\.displayLabel)
+            .uniqueStrings()
+        tags.append(contentsOf: muscleTags.prefix(2))
+        let equipmentTags = equipment
+            .map(\.name)
+            .uniqueStrings()
+        tags.append(contentsOf: equipmentTags.prefix(2))
+        if tags.isEmpty, isBodyweight == true {
+            tags.append("Свой вес")
+        }
+        return Array(tags.prefix(4))
+    }
+}
+
+private extension ExerciseCatalogMovementPattern {
+    var displayLabel: String {
+        switch self {
+        case .push:
+            "Жим"
+        case .pull:
+            "Тяга"
+        case .squat:
+            "Присед"
+        case .hinge:
+            "Наклон"
+        case .other:
+            "Другое"
+        }
+    }
+}
+
+private extension ExerciseCatalogDifficultyLevel {
+    var displayLabel: String {
+        switch self {
+        case .beginner:
+            "Базовый"
+        case .intermediate:
+            "Средний"
+        case .advanced:
+            "Продвинутый"
+        }
+    }
+}
+
+private extension ExerciseCatalogMuscleGroup {
+    var displayLabel: String {
+        switch self {
+        case .chest:
+            "Грудь"
+        case .back:
+            "Спина"
+        case .shoulders:
+            "Плечи"
+        case .legs:
+            "Ноги"
+        case .arms:
+            "Руки"
+        case .abs:
+            "Пресс"
+        }
+    }
+}
+
+private extension Array where Element == String {
+    func uniqueStrings() -> [String] {
+        var seen = Set<String>()
+        return filter { seen.insert($0).inserted }
     }
 }
 
@@ -502,7 +596,7 @@ actor LocalTrainingStore: TrainingStore {
         let plan = TrainingDayPlan(
             id: planId ?? UUID().uuidString,
             userSub: userSub,
-            day: normalizedTargetDay,
+            day: targetDay,
             status: status,
             programId: programId,
             programTitle: programTitle,
@@ -617,7 +711,7 @@ extension WorkoutDetailsModel {
     func asCreateCustomWorkoutRequest(scheduledDate: Date? = nil) -> AthleteCreateCustomWorkoutRequest {
         AthleteCreateCustomWorkoutRequest(
             title: title.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty ?? "Тренировка",
-            scheduledDate: scheduledDate.map { Self.customWorkoutScheduleFormatter.string(from: $0) },
+            scheduledDate: scheduledDate.map { scheduledDayString($0) },
             notes: coachNote?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty,
             exercises: exercises
                 .sorted(by: { $0.orderIndex < $1.orderIndex })
@@ -641,19 +735,10 @@ extension WorkoutDetailsModel {
     func asUpdateCustomWorkoutRequest(scheduledDate: Date? = nil) -> AthleteUpdateCustomWorkoutRequest {
         AthleteUpdateCustomWorkoutRequest(
             title: title.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty,
-            scheduledDate: scheduledDate.map { Self.customWorkoutScheduleFormatter.string(from: $0) },
+            scheduledDate: scheduledDate.map { scheduledDayString($0) },
             notes: coachNote?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty,
         )
     }
-
-    private static let customWorkoutScheduleFormatter: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.calendar = Calendar(identifier: .gregorian)
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.timeZone = TimeZone(secondsFromGMT: 0)
-        formatter.dateFormat = "yyyy-MM-dd"
-        return formatter
-    }()
 }
 
 private extension String {

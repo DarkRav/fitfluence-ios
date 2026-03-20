@@ -2312,6 +2312,7 @@ struct CatalogScreen: View {
     @State var athletesShowcaseViewModel: AthletesShowcaseViewModel
     @State var athletesSearchViewModel: AthleteSearchViewModel
     @State var followingViewModel: FollowingAthletesViewModel
+    let programsHeaderContent: AnyView?
 
     let userSub: String
     let environment: AppEnvironment
@@ -2334,6 +2335,7 @@ struct CatalogScreen: View {
         athletesShowcaseViewModel: AthletesShowcaseViewModel,
         athletesSearchViewModel: AthleteSearchViewModel,
         followingViewModel: FollowingAthletesViewModel,
+        programsHeaderContent: AnyView? = nil,
         userSub: String,
         environment: AppEnvironment,
         onProgramTap: @escaping (String) -> Void,
@@ -2343,6 +2345,7 @@ struct CatalogScreen: View {
         _athletesShowcaseViewModel = State(initialValue: athletesShowcaseViewModel)
         _athletesSearchViewModel = State(initialValue: athletesSearchViewModel)
         _followingViewModel = State(initialValue: followingViewModel)
+        self.programsHeaderContent = programsHeaderContent
         self.userSub = userSub
         self.environment = environment
         self.onProgramTap = onProgramTap
@@ -2368,6 +2371,7 @@ struct CatalogScreen: View {
             case .programs:
                 ProgramsCatalogScreen(
                     viewModel: programsViewModel,
+                    headerContent: programsHeaderContent,
                     environment: environment,
                     isSearchPresented: $isProgramSearchPresented,
                     isFiltersPresented: $isProgramFiltersPresented,
@@ -4167,15 +4171,38 @@ private func resolveSocialProofBadges(for creator: InfluencerPublicCard) -> [Str
 
 struct ProgramsCatalogScreen: View {
     @State var viewModel: ProgramsCatalogViewModel
+    let headerContent: AnyView?
     let environment: AppEnvironment
     @Binding var isSearchPresented: Bool
     @Binding var isFiltersPresented: Bool
     @Binding var isSortPresented: Bool
     let onProgramTap: (String) -> Void
 
+    init(
+        viewModel: ProgramsCatalogViewModel,
+        headerContent: AnyView? = nil,
+        environment: AppEnvironment,
+        isSearchPresented: Binding<Bool>,
+        isFiltersPresented: Binding<Bool>,
+        isSortPresented: Binding<Bool>,
+        onProgramTap: @escaping (String) -> Void,
+    ) {
+        _viewModel = State(initialValue: viewModel)
+        self.headerContent = headerContent
+        self.environment = environment
+        _isSearchPresented = isSearchPresented
+        _isFiltersPresented = isFiltersPresented
+        _isSortPresented = isSortPresented
+        self.onProgramTap = onProgramTap
+    }
+
     var body: some View {
         ScrollView {
             VStack(spacing: FFSpacing.md) {
+                if let headerContent {
+                    headerContent
+                }
+
                 if viewModel.isShowingCachedData {
                     cachedDataBadge
                 }
