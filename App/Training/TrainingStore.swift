@@ -815,7 +815,10 @@ actor BackendWorkoutTemplateRepository: WorkoutTemplateRepository {
             return template
         }
 
-        let result: Result<AthleteWorkoutTemplatePayload, APIError> = if UUID(uuidString: template.id) != nil {
+        let cachedTemplates = await cacheStore.templates(userSub: template.userSub)
+        let shouldUpdateRemote = cachedTemplates.contains { $0.id == template.id }
+
+        let result: Result<AthleteWorkoutTemplatePayload, APIError> = if shouldUpdateRemote {
             await apiClient.updateAthleteWorkoutTemplate(
                 templateId: template.id,
                 request: template.asUpdateRequest,

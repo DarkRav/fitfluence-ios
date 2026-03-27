@@ -586,6 +586,7 @@ final class WorkoutPlayerViewModel {
     var isFinishConfirmationPresented = false
     var isSubmittingFinish = false
     var isFinished = false
+    var blockedByActiveSession: ActiveWorkoutSession?
     var toastMessage: String?
     var completionSummary: CompletionSummary?
     var syncStatus: SyncStatusKind = .savedLocally
@@ -880,13 +881,22 @@ final class WorkoutPlayerViewModel {
         defaultRestSeconds = max(15, settings.defaultRestSeconds)
         showRPEValue = settings.showRPE
         timerSoundEnabledValue = settings.timerSoundEnabled
-        session = await sessionManager.loadOrCreateSession(
+        let result = await sessionManager.loadOrCreateSession(
             userSub: userSub,
             programId: programId,
             workout: workout,
             source: source,
         )
+        switch result {
+        case let .session(resolvedSession):
+            blockedByActiveSession = nil
+            session = resolvedSession
+        case let .blockedByActiveSession(activeSession):
+            blockedByActiveSession = activeSession
+            session = nil
+        }
         isLoading = false
+        guard blockedByActiveSession == nil else { return }
         focusedSetIndex = firstUncompletedSetIndex(in: currentExerciseState) ?? 0
 
         await syncCoordinator.activate(namespace: userSub)
@@ -932,10 +942,12 @@ final class WorkoutPlayerViewModel {
     }
 
     func incrementWeight(setIndex: Int) async {
+        guard !currentExerciseIsBodyweight else { return }
         await updateNumericField(setIndex: setIndex, keyPath: \.weightText, step: weightStep)
     }
 
     func decrementWeight(setIndex: Int) async {
+        guard !currentExerciseIsBodyweight else { return }
         await updateNumericField(setIndex: setIndex, keyPath: \.weightText, step: -weightStep)
     }
 
@@ -948,6 +960,7 @@ final class WorkoutPlayerViewModel {
     }
 
     func updateWeight(setIndex: Int, input: String) async {
+        guard !currentExerciseIsBodyweight else { return }
         await updateSetField(setIndex: setIndex, field: .weight, rawValue: input)
     }
 
@@ -1886,7 +1899,7 @@ final class WorkoutPlayerViewModel {
             restSeconds: defaults.restSeconds,
             notes: defaults.notes?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty,
             orderIndex: orderIndex,
-            isBodyweight: catalogItem.isBodyweight ?? false,
+            isBodyweight: catalogItem.resolvedIsBodyweight,
             media: catalogItem.media,
         )
     }
@@ -2020,6 +2033,8 @@ struct WorkoutPlayerViewV2: View {
     @State var viewModel: WorkoutPlayerViewModel
     let onExit: () -> Void
     let onFinish: (WorkoutPlayerViewModel.CompletionSummary) -> Void
+    var onResumeExisting: (ActiveWorkoutSession) -> Void = { _ in }
+    var onBlockedBack: () -> Void = {}
 
     @State private var isRestTimerExpanded = false
     @State private var isJumpListPresented = false
@@ -2027,23 +2042,32 @@ struct WorkoutPlayerViewV2: View {
 
     var body: some View {
         ZStack {
-            FFColors.background.ignoresSafeArea()
+            LinearGradient(
+                colors: [
+                    FFColors.background,
+                    FFColors.background.opacity(0.96),
+                    FFColors.surface.opacity(0.9),
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing,
+            )
+            .ignoresSafeArea()
 
             if viewModel.isLoading {
                 FFScreenSpinner()
+            } else if let blockedSession = viewModel.blockedByActiveSession {
+                blockedSessionCard(blockedSession)
             } else {
                 ScrollViewReader { proxy in
                     ScrollView {
-                        VStack(spacing: FFSpacing.md) {
+                        VStack(alignment: .leading, spacing: FFSpacing.lg) {
                             topPanel
-                            navigationCard
                             exerciseCard
-                            structureCard
                             setsCard
                         }
                         .padding(.horizontal, FFSpacing.md)
                         .padding(.top, FFSpacing.md)
-                        .padding(.bottom, FFSpacing.xl)
+                        .padding(.bottom, 112)
                     }
                     .onChange(of: viewModel.focusedSetIndex) { _, index in
                         guard let index else { return }
@@ -2166,39 +2190,167 @@ struct WorkoutPlayerViewV2: View {
         }
     }
 
-    private var topPanel: some View {
-        FFCard {
-            VStack(alignment: .leading, spacing: FFSpacing.sm) {
-                HStack {
-                    VStack(alignment: .leading, spacing: FFSpacing.xxs) {
-                        Text(viewModel.title)
-                            .font(FFTypography.h2)
-                            .foregroundStyle(FFColors.textPrimary)
-                            .lineLimit(2)
-                            .fixedSize(horizontal: false, vertical: true)
-                        Text(viewModel.progressLabel)
-                            .font(FFTypography.caption)
-                            .foregroundStyle(FFColors.textSecondary)
-                    }
-                    Spacer(minLength: FFSpacing.sm)
-                    Button {
-                        onExit()
-                    } label: {
-                        Image(systemName: "xmark")
-                            .font(.system(size: 14, weight: .bold))
-                            .foregroundStyle(FFColors.danger)
-                            .frame(width: 44, height: 44)
-                            .background(FFColors.surface)
-                            .clipShape(RoundedRectangle(cornerRadius: FFTheme.Radius.control))
-                            .overlay {
-                                RoundedRectangle(cornerRadius: FFTheme.Radius.control)
-                                    .stroke(FFColors.gray700, lineWidth: 1)
-                            }
-                    }
-                    .frame(minWidth: 44, minHeight: 44)
-                    .accessibilityLabel("Выйти из тренировки")
+    private func blockedSessionCard(_ session: ActiveWorkoutSession) -> some View {
+        VStack(spacing: FFSpacing.md) {
+            Spacer()
+
+            FFCard {
+                VStack(alignment: .leading, spacing: FFSpacing.sm) {
+                    Text("Уже есть активная тренировка")
+                        .font(FFTypography.h2)
+                        .foregroundStyle(FFColors.textPrimary)
+                    Text("Нельзя открыть вторую тренировку, пока текущая не завершена или не отменена.")
+                        .font(FFTypography.body)
+                        .foregroundStyle(FFColors.textSecondary)
                 }
             }
+
+            VStack(spacing: FFSpacing.sm) {
+                FFButton(title: "Продолжить текущую", variant: .primary) {
+                    onResumeExisting(session)
+                }
+                FFButton(title: "Назад", variant: .secondary) {
+                    onBlockedBack()
+                }
+            }
+
+            Spacer()
+        }
+        .padding(.horizontal, FFSpacing.md)
+    }
+
+    private var topPanel: some View {
+        VStack(spacing: FFSpacing.sm) {
+            HStack {
+                Button(action: onExit) {
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: 18, weight: .semibold))
+                        .foregroundStyle(FFColors.textPrimary)
+                        .frame(width: 40, height: 40)
+                        .background(FFColors.surface.opacity(0.72))
+                        .clipShape(RoundedRectangle(cornerRadius: 14))
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 14)
+                                .stroke(FFColors.gray700.opacity(0.6), lineWidth: 1)
+                        }
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Назад")
+
+                Spacer(minLength: FFSpacing.sm)
+
+                VStack(spacing: FFSpacing.xxs) {
+                    Text(viewModel.title.uppercased())
+                        .font(FFTypography.caption.weight(.bold))
+                        .kerning(1.2)
+                        .foregroundStyle(FFColors.textSecondary)
+                        .lineLimit(1)
+
+                    Text("\(viewModel.currentExerciseIndex + 1) / \(max(1, viewModel.progressItems.count))")
+                        .font(FFTypography.body.weight(.semibold))
+                        .foregroundStyle(FFColors.textPrimary)
+                        .padding(.horizontal, FFSpacing.md)
+                        .padding(.vertical, FFSpacing.xs)
+                        .background(FFColors.surface.opacity(0.78))
+                        .clipShape(Capsule())
+                        .overlay {
+                            Capsule()
+                                .stroke(FFColors.gray700.opacity(0.5), lineWidth: 1)
+                        }
+                }
+
+                Spacer(minLength: FFSpacing.sm)
+
+                headerMenu
+            }
+
+            GeometryReader { geometry in
+                ZStack(alignment: .leading) {
+                    Capsule()
+                        .fill(FFColors.surface.opacity(0.55))
+                    Capsule()
+                        .fill(FFColors.primary)
+                        .frame(width: max(24, geometry.size.width * CGFloat(viewModel.currentExerciseIndex + 1) / CGFloat(max(1, viewModel.progressItems.count))))
+                }
+            }
+            .frame(height: 4)
+
+            HStack(spacing: FFSpacing.xs) {
+                SyncStatusIndicator(status: viewModel.syncStatus, compact: true)
+                if viewModel.pendingSyncCount > 0 {
+                    Text("\(viewModel.pendingSyncCount)")
+                        .font(FFTypography.caption.weight(.semibold))
+                        .foregroundStyle(FFColors.primary)
+                        .padding(.horizontal, FFSpacing.xs)
+                        .padding(.vertical, FFSpacing.xxs)
+                        .background(FFColors.primary.opacity(0.14))
+                        .clipShape(Capsule())
+                }
+                Spacer(minLength: 0)
+            }
+        }
+    }
+
+    private var headerMenu: some View {
+        Menu {
+            Button("Список упражнений", systemImage: "list.bullet") {
+                isJumpListPresented = true
+            }
+
+            Button("История", systemImage: "clock") {
+                viewModel.openHistory()
+            }
+
+            Button("Детали упражнения", systemImage: "info.circle") {
+                isExerciseDetailsPresented = true
+            }
+
+            if viewModel.canUseLastPerformance {
+                Button("Заполнить как в прошлый раз", systemImage: "arrow.down.circle.fill") {
+                    Task { await viewModel.useLastPerformance() }
+                }
+            }
+
+            if viewModel.canUseQuickCopyAction {
+                Button("Скопировать прошлый подход", systemImage: "doc.on.doc") {
+                    Task { await viewModel.copyPreviousSetQuickAction() }
+                }
+            }
+
+            Button("Отменить последнее действие", systemImage: "arrow.uturn.backward") {
+                Task { await viewModel.undoLastChange() }
+            }
+
+            if viewModel.canSkipCurrentExercise {
+                Button("Пропустить упражнение", systemImage: "forward.fill") {
+                    Task { await viewModel.skipExercise() }
+                }
+            }
+
+            Divider()
+
+            Button("Добавить упражнение", systemImage: "plus.rectangle.on.rectangle") {
+                viewModel.presentAddExerciseFlow()
+            }
+
+            Button("Заменить текущее", systemImage: "arrow.triangle.2.circlepath") {
+                viewModel.presentReplaceCurrentExerciseFlow()
+            }
+
+            Button("Завершить раньше", systemImage: "flag.checkered", role: .destructive) {
+                viewModel.isFinishEarlyConfirmationPresented = true
+            }
+        } label: {
+            Image(systemName: "ellipsis")
+                .font(.system(size: 18, weight: .bold))
+                .foregroundStyle(FFColors.textPrimary)
+                .frame(width: 40, height: 40)
+                .background(FFColors.surface.opacity(0.72))
+                .clipShape(RoundedRectangle(cornerRadius: 14))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 14)
+                        .stroke(FFColors.gray700.opacity(0.6), lineWidth: 1)
+                }
         }
     }
 
@@ -2244,51 +2396,24 @@ struct WorkoutPlayerViewV2: View {
     }
 
     private var exerciseCard: some View {
-        FFCard {
+        VStack(alignment: .leading, spacing: FFSpacing.sm) {
             if let exercise = viewModel.currentExercise {
-                VStack(alignment: .leading, spacing: FFSpacing.sm) {
-                    Text(exercise.name)
-                        .font(.system(size: 28, weight: .bold, design: .rounded))
-                        .foregroundStyle(FFColors.textPrimary)
-                        .lineLimit(3)
-                        .fixedSize(horizontal: false, vertical: true)
+                Text("УПРАЖНЕНИЕ")
+                    .font(FFTypography.caption.weight(.bold))
+                    .kerning(1.1)
+                    .foregroundStyle(FFColors.primary)
 
-                    if !viewModel.currentLastSets.isEmpty {
-                        lastTimeBlock(lines: viewModel.currentLastSets)
-                    }
+                Text(exercise.name)
+                    .font(.system(size: 32, weight: .bold, design: .rounded))
+                    .foregroundStyle(FFColors.textPrimary)
+                    .lineLimit(3)
+                    .fixedSize(horizontal: false, vertical: true)
 
-                    Text(prescription(for: exercise))
-                        .font(FFTypography.body)
+                if let last = viewModel.currentLastTimeText ?? viewModel.currentLastSets.first {
+                    Text("Прошлый раз: \(last)")
+                        .font(FFTypography.body.weight(.semibold))
                         .foregroundStyle(FFColors.textSecondary)
-
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: FFSpacing.xs) {
-                            if let prText = viewModel.currentPRText {
-                                ExerciseInsightPill(
-                                    title: "Рекорд",
-                                    value: prText,
-                                    systemImage: "bolt.fill",
-                                    tint: FFColors.accent,
-                                )
-                            }
-                        }
-                    }
-
-                    HStack(spacing: FFSpacing.xs) {
-                        compactActionButton(title: "Детали", systemImage: "info.circle") {
-                            isExerciseDetailsPresented = true
-                        }
-
-                        if viewModel.canUseLastPerformance {
-                            compactActionButton(title: "Заполнить как в прошлый раз", systemImage: "arrow.down.circle.fill") {
-                                Task { await viewModel.useLastPerformance() }
-                            }
-                        }
-
-                        compactActionButton(title: "История", systemImage: "clock") {
-                            viewModel.openHistory()
-                        }
-                    }
+                        .lineLimit(1)
                 }
             }
         }
@@ -2312,20 +2437,27 @@ struct WorkoutPlayerViewV2: View {
     }
 
     private var setsCard: some View {
-        FFCard {
-            VStack(alignment: .leading, spacing: FFSpacing.sm) {
-                Text("Подходы")
-                    .font(FFTypography.h2)
-                    .foregroundStyle(FFColors.textPrimary)
-                Text(
-                    viewModel.currentExerciseIsBodyweight
-                        ? "Это упражнение с собственным весом, поэтому вводить вес не нужно."
-                        : "Тапните по весу или повторам, чтобы ввести число напрямую. +/- оставлены для быстрых поправок.",
-                )
-                    .font(FFTypography.caption)
-                    .foregroundStyle(FFColors.textSecondary)
+        VStack(alignment: .leading, spacing: FFSpacing.sm) {
+            HStack(spacing: FFSpacing.sm) {
+                Text("ПДХ")
+                    .frame(width: 44, alignment: .leading)
 
-                if let exerciseState = viewModel.currentExerciseState {
+                if !viewModel.currentExerciseIsBodyweight {
+                    Text("ВЕС (КГ)")
+                        .frame(maxWidth: .infinity, alignment: .center)
+                }
+
+                Text("ПОВТ")
+                    .frame(maxWidth: .infinity, alignment: .center)
+
+                Spacer(minLength: 44)
+            }
+            .font(FFTypography.caption.weight(.bold))
+            .foregroundStyle(FFColors.textSecondary)
+            .padding(.horizontal, FFSpacing.sm)
+
+            if let exerciseState = viewModel.currentExerciseState {
+                VStack(spacing: FFSpacing.sm) {
                     ForEach(Array(exerciseState.sets.enumerated()), id: \.offset) { index, set in
                         WorkoutSetRowView(
                             index: index,
@@ -2334,7 +2466,7 @@ struct WorkoutPlayerViewV2: View {
                             showsCopyAction: viewModel.canCopyPreviousSet(setIndex: index),
                             weightStepLabel: viewModel.weightStepLabel,
                             isFocused: viewModel.focusedSetIndex == index,
-                            showsRPE: viewModel.showsRPEControl,
+                            showsRPE: viewModel.showsRPEControl && viewModel.focusedSetIndex == index,
                             targetRPE: viewModel.currentExercise?.targetRpe,
                             canRemove: viewModel.canRemoveSet(setIndex: index),
                             onToggleComplete: { Task { await viewModel.toggleSetComplete(setIndex: index) } },
@@ -2358,13 +2490,13 @@ struct WorkoutPlayerViewV2: View {
                         .id(setRowID(index))
                     }
                 }
-
-                WorkoutSetListActionsView(
-                    canDuplicateLastSet: viewModel.canDuplicateLastSet,
-                    onAddSet: { Task { await viewModel.addSet(duplicateLast: false) } },
-                    onDuplicateLastSet: { Task { await viewModel.addSet(duplicateLast: true) } },
-                )
             }
+
+            WorkoutSetListActionsView(
+                canDuplicateLastSet: viewModel.canDuplicateLastSet,
+                onAddSet: { Task { await viewModel.addSet(duplicateLast: false) } },
+                onDuplicateLastSet: { Task { await viewModel.addSet(duplicateLast: true) } },
+            )
         }
     }
 
@@ -2395,59 +2527,15 @@ struct WorkoutPlayerViewV2: View {
     }
 
     private var bottomBar: some View {
-        FFCard(padding: FFSpacing.sm) {
-            VStack(spacing: FFSpacing.xs) {
-                QuickActionsBar(
-                    showsCopyAction: viewModel.canUseQuickCopyAction,
-                    showsSkipAction: viewModel.canSkipCurrentExercise,
-                    copyTitle: "Скопировать",
-                    copySubtitle: viewModel.quickActionSetTitle,
-                    onCopy: { Task { await viewModel.copyPreviousSetQuickAction() } },
-                    onSkipExercise: { Task { await viewModel.skipExercise() } },
-                    onUndo: { Task { await viewModel.undoLastChange() } },
-                )
-
-                HStack(spacing: FFSpacing.xs) {
-                    Menu {
-                        Button("Добавить упражнение", systemImage: "plus.rectangle.on.rectangle") {
-                            viewModel.presentAddExerciseFlow()
-                        }
-
-                        Button("Заменить текущее", systemImage: "arrow.triangle.2.circlepath") {
-                            viewModel.presentReplaceCurrentExerciseFlow()
-                        }
-
-                        Button("Завершить раньше", systemImage: "flag.checkered", role: .destructive) {
-                            viewModel.isFinishEarlyConfirmationPresented = true
-                        }
-                    } label: {
-                        HStack(spacing: FFSpacing.xxs) {
-                            Image(systemName: "ellipsis.circle")
-                            Text("Ещё")
-                        }
-                        .font(FFTypography.caption.weight(.semibold))
-                        .foregroundStyle(FFColors.textPrimary)
-                        .frame(maxWidth: .infinity, minHeight: 44)
-                        .background(FFColors.surface)
-                        .clipShape(RoundedRectangle(cornerRadius: FFTheme.Radius.control))
-                        .overlay {
-                            RoundedRectangle(cornerRadius: FFTheme.Radius.control)
-                                .stroke(FFColors.gray700, lineWidth: 1)
-                        }
-                    }
-                }
-
-                bottomActionButton(title: viewModel.primaryBottomTitle, variant: .primary) {
-                    Task { await viewModel.primaryBottomAction() }
-                }
-                .disabled(!viewModel.isPrimaryBottomActionEnabled)
-                .opacity(viewModel.isPrimaryBottomActionEnabled ? 1 : 0.55)
-            }
+        bottomActionButton(title: viewModel.primaryBottomTitle, variant: .primary) {
+            Task { await viewModel.primaryBottomAction() }
         }
+        .disabled(!viewModel.isPrimaryBottomActionEnabled)
+        .opacity(viewModel.isPrimaryBottomActionEnabled ? 1 : 0.55)
         .padding(.horizontal, FFSpacing.md)
         .padding(.top, FFSpacing.xs)
         .padding(.bottom, FFSpacing.sm)
-        .background(FFColors.background.opacity(0.96))
+        .background(.ultraThinMaterial)
     }
 
     private func setRowID(_ index: Int) -> String {
@@ -2519,18 +2607,23 @@ struct WorkoutPlayerViewV2: View {
     ) -> some View {
         Button(action: action) {
             Text(title)
-                .font(FFTypography.body.weight(.semibold))
-                .foregroundStyle(variant == .primary ? FFColors.background : FFColors.textPrimary)
+                .font(FFTypography.body.weight(.bold))
+                .kerning(0.8)
+                .foregroundStyle(variant == .primary ? Color.black : FFColors.textPrimary)
                 .multilineTextAlignment(.center)
                 .lineLimit(2)
                 .minimumScaleFactor(0.85)
-                .frame(maxWidth: .infinity, minHeight: 52)
+                .frame(maxWidth: .infinity, minHeight: 64)
                 .padding(.horizontal, FFSpacing.sm)
-                .background(variant == .primary ? FFColors.primary : FFColors.surface)
-                .clipShape(RoundedRectangle(cornerRadius: FFTheme.Radius.control))
+                .background(
+                    variant == .primary
+                        ? LinearGradient(colors: [Color.white, Color.white.opacity(0.92)], startPoint: .top, endPoint: .bottom)
+                        : LinearGradient(colors: [FFColors.surface, FFColors.surface], startPoint: .top, endPoint: .bottom)
+                )
+                .clipShape(RoundedRectangle(cornerRadius: 22))
                 .overlay {
                     if variant == .secondary {
-                        RoundedRectangle(cornerRadius: FFTheme.Radius.control)
+                        RoundedRectangle(cornerRadius: 22)
                             .stroke(FFColors.gray700, lineWidth: 1)
                     }
                 }

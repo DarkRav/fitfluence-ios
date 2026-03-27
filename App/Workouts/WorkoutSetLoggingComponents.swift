@@ -152,43 +152,26 @@ struct WorkoutSetRowView: View {
     let onSelectRPE: (Int?) -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: FFSpacing.sm) {
-            HStack(spacing: FFSpacing.xs) {
-                Button(action: onToggleComplete) {
-                    Image(systemName: set.isCompleted ? "checkmark.circle.fill" : "circle")
-                        .font(.system(size: 22, weight: .semibold))
-                        .foregroundStyle(set.isCompleted ? FFColors.accent : FFColors.textSecondary)
-                        .frame(width: 44, height: 44)
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Отметить подход \(index + 1) выполненным")
-
-                Text("Подход \(index + 1)")
-                    .font(FFTypography.body.weight(.semibold))
-                    .foregroundStyle(FFColors.textPrimary)
-
-                Spacer(minLength: FFSpacing.xs)
-
-                if set.isCompleted {
-                    completedSetBadge
-                }
-
-                if showsCopyAction {
-                    Button("Копировать") {
-                        onCopy()
-                    }
-                    .font(FFTypography.caption.weight(.semibold))
-                    .foregroundStyle(FFColors.accent)
-                    .frame(minHeight: 44)
-                }
-            }
-
+        VStack(alignment: .leading, spacing: showsRPE ? FFSpacing.xs : 0) {
             HStack(spacing: FFSpacing.sm) {
+                HStack(spacing: FFSpacing.xxs) {
+                    Text("\(index + 1)")
+                        .font(.system(size: 24, weight: .bold, design: .rounded))
+                        .foregroundStyle(isFocused ? FFColors.primary : FFColors.textSecondary)
+
+                    if set.isWarmup {
+                        Text("R")
+                            .font(FFTypography.caption.weight(.bold))
+                            .foregroundStyle(FFColors.primary)
+                    }
+                }
+                .frame(width: 44, alignment: .leading)
+
                 if !isBodyweight {
                     WorkoutSetMetricInput(
                         title: "Вес",
                         valueText: set.weightText,
-                        placeholder: "кг",
+                        placeholder: "—",
                         keyboardType: .decimalPad,
                         stepText: weightStepLabel,
                         kind: .weight,
@@ -201,7 +184,7 @@ struct WorkoutSetRowView: View {
                 WorkoutSetMetricInput(
                     title: "Повторы",
                     valueText: set.repsText,
-                    placeholder: "повт",
+                    placeholder: "—",
                     keyboardType: .numberPad,
                     stepText: "1",
                     kind: .reps,
@@ -209,6 +192,24 @@ struct WorkoutSetRowView: View {
                     onMinus: onDecreaseReps,
                     onPlus: onIncreaseReps,
                 )
+
+                Button(action: onToggleComplete) {
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 14)
+                            .stroke(checkboxBorderColor, lineWidth: 2)
+                            .frame(width: 40, height: 40)
+                        if set.isCompleted {
+                            RoundedRectangle(cornerRadius: 14)
+                                .fill(Color.white.opacity(0.38))
+                                .frame(width: 40, height: 40)
+                            Image(systemName: "checkmark")
+                                .font(.system(size: 16, weight: .bold))
+                                .foregroundStyle(Color.black)
+                        }
+                    }
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Отметить подход \(index + 1) выполненным")
             }
 
             if showsRPE {
@@ -218,57 +219,54 @@ struct WorkoutSetRowView: View {
                     onSelect: onSelectRPE,
                 )
             }
-
-            HStack(spacing: FFSpacing.xs) {
-                Button(action: onToggleWarmup) {
-                    Text(set.isWarmup ? "Разминочный подход" : "Отметить разминкой")
-                        .font(FFTypography.caption.weight(.semibold))
-                        .foregroundStyle(set.isWarmup ? FFColors.background : FFColors.textPrimary)
-                        .padding(.horizontal, FFSpacing.sm)
-                        .padding(.vertical, FFSpacing.xs)
-                        .background(set.isWarmup ? FFColors.primary : FFColors.background.opacity(0.35))
-                        .clipShape(Capsule())
-                        .overlay {
-                            Capsule()
-                                .stroke(set.isWarmup ? FFColors.primary : FFColors.gray700, lineWidth: 1)
-                        }
+        }
+        .padding(.horizontal, FFSpacing.sm)
+        .padding(.vertical, 14)
+        .background(rowBackground)
+        .clipShape(RoundedRectangle(cornerRadius: 22))
+        .overlay {
+            RoundedRectangle(cornerRadius: 22)
+                .stroke(rowBorder, lineWidth: isFocused ? 1.5 : 1)
+        }
+        .opacity(set.isCompleted ? 0.76 : 1)
+        .contextMenu {
+            if showsCopyAction {
+                Button("Скопировать прошлый подход", systemImage: "doc.on.doc") {
+                    onCopy()
                 }
-                .buttonStyle(.plain)
+            }
 
-                Spacer(minLength: FFSpacing.xs)
+            Button(set.isWarmup ? "Сделать рабочим" : "Отметить разминкой", systemImage: "flame") {
+                onToggleWarmup()
+            }
 
-                if canRemove {
-                    Button("Удалить") {
-                        onRemove()
-                    }
-                    .font(FFTypography.caption.weight(.semibold))
-                    .foregroundStyle(FFColors.danger)
-                    .padding(.horizontal, FFSpacing.sm)
-                    .padding(.vertical, FFSpacing.xs)
-                    .background(FFColors.danger.opacity(0.12))
-                    .clipShape(Capsule())
+            if canRemove {
+                Button("Удалить подход", systemImage: "trash", role: .destructive) {
+                    onRemove()
                 }
             }
         }
-        .padding(FFSpacing.sm)
-        .background(FFColors.surface)
-        .clipShape(RoundedRectangle(cornerRadius: FFTheme.Radius.control))
-        .overlay {
-            RoundedRectangle(cornerRadius: FFTheme.Radius.control)
-                .stroke(isFocused ? FFColors.primary : FFColors.gray700, lineWidth: isFocused ? 1.6 : 1)
-        }
     }
 
-    private var completedSetBadge: some View {
-        Text("Завершен")
-            .font(FFTypography.caption.weight(.semibold))
-            .lineLimit(1)
-            .foregroundStyle(FFColors.background)
-            .padding(.horizontal, FFSpacing.sm)
-            .padding(.vertical, FFSpacing.xs)
-            .background(FFColors.primary)
-            .clipShape(Capsule())
-            .fixedSize(horizontal: true, vertical: false)
+    private var rowBackground: some ShapeStyle {
+        if isFocused {
+            return FFColors.surface.opacity(0.92)
+        }
+        return FFColors.surface.opacity(0.76)
+    }
+
+    private var rowBorder: Color {
+        if isFocused {
+            return FFColors.primary.opacity(0.65)
+        }
+        return FFColors.gray700.opacity(0.55)
+    }
+
+    private var checkboxBorderColor: Color {
+        if set.isCompleted {
+            return Color.clear
+        }
+        return isFocused ? FFColors.primary : FFColors.gray700.opacity(0.9)
     }
 }
 
@@ -315,67 +313,55 @@ private struct WorkoutSetMetricInput: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: FFSpacing.xxs) {
-            Text(title)
-                .font(FFTypography.caption)
-                .foregroundStyle(FFColors.textSecondary)
+        HStack(spacing: FFSpacing.xs) {
+            stepControlButton(
+                systemName: "minus",
+                accessibilityLabel: "Уменьшить \(title.lowercased())",
+                action: onMinus,
+            )
 
-            HStack(spacing: FFSpacing.xs) {
-                stepControlButton(
-                    systemName: "minus",
-                    accessibilityLabel: "Уменьшить \(title.lowercased())",
-                    action: onMinus,
-                )
+            ZStack {
+                RoundedRectangle(cornerRadius: 16)
+                    .fill(FFColors.background.opacity(0.36))
+                RoundedRectangle(cornerRadius: 16)
+                    .stroke(isFocused ? FFColors.primary.opacity(0.6) : Color.clear, lineWidth: 1.5)
 
-                ZStack {
-                    RoundedRectangle(cornerRadius: FFTheme.Radius.control)
-                        .fill(FFColors.background.opacity(0.4))
-                    RoundedRectangle(cornerRadius: FFTheme.Radius.control)
-                        .stroke(isFocused ? FFColors.primary : FFColors.gray700, lineWidth: isFocused ? 1.6 : 1)
-
-                    if isFocused {
-                        TextField(
-                            "",
-                            text: $draftText,
-                            prompt: Text(placeholder).foregroundStyle(FFColors.gray500),
-                        )
-                        .keyboardType(keyboardType)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                        .multilineTextAlignment(.center)
-                        .font(FFTypography.body.weight(.semibold))
-                        .foregroundStyle(FFColors.textPrimary)
-                        .padding(.horizontal, FFSpacing.sm)
-                        .frame(maxWidth: .infinity, minHeight: 44)
-                        .focused($isFocused)
-                    } else {
-                        Button(action: beginEditing) {
-                            Text(displayText)
-                                .font(FFTypography.body.weight(.semibold))
-                                .foregroundStyle(valueText.isEmpty ? FFColors.textSecondary : FFColors.textPrimary)
-                                .lineLimit(1)
-                                .minimumScaleFactor(0.8)
-                                .frame(maxWidth: .infinity, minHeight: 44)
-                        }
-                        .buttonStyle(.plain)
-                        .accessibilityLabel("Редактировать \(title.lowercased()) для подхода")
+                if isFocused {
+                    TextField(
+                        "",
+                        text: $draftText,
+                        prompt: Text(placeholder).foregroundStyle(FFColors.gray500),
+                    )
+                    .keyboardType(keyboardType)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .multilineTextAlignment(.center)
+                    .font(.system(size: 26, weight: .bold, design: .rounded))
+                    .foregroundStyle(FFColors.textPrimary)
+                    .padding(.horizontal, FFSpacing.xs)
+                    .frame(maxWidth: .infinity, minHeight: 68)
+                    .focused($isFocused)
+                } else {
+                    Button(action: beginEditing) {
+                        Text(displayText)
+                            .font(.system(size: 34, weight: .bold, design: .rounded))
+                            .foregroundStyle(valueText.isEmpty ? FFColors.textSecondary : FFColors.textPrimary)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.7)
+                            .frame(maxWidth: .infinity, minHeight: 68)
                     }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Редактировать \(title.lowercased()) для подхода")
                 }
-
-                stepControlButton(
-                    systemName: "plus",
-                    accessibilityLabel: "Увеличить \(title.lowercased())",
-                    action: onPlus,
-                )
             }
 
-            Text("Тап для ввода • шаг \(stepText)")
-                .font(FFTypography.caption)
-                .foregroundStyle(FFColors.textSecondary)
-                .frame(maxWidth: .infinity, alignment: .center)
-                .multilineTextAlignment(.center)
+            stepControlButton(
+                systemName: "plus",
+                accessibilityLabel: "Увеличить \(title.lowercased())",
+                action: onPlus,
+            )
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(maxWidth: .infinity)
         .onChange(of: valueText) { _, newValue in
             if !isFocused {
                 draftText = newValue
@@ -440,11 +426,9 @@ private struct WorkoutSetMetricInput: View {
     ) -> some View {
         Button(action: action) {
             Image(systemName: systemName)
-                .font(.system(size: 16, weight: .bold))
-                .foregroundStyle(FFColors.textPrimary)
-                .frame(width: 44, height: 44)
-                .background(FFColors.gray700)
-                .clipShape(RoundedRectangle(cornerRadius: FFTheme.Radius.control))
+                .font(.system(size: 18, weight: .bold))
+                .foregroundStyle(FFColors.textSecondary)
+                .frame(width: 28, height: 28)
         }
         .buttonStyle(.plain)
         .accessibilityLabel(accessibilityLabel)

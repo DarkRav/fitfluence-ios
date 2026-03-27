@@ -372,10 +372,10 @@ struct TemplateLibraryView: View {
                 } else {
                     ForEach(viewModel.templates) { template in
                         VStack(alignment: .leading, spacing: FFSpacing.xs) {
-                            Button {
-                                detailsRoute = TemplateDetailsRoute(template: template, isMine: true)
-                            } label: {
-                                HStack {
+                            HStack(spacing: FFSpacing.sm) {
+                                Button {
+                                    detailsRoute = TemplateDetailsRoute(template: template, isMine: true)
+                                } label: {
                                     VStack(alignment: .leading, spacing: FFSpacing.xxs) {
                                         Text(template.name)
                                             .font(FFTypography.body.weight(.semibold))
@@ -384,22 +384,39 @@ struct TemplateLibraryView: View {
                                             .font(FFTypography.caption)
                                             .foregroundStyle(FFColors.textSecondary)
                                     }
-                                    Spacer()
-                                    Image(systemName: "chevron.right")
-                                        .foregroundStyle(FFColors.textSecondary)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .contentShape(Rectangle())
                                 }
-                                .contentShape(Rectangle())
-                            }
-                            .buttonStyle(.plain)
+                                .buttonStyle(.plain)
 
-                            HStack(spacing: FFSpacing.sm) {
-                                FFButton(title: "Старт", variant: .primary) {
-                                    onStartTemplate(viewModel.workout(for: template))
-                                    dismiss()
+                                Menu {
+                                    Button("Открыть") {
+                                        detailsRoute = TemplateDetailsRoute(template: template, isMine: true)
+                                    }
+                                    Button("Удалить", role: .destructive) {
+                                        Task { await viewModel.deleteTemplate(template.id) }
+                                    }
+                                } label: {
+                                    Image(systemName: "ellipsis")
+                                        .font(.system(size: 13, weight: .semibold))
+                                        .foregroundStyle(FFColors.textSecondary)
+                                        .frame(width: 32, height: 32)
+                                        .background(FFColors.background.opacity(0.35))
+                                        .clipShape(RoundedRectangle(cornerRadius: FFTheme.Radius.control))
                                 }
-                                FFButton(title: "Удалить", variant: .destructive) {
+                            }
+                            .contextMenu {
+                                Button("Открыть") {
+                                    detailsRoute = TemplateDetailsRoute(template: template, isMine: true)
+                                }
+                                Button("Удалить", role: .destructive) {
                                     Task { await viewModel.deleteTemplate(template.id) }
                                 }
+                            }
+
+                            FFButton(title: "Старт", variant: .primary) {
+                                onStartTemplate(viewModel.workout(for: template))
+                                dismiss()
                             }
                         }
                         if template.id != viewModel.templates.last?.id {

@@ -1347,6 +1347,7 @@ struct PlanScheduleScreen: View {
                     get: { scheduleTargetDay ?? defaultScheduleDate(for: viewModel.selectedDay) },
                     set: { scheduleTargetDay = $0 }
                 ),
+                selectedDay: viewModel.selectedDay,
                 hasLastWorkout: viewModel.lastRepeatableRecord != nil,
                 onClose: {
                     isScheduleDialogPresented = false
@@ -2348,6 +2349,7 @@ private enum PlanDateActionMode {
 
 private struct PlanScheduleConfigurationSheet: View {
     @Binding var scheduledAt: Date
+    let selectedDay: Date
     let hasLastWorkout: Bool
     let onClose: () -> Void
     let onQuickWorkout: () -> Void
@@ -2355,47 +2357,86 @@ private struct PlanScheduleConfigurationSheet: View {
     let onRepeatLast: () -> Void
 
     var body: some View {
-        NavigationStack {
-            ZStack {
-                FFColors.background.ignoresSafeArea()
+        ZStack(alignment: .top) {
+            FFColors.background.ignoresSafeArea()
+
+            ScrollView(showsIndicators: false) {
                 VStack(spacing: FFSpacing.md) {
-                    FFCard {
-                        VStack(alignment: .leading, spacing: FFSpacing.xs) {
-                            Text("Запланировать тренировку")
+                    HStack(alignment: .top, spacing: FFSpacing.sm) {
+                        VStack(alignment: .leading, spacing: FFSpacing.xxs) {
+                            Text("План на \(formattedDay)")
                                 .font(FFTypography.h2)
                                 .foregroundStyle(FFColors.textPrimary)
-                            Text("Дата и время: \(formattedDay)")
+                                .lineLimit(2)
+                                .fixedSize(horizontal: false, vertical: true)
+                            Text("Выберите время и добавьте тренировку в выбранный день.")
                                 .font(FFTypography.caption)
                                 .foregroundStyle(FFColors.textSecondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+
+                        Spacer(minLength: FFSpacing.sm)
+
+                        Button(action: onClose) {
+                            Image(systemName: "xmark")
+                                .font(.system(size: 14, weight: .semibold))
+                                .foregroundStyle(FFColors.textPrimary)
+                                .frame(width: 40, height: 40)
+                                .background(FFColors.surface)
+                                .clipShape(Circle())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Закрыть")
+                    }
+
+                    FFCard {
+                        VStack(alignment: .leading, spacing: FFSpacing.sm) {
+                            HStack(alignment: .center) {
+                                Text("Время")
+                                    .font(FFTypography.body.weight(.semibold))
+                                    .foregroundStyle(FFColors.textPrimary)
+                                Spacer()
+                                Text(formattedTime)
+                                    .font(FFTypography.body.weight(.semibold))
+                                    .foregroundStyle(FFColors.accent)
+                                    .padding(.horizontal, FFSpacing.sm)
+                                    .padding(.vertical, FFSpacing.xs)
+                                    .background(FFColors.accent.opacity(0.12))
+                                    .clipShape(Capsule())
+                            }
+
+                            HStack(spacing: FFSpacing.xs) {
+                                ForEach(timeOptions, id: \.label) { option in
+                                    timeChip(option: option)
+                                }
+                            }
+
+                            VStack(alignment: .leading, spacing: FFSpacing.xxs) {
+                                Text("Точное время")
+                                    .font(FFTypography.caption)
+                                    .foregroundStyle(FFColors.textSecondary)
+                                DatePicker(
+                                    "Время",
+                                    selection: $scheduledAt,
+                                    displayedComponents: .hourAndMinute
+                                )
+                                .labelsHidden()
+                                .datePickerStyle(.wheel)
+                                .frame(maxHeight: 140)
+                                .clipped()
+                                .colorScheme(.dark)
+                            }
                         }
                     }
 
                     FFCard {
                         VStack(alignment: .leading, spacing: FFSpacing.sm) {
-                            DatePicker(
-                                "Дата",
-                                selection: $scheduledAt,
-                                in: minimumSelectableDay...,
-                                displayedComponents: .date
-                            )
-                            .datePickerStyle(.graphical)
-                            .tint(FFColors.accent)
+                            Text("Что запланировать")
+                                .font(FFTypography.body.weight(.semibold))
+                                .foregroundStyle(FFColors.textPrimary)
 
-                            DatePicker(
-                                "Время",
-                                selection: $scheduledAt,
-                                displayedComponents: .hourAndMinute
-                            )
-                            .datePickerStyle(.wheel)
-                            .labelsHidden()
-                            .frame(maxHeight: 110)
-                        }
-                    }
-
-                    FFCard {
-                        VStack(spacing: FFSpacing.sm) {
                             FFButton(title: "Быстрая тренировка", variant: .primary, action: onQuickWorkout)
-                            FFButton(title: "Выбрать из шаблона", variant: .secondary, action: onTemplate)
+                            FFButton(title: "Шаблон", variant: .secondary, action: onTemplate)
                             if hasLastWorkout {
                                 FFButton(title: "Повторить последнюю", variant: .secondary, action: onRepeatLast)
                             }
@@ -2403,29 +2444,90 @@ private struct PlanScheduleConfigurationSheet: View {
                     }
                 }
                 .padding(.horizontal, FFSpacing.md)
-                .padding(.vertical, FFSpacing.md)
-            }
-            .navigationTitle("Конфигурация")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button(action: onClose) {
-                        Image(systemName: "xmark")
-                            .font(.system(size: 14, weight: .semibold))
-                    }
-                    .accessibilityLabel("Закрыть")
-                }
+                .padding(.top, FFSpacing.lg)
+                .padding(.bottom, FFSpacing.lg)
             }
         }
-        .presentationDetents([.medium])
+        .presentationDetents([.fraction(0.72), .large])
     }
 
     private var formattedDay: String {
-        scheduledAt.formatted(date: .abbreviated, time: .shortened)
+        selectedDay.formatted(
+            Date.FormatStyle()
+                .day(.defaultDigits)
+                .month(.abbreviated)
+                .year()
+        )
     }
 
-    private var minimumSelectableDay: Date {
-        Calendar.current.startOfDay(for: Date())
+    private var formattedTime: String {
+        scheduledAt.formatted(date: .omitted, time: .shortened)
+    }
+
+    private var timeOptions: [TimeOption] {
+        let hourValues: [Int]
+        let calendar = Calendar.current
+        if calendar.isDateInToday(selectedDay) {
+            let rounded = roundedCurrentHour(calendar: calendar)
+            hourValues = Array(Set([rounded, max(rounded + 2, 18), 20])).sorted()
+        } else {
+            hourValues = [7, 12, 18]
+        }
+
+        return hourValues.map { hour in
+            TimeOption(
+                label: String(format: "%02d:00", hour),
+                date: applyingTime(hour: hour, minute: 0)
+            )
+        }
+    }
+
+    private func timeChip(option: TimeOption) -> some View {
+        let isSelected = Calendar.current.component(.hour, from: scheduledAt) == Calendar.current.component(.hour, from: option.date)
+            && Calendar.current.component(.minute, from: scheduledAt) == Calendar.current.component(.minute, from: option.date)
+
+        return Button {
+            scheduledAt = option.date
+        } label: {
+            Text(option.label)
+                .font(FFTypography.caption.weight(.semibold))
+                .foregroundStyle(isSelected ? FFColors.background : FFColors.textPrimary)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, FFSpacing.sm)
+                .background(isSelected ? FFColors.accent : FFColors.surface)
+                .clipShape(RoundedRectangle(cornerRadius: FFTheme.Radius.control))
+                .overlay {
+                    RoundedRectangle(cornerRadius: FFTheme.Radius.control)
+                        .stroke(isSelected ? FFColors.accent : FFColors.gray700, lineWidth: 1)
+                }
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func applyingTime(hour: Int, minute: Int) -> Date {
+        let calendar = Calendar.current
+        let dayComponents = calendar.dateComponents([.year, .month, .day], from: selectedDay)
+        return calendar.date(
+            from: DateComponents(
+                year: dayComponents.year,
+                month: dayComponents.month,
+                day: dayComponents.day,
+                hour: hour,
+                minute: minute
+            )
+        ) ?? scheduledAt
+    }
+
+    private func roundedCurrentHour(calendar: Calendar) -> Int {
+        let components = calendar.dateComponents([.hour, .minute], from: Date())
+        let hour = components.hour ?? 18
+        let minute = components.minute ?? 0
+        return minute > 0 ? min(hour + 1, 22) : hour
+    }
+
+    private struct TimeOption {
+        let label: String
+        let date: Date
     }
 }
 

@@ -481,6 +481,11 @@ struct WorkoutSessionState: Equatable, Sendable {
     }
 }
 
+enum WorkoutSessionLoadResult: Equatable, Sendable {
+    case session(WorkoutSessionState)
+    case blockedByActiveSession(ActiveWorkoutSession)
+}
+
 enum SessionUndoAction: Equatable, Sendable {
     case toggleComplete(exerciseId: String, setIndex: Int, previous: Bool)
     case updateReps(exerciseId: String, setIndex: Int, previous: String)
@@ -527,11 +532,17 @@ actor WorkoutSessionManager {
         programId: String,
         workout: WorkoutDetailsModel,
         source: WorkoutSource = .program,
-    ) async -> WorkoutSessionState {
+    ) async -> WorkoutSessionLoadResult {
         let key = sessionKey(userSub: userSub, programId: programId, workoutId: workout.id)
 
         if let snapshot = await progressStore.load(userSub: userSub, programId: programId, workoutId: workout.id) {
-            return sessionState(from: snapshot, workout: workout)
+            return .session(sessionState(from: snapshot, workout: workout))
+        }
+
+        if let activeSession = await progressStore.latestActiveSession(userSub: userSub),
+           activeSession.programId != programId || activeSession.workoutId != workout.id
+        {
+            return .blockedByActiveSession(activeSession)
         }
 
         let session = WorkoutSessionState(
@@ -564,7 +575,7 @@ actor WorkoutSessionManager {
         )
         undoStacks[key] = []
         await autosave(session)
-        return session
+        return .session(session)
     }
 
     func toggleSetComplete(

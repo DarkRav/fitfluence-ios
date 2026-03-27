@@ -38,6 +38,19 @@ enum ExerciseCatalogItemSource: String, Codable, Equatable, Sendable {
     case workoutPayload
 }
 
+enum ExerciseBodyweightResolver {
+    static func resolve(
+        isBodyweight: Bool?,
+        equipmentCategories: [ExerciseCatalogEquipmentCategory] = [],
+    ) -> Bool {
+        if let isBodyweight {
+            return isBodyweight
+        }
+
+        return equipmentCategories.contains(.bodyweight)
+    }
+}
+
 struct ExerciseCatalogDraftDefaults: Codable, Equatable, Sendable {
     let sets: Int
     let repsMin: Int?
@@ -101,6 +114,15 @@ struct ExerciseCatalogItem: Codable, Equatable, Sendable, Identifiable {
     let media: [ContentMedia]
     let source: ExerciseCatalogItemSource
     let draftDefaults: ExerciseCatalogDraftDefaults?
+}
+
+extension ExerciseCatalogItem {
+    var resolvedIsBodyweight: Bool {
+        ExerciseBodyweightResolver.resolve(
+            isBodyweight: isBodyweight,
+            equipmentCategories: equipment.compactMap(\.category),
+        )
+    }
 }
 
 struct ExerciseCatalogMetadata: Equatable, Sendable {

@@ -552,12 +552,18 @@ func resolveRepeatWorkoutTarget(
     for record: CompletedWorkoutRecord,
     progressStore: any WorkoutProgressStore = LocalWorkoutProgressStore(),
     templateFallback: RepeatWorkoutTemplateFallback,
+    preferredWorkout: WorkoutDetailsModel? = nil,
 ) async -> RepeatWorkoutNavigationTarget {
-    let storedWorkout = await progressStore.load(
-        userSub: record.userSub,
-        programId: record.programId,
-        workoutId: record.workoutId
-    )?.workoutDetails
+    let storedWorkout: WorkoutDetailsModel?
+    if let preferredWorkout {
+        storedWorkout = preferredWorkout
+    } else {
+        storedWorkout = await progressStore.load(
+            userSub: record.userSub,
+            programId: record.programId,
+            workoutId: record.workoutId
+        )?.workoutDetails
+    }
 
     switch record.source {
     case .program:
@@ -674,9 +680,9 @@ private struct PlanTabContent: View {
         .navigationDestination(item: $recentWorkoutDetailsRoute) { route in
             RecentWorkoutDetailsView(
                 record: route.record,
-                onRepeat: {
+                onRepeat: { workout in
                     Task {
-                        await openRepeatWorkout(route.record)
+                        await openRepeatWorkout(route.record, preferredWorkout: workout)
                     }
                 }
             )
@@ -696,8 +702,12 @@ private struct PlanTabContent: View {
         }
     }
 
-    private func openRepeatWorkout(_ record: CompletedWorkoutRecord) async {
-        switch await resolveRepeatWorkoutTarget(for: record, templateFallback: .quickBuilder) {
+    private func openRepeatWorkout(_ record: CompletedWorkoutRecord, preferredWorkout: WorkoutDetailsModel? = nil) async {
+        switch await resolveRepeatWorkoutTarget(
+            for: record,
+            templateFallback: .quickBuilder,
+            preferredWorkout: preferredWorkout,
+        ) {
         case let .program(route):
             programWorkoutRoute = route
         case let .preset(route):
@@ -731,6 +741,7 @@ private struct PlanTabContent: View {
             presentBuiltWorkout(workout)
         }
     }
+
 }
 
 private struct CatalogTabContent: View {
@@ -980,6 +991,7 @@ struct WorkoutLaunchView: View {
     @State private var executionContext: WorkoutExecutionContext?
     @State private var workoutSummary: WorkoutSummaryState?
     @State private var nextWorkoutRoute: NextWorkoutRoute?
+    @State private var conflictingSessionRoute: ActiveWorkoutSession?
     @State private var resolvedSource: WorkoutSource?
     @Environment(\.dismiss) private var dismiss
 
@@ -1045,6 +1057,12 @@ struct WorkoutLaunchView: View {
                     onFinish: { summary in
                         Task { await handleCompletion(summary) }
                     },
+                    onResumeExisting: { session in
+                        conflictingSessionRoute = session
+                    },
+                    onBlockedBack: {
+                        dismiss()
+                    }
                 )
             } else if let error {
                 FFErrorState(
@@ -1065,6 +1083,17 @@ struct WorkoutLaunchView: View {
         .navigationBarTitleDisplayMode(.inline)
         .task {
             await load()
+        }
+        .navigationDestination(item: $conflictingSessionRoute) { session in
+            WorkoutLaunchView(
+                userSub: session.userSub,
+                programId: session.programId,
+                workoutId: session.workoutId,
+                apiClient: apiClient,
+                source: session.source,
+                onBackToWorkoutHub: onBackToWorkoutHub,
+                onOpenPlan: onOpenPlan,
+            )
         }
         .alert("Завершить тренировку?", isPresented: $isExitConfirmationPresented) {
             Button("Продолжить тренировку", role: .cancel) {}
@@ -2150,9 +2179,9 @@ private struct TrainingTabContent: View {
         .navigationDestination(item: $recentWorkoutDetailsRoute) { route in
             RecentWorkoutDetailsView(
                 record: route.record,
-                onRepeat: {
+                onRepeat: { workout in
                     Task {
-                        await openRepeatWorkout(route.record)
+                        await openRepeatWorkout(route.record, preferredWorkout: workout)
                     }
                 },
             )
@@ -2210,8 +2239,12 @@ private struct TrainingTabContent: View {
         onResumeHandled()
     }
 
-    private func openRepeatWorkout(_ record: CompletedWorkoutRecord) async {
-        switch await resolveRepeatWorkoutTarget(for: record, templateFallback: .templateLibrary) {
+    private func openRepeatWorkout(_ record: CompletedWorkoutRecord, preferredWorkout: WorkoutDetailsModel? = nil) async {
+        switch await resolveRepeatWorkoutTarget(
+            for: record,
+            templateFallback: .templateLibrary,
+            preferredWorkout: preferredWorkout,
+        ) {
         case let .program(route):
             programWorkoutRoute = route
         case let .preset(route):

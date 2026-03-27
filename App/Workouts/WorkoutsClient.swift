@@ -132,7 +132,7 @@ struct WorkoutsClient: WorkoutsClientProtocol {
                         restSeconds: exercise.restSeconds,
                         notes: exercise.notes,
                         orderIndex: exercise.orderIndex ?? index,
-                        isBodyweight: exercise.exercise.isBodyweight ?? false,
+                        isBodyweight: exercise.exercise.resolvedIsBodyweight,
                         media: exercise.exercise.media,
                     )
                 }
@@ -170,6 +170,15 @@ struct WorkoutsClient: WorkoutsClientProtocol {
 private extension String {
     var nilIfEmpty: String? {
         isEmpty ? nil : self
+    }
+}
+
+private extension ExerciseSummary {
+    var resolvedIsBodyweight: Bool {
+        ExerciseBodyweightResolver.resolve(
+            isBodyweight: isBodyweight,
+            equipmentCategories: equipment?.compactMap(\.category) ?? [],
+        )
     }
 }
 

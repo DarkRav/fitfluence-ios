@@ -78,7 +78,7 @@ struct WorkoutSetListActionsView: View {
     let onDuplicateLastSet: () -> Void
 
     var body: some View {
-        HStack(spacing: FFSpacing.xs) {
+        VStack(spacing: FFSpacing.xs) {
             listActionButton(
                 title: "Добавить подход",
                 systemImage: "plus.circle",
@@ -103,14 +103,14 @@ struct WorkoutSetListActionsView: View {
         Button(action: action) {
             Label(title, systemImage: systemImage)
                 .font(FFTypography.caption.weight(.semibold))
-                .foregroundStyle(FFColors.textPrimary)
+                .foregroundStyle(FFColors.textSecondary)
                 .frame(maxWidth: .infinity, minHeight: 44)
                 .padding(.horizontal, FFSpacing.sm)
-                .background(FFColors.background.opacity(0.4))
-                .clipShape(RoundedRectangle(cornerRadius: FFTheme.Radius.control))
+                .background(FFColors.background.opacity(0.22))
+                .clipShape(RoundedRectangle(cornerRadius: 18))
                 .overlay {
-                    RoundedRectangle(cornerRadius: FFTheme.Radius.control)
-                        .stroke(FFColors.gray700, lineWidth: 1)
+                    RoundedRectangle(cornerRadius: 18)
+                        .stroke(FFColors.gray700.opacity(0.45), lineWidth: 1)
                 }
         }
         .buttonStyle(.plain)
@@ -303,120 +303,62 @@ struct WorkoutRestTimerControlsView: View {
     let onRestartWithPreset: (Int) -> Void
 
     var body: some View {
-        FFCard(padding: FFSpacing.sm) {
-            VStack(alignment: .leading, spacing: FFSpacing.sm) {
-                ViewThatFits(in: .horizontal) {
-                    regularHeaderRow
-                    compactHeaderLayout
-                }
-
-                Text(detail)
-                    .font(FFTypography.caption)
-                    .foregroundStyle(FFColors.textSecondary)
-
-                if isExpanded {
-                    VStack(alignment: .leading, spacing: FFSpacing.xs) {
-                        Text("Быстрый отдых")
+        VStack(spacing: FFSpacing.xs) {
+            FFCard(padding: FFSpacing.sm) {
+                VStack(alignment: .leading, spacing: FFSpacing.xs) {
+                    HStack(spacing: FFSpacing.sm) {
+                        Button {
+                            withAnimation(.easeInOut(duration: 0.2)) {
+                                isExpanded.toggle()
+                            }
+                        } label: {
+                            HStack(spacing: FFSpacing.xxs) {
+                                Image(systemName: "timer")
+                                Text(title)
+                            }
                             .font(FFTypography.caption.weight(.semibold))
-                            .foregroundStyle(FFColors.textSecondary)
+                            .foregroundStyle(FFColors.textPrimary)
+                        }
+                        .buttonStyle(.plain)
 
+                        Spacer(minLength: FFSpacing.xs)
+
+                        Text(formattedTime(remainingSeconds))
+                            .font(.system(size: 22, weight: .bold, design: .rounded))
+                            .monospacedDigit()
+                            .foregroundStyle(FFColors.textPrimary)
+
+                        miniAction(title: "+15") { onAddTime(15) }
+                        miniAction(title: isRunning ? "Пауза" : "Старт") { onPauseResume() }
+                        miniAction(title: "Скип") { onSkip() }
+                    }
+
+                    Text(detail)
+                        .font(FFTypography.caption)
+                        .foregroundStyle(FFColors.textSecondary)
+                        .lineLimit(1)
+
+                    if isExpanded {
                         HStack(spacing: FFSpacing.xs) {
                             ForEach(presetSeconds, id: \.self) { value in
                                 timerChip(title: formattedPreset(value)) {
                                     onRestartWithPreset(value)
                                 }
                             }
-                        }
-
-                        HStack(spacing: FFSpacing.xs) {
-                            timerChip(title: "+15") { onAddTime(15) }
-                            timerChip(title: "+30") { onAddTime(30) }
-                            timerChip(title: "+60") { onAddTime(60) }
                             timerChip(title: "Сброс", action: onReset)
                             Spacer(minLength: 0)
                         }
+                        .transition(.move(edge: .top).combined(with: .opacity))
                     }
-                    .transition(.move(edge: .top).combined(with: .opacity))
                 }
             }
         }
         .padding(.horizontal, FFSpacing.md)
         .padding(.top, FFSpacing.xs)
-        .background(FFColors.background.opacity(0.96))
+        .background(Color.clear)
     }
 
-    private var regularHeaderRow: some View {
-        HStack(spacing: FFSpacing.xs) {
-            headerText
-
-            Spacer(minLength: FFSpacing.xs)
-
-            timeValue
-
-            capsuleButton(title: isRunning ? "Пауза" : "Продолжить", tint: FFColors.gray700, action: onPauseResume)
-            capsuleButton(title: "Пропустить", tint: FFColors.danger, action: onSkip)
-            expandButton
-        }
-    }
-
-    private var compactHeaderLayout: some View {
-        VStack(spacing: FFSpacing.xs) {
-            HStack(spacing: FFSpacing.xs) {
-                headerText
-                Spacer(minLength: FFSpacing.xs)
-                timeValue
-                expandButton
-            }
-
-            HStack(spacing: FFSpacing.xs) {
-                capsuleButton(title: isRunning ? "Пауза" : "Продолжить", tint: FFColors.gray700, action: onPauseResume)
-                capsuleButton(title: "Пропустить", tint: FFColors.danger, action: onSkip)
-            }
-        }
-    }
-
-    private var headerText: some View {
-        VStack(alignment: .leading, spacing: FFSpacing.xxs) {
-            Label(title, systemImage: "timer")
-                .font(FFTypography.caption.weight(.semibold))
-                .foregroundStyle(FFColors.textPrimary)
-                .lineLimit(1)
-            Text(isRunning ? "Таймер идёт" : "Таймер на паузе")
-                .font(FFTypography.caption)
-                .foregroundStyle(FFColors.textSecondary)
-        }
-    }
-
-    private var timeValue: some View {
-        Text(formattedTime(remainingSeconds))
-            .font(.system(size: 22, weight: .bold, design: .rounded))
-            .monospacedDigit()
-            .foregroundStyle(FFColors.textPrimary)
-            .lineLimit(1)
-            .fixedSize(horizontal: true, vertical: false)
-    }
-
-    private var expandButton: some View {
-        Button {
-            withAnimation(.easeInOut(duration: 0.2)) {
-                isExpanded.toggle()
-            }
-        } label: {
-            Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
-                .font(.system(size: 12, weight: .bold))
-                .foregroundStyle(FFColors.textSecondary)
-                .frame(width: 30, height: 30)
-                .background(FFColors.surface)
-                .clipShape(Circle())
-                .overlay {
-                    Circle()
-                        .stroke(FFColors.gray700, lineWidth: 1)
-                }
-        }
-        .buttonStyle(.plain)
-    }
-
-    private func capsuleButton(title: String, tint: Color, action: @escaping () -> Void) -> some View {
+    private func miniAction(title: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Text(title)
                 .font(FFTypography.caption.weight(.semibold))
@@ -424,9 +366,13 @@ struct WorkoutRestTimerControlsView: View {
                 .lineLimit(1)
                 .minimumScaleFactor(0.8)
                 .padding(.horizontal, FFSpacing.xs)
-                .frame(minHeight: 36)
-                .background(tint)
+                .frame(minHeight: 30)
+                .background(FFColors.surface)
                 .clipShape(Capsule())
+                .overlay {
+                    Capsule()
+                        .stroke(FFColors.gray700.opacity(0.5), lineWidth: 1)
+                }
         }
         .buttonStyle(.plain)
     }
@@ -468,49 +414,46 @@ struct WorkoutRestReadyView: View {
 
     var body: some View {
         FFCard(padding: FFSpacing.sm) {
-            VStack(alignment: .leading, spacing: FFSpacing.sm) {
-                HStack(spacing: FFSpacing.sm) {
-                    VStack(alignment: .leading, spacing: FFSpacing.xxs) {
-                        Label(title, systemImage: "figure.strengthtraining.traditional")
+            HStack(spacing: FFSpacing.sm) {
+                Label(title, systemImage: "checkmark.circle")
+                    .font(FFTypography.caption.weight(.semibold))
+                    .foregroundStyle(FFColors.textPrimary)
+
+                Spacer(minLength: FFSpacing.xs)
+
+                ForEach(presetSeconds, id: \.self) { value in
+                    Button {
+                        onAddTime(value)
+                    } label: {
+                        Text("+\(value)")
                             .font(FFTypography.caption.weight(.semibold))
                             .foregroundStyle(FFColors.textPrimary)
-                        Text(detail)
-                            .font(FFTypography.caption)
-                            .foregroundStyle(FFColors.textSecondary)
+                            .padding(.horizontal, FFSpacing.sm)
+                            .frame(minHeight: 30)
+                            .background(FFColors.surface)
+                            .clipShape(Capsule())
+                            .overlay {
+                                Capsule()
+                                    .stroke(FFColors.gray700.opacity(0.5), lineWidth: 1)
+                            }
                     }
-
-                    Spacer(minLength: FFSpacing.xs)
-
-                    Button("Скрыть", action: onDismiss)
-                        .font(FFTypography.caption.weight(.semibold))
-                        .foregroundStyle(FFColors.textSecondary)
+                    .buttonStyle(.plain)
                 }
 
-                HStack(spacing: FFSpacing.xs) {
-                    ForEach(presetSeconds, id: \.self) { value in
-                        Button {
-                            onAddTime(value)
-                        } label: {
-                            Text("+\(value) сек")
-                                .font(FFTypography.caption.weight(.semibold))
-                                .foregroundStyle(FFColors.textPrimary)
-                                .padding(.horizontal, FFSpacing.sm)
-                                .frame(minHeight: 34)
-                                .background(FFColors.surface)
-                                .clipShape(Capsule())
-                                .overlay {
-                                    Capsule()
-                                        .stroke(FFColors.gray700, lineWidth: 1)
-                                }
-                        }
-                        .buttonStyle(.plain)
-                    }
-                    Spacer(minLength: 0)
-                }
+                Button("Скрыть", action: onDismiss)
+                    .font(FFTypography.caption.weight(.semibold))
+                    .foregroundStyle(FFColors.textSecondary)
+            }
+
+            VStack(alignment: .leading, spacing: FFSpacing.xxs) {
+                Text(detail)
+                    .font(FFTypography.caption)
+                    .foregroundStyle(FFColors.textSecondary)
+                    .lineLimit(1)
             }
         }
         .padding(.horizontal, FFSpacing.md)
         .padding(.top, FFSpacing.xs)
-        .background(FFColors.background.opacity(0.96))
+        .background(Color.clear)
     }
 }

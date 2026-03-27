@@ -642,6 +642,94 @@ final class TrainingStoreTests: XCTestCase {
         XCTAssertEqual(calls, 1)
     }
 
+    func testBackendWorkoutTemplateRepositoryCreatesTemplateWhenIdIsNotInCache() async throws {
+        let suite = "fitfluence.tests.training.backend-template-create.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        let cacheStore = LocalTrainingStore(defaults: defaults)
+        let createdPayload = AthleteWorkoutTemplatePayload(
+            id: "server-template-1",
+            athleteId: "athlete-1",
+            title: "Upper A",
+            notes: nil,
+            exercises: [],
+            createdAt: nil,
+            updatedAt: nil,
+        )
+        let apiClient = StubAthleteWorkoutTemplatesAPIClient(
+            listResults: [],
+            createResult: .success(createdPayload),
+        )
+        let repository = BackendWorkoutTemplateRepository(
+            apiClient: apiClient,
+            cacheStore: cacheStore,
+        )
+
+        let template = WorkoutTemplateDraft(
+            id: UUID().uuidString,
+            userSub: "u1",
+            name: "Upper A",
+            exercises: [],
+            updatedAt: Date(),
+        )
+
+        let saved = try await repository.saveTemplate(template)
+
+        XCTAssertEqual(saved.id, "server-template-1")
+        XCTAssertEqual(await apiClient.createCallCount, 1)
+        XCTAssertEqual(await apiClient.updateCallCount, 0)
+    }
+
+    func testBackendWorkoutTemplateRepositoryUpdatesTemplateWhenIdExistsInCache() async throws {
+        let suite = "fitfluence.tests.training.backend-template-update.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        let cacheStore = LocalTrainingStore(defaults: defaults)
+        let cachedTemplate = WorkoutTemplateDraft(
+            id: "4A78021B-C9C2-47B2-A80A-5E657A298545",
+            userSub: "u1",
+            name: "Upper A",
+            exercises: [],
+            updatedAt: Date(),
+        )
+        await cacheStore.saveTemplate(cachedTemplate)
+
+        let updatedPayload = AthleteWorkoutTemplatePayload(
+            id: cachedTemplate.id,
+            athleteId: "athlete-1",
+            title: "Upper A+",
+            notes: nil,
+            exercises: [],
+            createdAt: nil,
+            updatedAt: nil,
+        )
+        let apiClient = StubAthleteWorkoutTemplatesAPIClient(
+            listResults: [],
+            updateResult: .success(updatedPayload),
+        )
+        let repository = BackendWorkoutTemplateRepository(
+            apiClient: apiClient,
+            cacheStore: cacheStore,
+        )
+
+        let saved = try await repository.saveTemplate(
+            WorkoutTemplateDraft(
+                id: cachedTemplate.id,
+                userSub: "u1",
+                name: "Upper A+",
+                exercises: [],
+                updatedAt: Date(),
+            )
+        )
+
+        XCTAssertEqual(saved.name, "Upper A+")
+        XCTAssertEqual(await apiClient.createCallCount, 0)
+        XCTAssertEqual(await apiClient.updateCallCount, 1)
+        XCTAssertEqual(await apiClient.lastUpdatedTemplateId, cachedTemplate.id)
+    }
+
     private func monthKey(for date: Date, calendar: Calendar) -> String {
         let formatter = DateFormatter()
         formatter.calendar = calendar
@@ -676,9 +764,20 @@ final class TrainingStoreTests: XCTestCase {
 private actor StubAthleteWorkoutTemplatesAPIClient: AthleteWorkoutTemplatesAPIClientProtocol {
     private var queuedListResults: [Result<[AthleteWorkoutTemplatePayload], APIError>]
     private(set) var listCallCount = 0
+    private let createResult: Result<AthleteWorkoutTemplatePayload, APIError>
+    private let updateResult: Result<AthleteWorkoutTemplatePayload, APIError>
+    private(set) var createCallCount = 0
+    private(set) var updateCallCount = 0
+    private(set) var lastUpdatedTemplateId: String?
 
-    init(listResults: [Result<[AthleteWorkoutTemplatePayload], APIError>]) {
+    init(
+        listResults: [Result<[AthleteWorkoutTemplatePayload], APIError>],
+        createResult: Result<AthleteWorkoutTemplatePayload, APIError> = .failure(.unknown),
+        updateResult: Result<AthleteWorkoutTemplatePayload, APIError> = .failure(.unknown),
+    ) {
         queuedListResults = listResults
+        self.createResult = createResult
+        self.updateResult = updateResult
     }
 
     func listAthleteWorkoutTemplates() async -> Result<[AthleteWorkoutTemplatePayload], APIError> {
@@ -692,14 +791,17 @@ private actor StubAthleteWorkoutTemplatesAPIClient: AthleteWorkoutTemplatesAPICl
     func createAthleteWorkoutTemplate(
         request _: CreateAthleteWorkoutTemplateRequestBody,
     ) async -> Result<AthleteWorkoutTemplatePayload, APIError> {
-        .failure(.unknown)
+        createCallCount += 1
+        return createResult
     }
 
     func updateAthleteWorkoutTemplate(
-        templateId _: String,
+        templateId: String,
         request _: UpdateAthleteWorkoutTemplateRequestBody,
     ) async -> Result<AthleteWorkoutTemplatePayload, APIError> {
-        .failure(.unknown)
+        updateCallCount += 1
+        lastUpdatedTemplateId = templateId
+        return updateResult
     }
 
     func deleteAthleteWorkoutTemplate(templateId _: String) async -> Result<Void, APIError> {

@@ -306,6 +306,7 @@ struct QuickWorkoutBuilderView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: FFSpacing.md) {
                     headerCard
+                    titleCard
                     exercisesCard
                 }
                 .padding(.horizontal, FFSpacing.md)
@@ -480,6 +481,24 @@ struct QuickWorkoutBuilderView: View {
         }
     }
 
+    private var titleCard: some View {
+        TrainingBuilderSectionCard(
+            eyebrow: nil,
+            title: viewModel.mode.titleLabel,
+            helper: viewModel.helperText ?? ""
+        ) {
+            FFTextField(
+                label: viewModel.mode.titleLabel,
+                placeholder: viewModel.mode.titlePlaceholder,
+                text: Binding(
+                    get: { viewModel.draft.title },
+                    set: { viewModel.draft.title = $0 }
+                ),
+                helperText: viewModel.helperText,
+            )
+        }
+    }
+
     private var emptyStateCard: some View {
         VStack(alignment: .leading, spacing: FFSpacing.sm) {
             Text(emptyStateTitle)
@@ -572,7 +591,7 @@ struct QuickWorkoutBuilderView: View {
 
         if let onTemplateSubmit, let templateUserSub {
             let template = viewModel.draft.asTemplateDraft(
-                id: initialTemplate?.id ?? UUID().uuidString,
+                id: initialTemplate?.id ?? "new-\(UUID().uuidString)",
                 userSub: templateUserSub,
                 fallbackTitle: initialTemplate?.name ?? "Новый шаблон",
             )

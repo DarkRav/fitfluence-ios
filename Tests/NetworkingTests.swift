@@ -326,6 +326,7 @@ final class NetworkingTests: XCTestCase {
                         name: "Подтягивания",
                         description: "Держите корпус стабильно и тянитесь грудью к перекладине.",
                         isBodyweight: true,
+                        equipment: nil,
                         media: [media],
                     ),
                     sets: nil,
@@ -338,6 +339,67 @@ final class NetworkingTests: XCTestCase {
         XCTAssertEqual(mapped.exercises.first?.isBodyweight, true)
         XCTAssertEqual(mapped.exercises.first?.description, "Держите корпус стабильно и тянитесь грудью к перекладине.")
         XCTAssertEqual(mapped.exercises.first?.media?.first?.id, "media-1")
+    }
+
+    func testAthleteWorkoutDetailsMappingFallsBackToEquipmentForBodyweight() {
+        let response = AthleteWorkoutDetailsResponse(
+            workout: AthleteWorkoutInstance(
+                id: "workout-1",
+                enrollmentId: nil,
+                workoutTemplateId: nil,
+                title: "Workout",
+                source: .custom,
+                status: .planned,
+                scheduledDate: nil,
+                scheduledAt: nil,
+                startedAt: nil,
+                completedAt: nil,
+                durationSeconds: nil,
+                notes: nil,
+                programId: nil,
+            ),
+            exercises: [
+                AthleteExerciseExecution(
+                    id: "exec-1",
+                    workoutInstanceId: "workout-1",
+                    exerciseTemplateId: nil,
+                    workoutPlanId: nil,
+                    exerciseId: "exercise-1",
+                    orderIndex: 0,
+                    notes: nil,
+                    plannedSets: 3,
+                    plannedRepsMin: 15,
+                    plannedRepsMax: 20,
+                    plannedTargetRpe: nil,
+                    plannedRestSeconds: 60,
+                    plannedNotes: nil,
+                    progressionPolicyId: nil,
+                    exercise: AthleteExerciseBrief(
+                        id: "exercise-1",
+                        code: "crunch",
+                        name: "Скручивания",
+                        description: nil,
+                        isBodyweight: nil,
+                        equipment: [
+                            ExerciseCatalogEquipment(
+                                id: "equipment-1",
+                                code: "bodyweight",
+                                name: "Bodyweight",
+                                category: .bodyweight,
+                                description: nil,
+                                media: nil,
+                            ),
+                        ],
+                        media: nil,
+                    ),
+                    sets: nil,
+                ),
+            ],
+        )
+
+        let mapped = response.asWorkoutDetailsModel()
+
+        XCTAssertEqual(mapped.exercises.first?.isBodyweight, true)
     }
 
     func testAthleteWorkoutDetailsDecodingSupportsAlternativeExercisePlanningKeys() throws {

@@ -224,6 +224,108 @@ final class WorkoutsFeatureAndProgressStoreTests: XCTestCase {
         XCTAssertEqual(secondViewModel.currentExerciseState?.sets.first?.rpeText, "8")
     }
 
+    func testWorkoutSessionManagerBlocksSecondActiveSessionForDifferentWorkout() async throws {
+        let suite = "fitfluence.tests.progress.single-active.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        let progressStore = LocalWorkoutProgressStore(defaults: defaults)
+        let sessionManager = WorkoutSessionManager(progressStore: progressStore)
+
+        let firstResult = await sessionManager.loadOrCreateSession(
+            userSub: "u1",
+            programId: "p1",
+            workout: sampleWorkoutDetails,
+        )
+        guard case let .session(firstSession) = firstResult else {
+            return XCTFail("Expected first session to be created")
+        }
+
+        let secondResult = await sessionManager.loadOrCreateSession(
+            userSub: "u1",
+            programId: "p1",
+            workout: alternateWorkoutDetails,
+        )
+
+        switch secondResult {
+        case let .blockedByActiveSession(activeSession):
+            XCTAssertEqual(activeSession.programId, firstSession.programId)
+            XCTAssertEqual(activeSession.workoutId, firstSession.workoutId)
+        case .session:
+            XCTFail("Expected second workout launch to be blocked by existing active session")
+        }
+
+        let blockedSnapshot = await progressStore.load(userSub: "u1", programId: "p1", workoutId: "w2")
+        XCTAssertNil(blockedSnapshot)
+    }
+
+    func testWorkoutSessionManagerResumesExistingSessionForSameWorkout() async throws {
+        let suite = "fitfluence.tests.progress.resume-same.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        let progressStore = LocalWorkoutProgressStore(defaults: defaults)
+        let sessionManager = WorkoutSessionManager(progressStore: progressStore)
+
+        let firstResult = await sessionManager.loadOrCreateSession(
+            userSub: "u1",
+            programId: "p1",
+            workout: sampleWorkoutDetails,
+        )
+        guard case let .session(firstSession) = firstResult else {
+            return XCTFail("Expected first session to be created")
+        }
+
+        let updatedSession = await sessionManager.toggleSetComplete(
+            firstSession,
+            exerciseId: "ex-1",
+            setIndex: 0,
+        )
+
+        let secondResult = await sessionManager.loadOrCreateSession(
+            userSub: "u1",
+            programId: "p1",
+            workout: sampleWorkoutDetails,
+        )
+
+        switch secondResult {
+        case let .session(resumedSession):
+            XCTAssertEqual(resumedSession.workoutId, updatedSession.workoutId)
+            XCTAssertEqual(resumedSession.exercises.first?.sets.first?.isCompleted, true)
+        case .blockedByActiveSession:
+            XCTFail("Expected existing session for same workout to resume, not block")
+        }
+    }
+
+    func testWorkoutPlayerViewModelBlocksWhenAnotherWorkoutIsAlreadyActive() async throws {
+        let suite = "fitfluence.tests.progress.player-block.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        let progressStore = LocalWorkoutProgressStore(defaults: defaults)
+        let sessionManager = WorkoutSessionManager(progressStore: progressStore)
+
+        _ = await sessionManager.loadOrCreateSession(
+            userSub: "u1",
+            programId: "p1",
+            workout: sampleWorkoutDetails,
+        )
+
+        let viewModel = WorkoutPlayerViewModel(
+            userSub: "u1",
+            programId: "p1",
+            workout: alternateWorkoutDetails,
+            sessionManager: sessionManager,
+        )
+
+        await viewModel.onAppear()
+
+        XCTAssertEqual(viewModel.blockedByActiveSession?.workoutId, sampleWorkoutDetails.id)
+        XCTAssertNil(viewModel.session)
+        let blockedSnapshot = await progressStore.load(userSub: "u1", programId: "p1", workoutId: alternateWorkoutDetails.id)
+        XCTAssertNil(blockedSnapshot)
+    }
+
     func testWorkoutPlayerViewModelPersistsSetStructureEditsAcrossResume() async {
         let progressStore = MockWorkoutProgressStore(statuses: [:])
         let sessionManager = WorkoutSessionManager(progressStore: progressStore)
@@ -1254,6 +1356,44 @@ final class WorkoutsFeatureAndProgressStoreTests: XCTestCase {
         XCTAssertTrue(viewModel.currentExerciseIsBodyweight)
     }
 
+    func testWorkoutPlayerViewModelIgnoresWeightUpdatesForBodyweightExercise() async {
+        let progressStore = MockWorkoutProgressStore(statuses: [:])
+        let sessionManager = WorkoutSessionManager(progressStore: progressStore)
+        let workout = WorkoutDetailsModel(
+            id: "w-bodyweight",
+            title: "Bodyweight",
+            dayOrder: 1,
+            coachNote: nil,
+            exercises: [
+                WorkoutExercise(
+                    id: "ex-bw",
+                    name: "Подтягивания",
+                    sets: 3,
+                    repsMin: 6,
+                    repsMax: 8,
+                    targetRpe: nil,
+                    restSeconds: 90,
+                    notes: nil,
+                    orderIndex: 0,
+                    isBodyweight: true,
+                ),
+            ],
+        )
+
+        let viewModel = WorkoutPlayerViewModel(
+            userSub: "u1",
+            programId: "p1",
+            workout: workout,
+            sessionManager: sessionManager,
+        )
+
+        await viewModel.onAppear()
+        await viewModel.updateWeight(setIndex: 0, input: "25")
+        await viewModel.incrementWeight(setIndex: 0)
+
+        XCTAssertEqual(viewModel.currentExerciseState?.sets.first?.weightText, "")
+    }
+
     func testWorkoutPlayerViewModelHidesSkipForSingleExerciseWorkout() async {
         let progressStore = MockWorkoutProgressStore(statuses: [:])
         let sessionManager = WorkoutSessionManager(progressStore: progressStore)
@@ -1974,6 +2114,28 @@ final class WorkoutsFeatureAndProgressStoreTests: XCTestCase {
                     restSeconds: 120,
                     notes: nil,
                     orderIndex: 1,
+                ),
+            ],
+        )
+    }
+
+    private var alternateWorkoutDetails: WorkoutDetailsModel {
+        WorkoutDetailsModel(
+            id: "w2",
+            title: "Тренировка B",
+            dayOrder: 2,
+            coachNote: nil,
+            exercises: [
+                WorkoutExercise(
+                    id: "ex-2",
+                    name: "Жим лёжа",
+                    sets: 3,
+                    repsMin: 6,
+                    repsMax: 8,
+                    targetRpe: 8,
+                    restSeconds: 120,
+                    notes: nil,
+                    orderIndex: 0,
                 ),
             ],
         )

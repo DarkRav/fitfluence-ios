@@ -428,6 +428,7 @@ struct ExerciseSummary: Codable, Equatable, Sendable {
     let name: String
     let description: String?
     let isBodyweight: Bool?
+    let equipment: [ExerciseCatalogEquipment]?
     let media: [ContentMedia]?
 }
 

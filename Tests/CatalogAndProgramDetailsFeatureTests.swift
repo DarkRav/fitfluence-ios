@@ -483,6 +483,81 @@ final class CatalogAndProgramDetailsFeatureTests: XCTestCase {
         XCTAssertTrue(scheduled.allSatisfy { $0.workoutDetails != nil })
     }
 
+    func testWorkoutsClientFallsBackToEquipmentForBodyweightProgramExercises() async {
+        let mockClient = MockProgramsClient(
+            listResults: [],
+            detailsResults: [
+                .success(
+                    ProgramDetails(
+                        id: "program-1",
+                        title: "Core",
+                        description: nil,
+                        status: .published,
+                        isFeatured: nil,
+                        influencer: nil,
+                        cover: nil,
+                        media: nil,
+                        goals: nil,
+                        currentPublishedVersion: nil,
+                        createdAt: nil,
+                        updatedAt: nil,
+                        versions: nil,
+                        workouts: [
+                            WorkoutTemplate(
+                                id: "workout-1",
+                                dayOrder: 1,
+                                title: "Abs",
+                                coachNote: nil,
+                                exercises: [
+                                    ExerciseTemplate(
+                                        id: "template-1",
+                                        exercise: ExerciseSummary(
+                                            id: "exercise-1",
+                                            code: "crunch",
+                                            name: "Скручивания",
+                                            description: nil,
+                                            isBodyweight: nil,
+                                            equipment: [
+                                                ExerciseCatalogEquipment(
+                                                    id: "equipment-1",
+                                                    code: "bodyweight",
+                                                    name: "Bodyweight",
+                                                    category: .bodyweight,
+                                                    description: nil,
+                                                    media: nil,
+                                                ),
+                                            ],
+                                            media: nil,
+                                        ),
+                                        sets: 3,
+                                        repsMin: 15,
+                                        repsMax: 20,
+                                        targetRpe: nil,
+                                        restSeconds: 60,
+                                        notes: nil,
+                                        orderIndex: 0,
+                                    ),
+                                ],
+                                media: nil,
+                            ),
+                        ],
+                    ),
+                ),
+            ],
+            startResults: [],
+        )
+        let client = WorkoutsClient(programsClient: mockClient)
+
+        let result = await client.getWorkoutDetails(programId: "program-1", workoutId: "workout-1")
+
+        switch result {
+        case let .success(details):
+            XCTAssertEqual(details.exercises.first?.isBodyweight, true)
+        case let .failure(error):
+            XCTFail("Expected success, got \(error)")
+        }
+    }
+
     private func samplePage(title: String) -> PagedProgramResponse {
         PagedProgramResponse(
             content: [
@@ -600,6 +675,7 @@ final class CatalogAndProgramDetailsFeatureTests: XCTestCase {
                         name: "Присед",
                         description: nil,
                         isBodyweight: false,
+                        equipment: nil,
                         media: nil,
                     ),
                     sets: 4,

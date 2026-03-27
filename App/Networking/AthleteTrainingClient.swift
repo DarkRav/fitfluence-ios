@@ -401,6 +401,7 @@ struct AthleteExerciseBrief: Codable, Equatable, Sendable {
     let name: String
     let description: String?
     let isBodyweight: Bool?
+    let equipment: [ExerciseCatalogEquipment]?
     let media: [ContentMedia]?
 }
 
@@ -1420,7 +1421,7 @@ extension AthleteWorkoutDetailsResponse {
                     restSeconds: execution.plannedRestSeconds,
                     notes: execution.plannedNotes?.trimmedNilIfEmpty ?? execution.notes?.trimmedNilIfEmpty,
                     orderIndex: execution.orderIndex,
-                    isBodyweight: execution.exercise?.isBodyweight ?? false,
+                    isBodyweight: execution.exercise?.resolvedIsBodyweight ?? false,
                     media: execution.exercise?.media,
                 )
             }
@@ -1441,6 +1442,15 @@ private extension String {
     var trimmedNilIfEmpty: String? {
         let trimmed = trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? nil : trimmed
+    }
+}
+
+private extension AthleteExerciseBrief {
+    var resolvedIsBodyweight: Bool {
+        ExerciseBodyweightResolver.resolve(
+            isBodyweight: isBodyweight,
+            equipmentCategories: equipment?.compactMap(\.category) ?? [],
+        )
     }
 }
 

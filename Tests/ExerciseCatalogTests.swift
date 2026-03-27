@@ -2,6 +2,36 @@
 import XCTest
 
 final class ExerciseCatalogTests: XCTestCase {
+    func testBodyweightResolverUsesExplicitBackendValue() {
+        XCTAssertTrue(
+            ExerciseBodyweightResolver.resolve(
+                isBodyweight: true,
+                equipmentCategories: [],
+            ),
+        )
+        XCTAssertFalse(
+            ExerciseBodyweightResolver.resolve(
+                isBodyweight: false,
+                equipmentCategories: [.bodyweight],
+            ),
+        )
+    }
+
+    func testBodyweightResolverFallsBackToEquipmentCategoryWhenBackendValueMissing() {
+        XCTAssertTrue(
+            ExerciseBodyweightResolver.resolve(
+                isBodyweight: nil,
+                equipmentCategories: [.bodyweight],
+            ),
+        )
+        XCTAssertFalse(
+            ExerciseBodyweightResolver.resolve(
+                isBodyweight: nil,
+                equipmentCategories: [.freeWeight, .machine],
+            ),
+        )
+    }
+
     func testAPIExerciseMapsToDomainItem() {
         let exercise = APIExercise(
             id: "exercise-1",
@@ -101,6 +131,34 @@ final class ExerciseCatalogTests: XCTestCase {
         XCTAssertEqual(mapped.equipmentCategories, [.freeWeight, .machine])
         XCTAssertEqual(mapped.movementPatterns, [.push, .pull])
         XCTAssertEqual(mapped.difficultyLevels, [.beginner, .advanced])
+    }
+
+    func testCatalogItemResolvesBodyweightFromEquipmentCategory() {
+        let item = ExerciseCatalogItem(
+            id: "exercise-1",
+            code: "push-up",
+            name: "Push-Up",
+            description: nil,
+            movementPattern: .push,
+            difficultyLevel: .beginner,
+            isBodyweight: nil,
+            muscles: [],
+            equipment: [
+                ExerciseCatalogEquipment(
+                    id: "equipment-1",
+                    code: "bodyweight",
+                    name: "Bodyweight",
+                    category: .bodyweight,
+                    description: nil,
+                    media: nil,
+                ),
+            ],
+            media: [],
+            source: .athleteCatalog,
+            draftDefaults: nil,
+        )
+
+        XCTAssertTrue(item.resolvedIsBodyweight)
     }
 
     func testRepositoryUsesBackendCatalogWhenAthleteSearchSucceeds() async throws {

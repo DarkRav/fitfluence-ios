@@ -2,7 +2,7 @@ import SwiftUI
 
 struct RecentWorkoutDetailsView: View {
     let record: CompletedWorkoutRecord
-    let onRepeat: () -> Void
+    let onRepeat: (WorkoutDetailsModel?) -> Void
     private let progressStore: WorkoutProgressStore
 
     @State private var snapshot: WorkoutProgressSnapshot?
@@ -10,7 +10,7 @@ struct RecentWorkoutDetailsView: View {
 
     init(
         record: CompletedWorkoutRecord,
-        onRepeat: @escaping () -> Void,
+        onRepeat: @escaping (WorkoutDetailsModel?) -> Void,
         progressStore: WorkoutProgressStore = LocalWorkoutProgressStore(),
     ) {
         self.record = record
@@ -122,7 +122,7 @@ struct RecentWorkoutDetailsView: View {
 
                 if canRepeatWorkout {
                     FFButton(title: "Повторить тренировку", variant: .secondary) {
-                        onRepeat()
+                        onRepeat(snapshot?.workoutDetails)
                     }
                 }
             }
@@ -278,7 +278,7 @@ private struct SetLine: Identifiable {
                 notes: "Отличное самочувствие",
                 overallRPE: 7,
             ),
-            onRepeat: {},
+            onRepeat: { _ in },
         )
     }
 }
