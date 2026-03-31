@@ -33,9 +33,11 @@ struct FFTextField: View {
             .autocorrectionDisabled()
             .font(FFTypography.body)
             .foregroundStyle(FFColors.textPrimary)
+            .tint(FFColors.textPrimary)
             .padding(.horizontal, FFSpacing.md)
             .frame(minHeight: 44)
             .background(FFColors.surface)
+            .shadow(color: Color.black.opacity(0.03), radius: 8, y: 2)
             .overlay {
                 RoundedRectangle(cornerRadius: FFTheme.Radius.control)
                     .stroke(borderColor, lineWidth: borderWidth)
@@ -56,13 +58,13 @@ struct FFTextField: View {
     private var borderColor: Color {
         switch resolvedState {
         case .normal:
-            FFColors.gray700
+            FFColors.gray300
         case .focused:
             FFColors.accent
         case .error:
             FFColors.danger
         case .disabled:
-            FFColors.gray500
+            FFColors.gray300
         }
     }
 

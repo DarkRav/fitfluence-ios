@@ -150,37 +150,54 @@ actor SyncCoordinator {
     func resolveSyncIndicator(namespace: String) async -> SyncStatusKind {
         let diagnostics = await outboxStore.diagnostics(namespace: namespace)
         if diagnostics.pendingCount > 0 {
+            FFLog.info(
+                "sync-indicator namespace=\(namespace) source=local_outbox_pending status=\(SyncStatusKind.savedLocally.rawValue) pendingCount=\(diagnostics.pendingCount) hasDelayedRetries=\(diagnostics.hasDelayedRetries) lastSyncError=\(diagnostics.lastSyncError ?? "-")",
+            )
             return .savedLocally
         }
         if diagnostics.hasDelayedRetries {
+            FFLog.info(
+                "sync-indicator namespace=\(namespace) source=local_outbox_delayed status=\(SyncStatusKind.delayed.rawValue) pendingCount=\(diagnostics.pendingCount) hasDelayedRetries=\(diagnostics.hasDelayedRetries) lastSyncError=\(diagnostics.lastSyncError ?? "-")",
+            )
             return .delayed
         }
 
         guard let athleteTrainingClient else {
+            FFLog.info(
+                "sync-indicator namespace=\(namespace) source=no_client status=\(SyncStatusKind.synced.rawValue) pendingCount=\(diagnostics.pendingCount) hasDelayedRetries=\(diagnostics.hasDelayedRetries)",
+            )
             return .synced
         }
 
         let result = await athleteTrainingClient.syncStatus()
         switch result {
         case let .success(response):
+            let resolvedStatus: SyncStatusKind
             if response.isDelayed == true {
-                return .delayed
+                resolvedStatus = .delayed
+            } else if response.hasPendingLocalChanges == true || (response.pendingOperations ?? 0) > 0 {
+                resolvedStatus = .savedLocally
+            } else {
+                switch response.status {
+                case .savedLocally:
+                    resolvedStatus = .savedLocally
+                case .delayed:
+                    resolvedStatus = .delayed
+                case .synced, .unknown, .none:
+                    resolvedStatus = .synced
+                }
             }
-            if response.hasPendingLocalChanges == true || (response.pendingOperations ?? 0) > 0 {
-                return .savedLocally
-            }
-
-            switch response.status {
-            case .savedLocally:
-                return .savedLocally
-            case .delayed:
-                return .delayed
-            case .synced, .unknown, .none:
-                return .synced
-            }
+            FFLog.info(
+                "sync-indicator namespace=\(namespace) source=remote_sync_status status=\(resolvedStatus.rawValue) remoteStatus=\(response.status?.rawValue ?? "nil") isDelayed=\(response.isDelayed?.description ?? "nil") hasPendingLocalChanges=\(response.hasPendingLocalChanges?.description ?? "nil") pendingOperations=\(response.pendingOperations.map(String.init) ?? "nil") lastSyncError=\(diagnostics.lastSyncError ?? "-")",
+            )
+            return resolvedStatus
 
         case .failure:
-            return diagnostics.pendingCount > 0 ? .savedLocally : .synced
+            let fallbackStatus: SyncStatusKind = diagnostics.pendingCount > 0 ? .savedLocally : .synced
+            FFLog.info(
+                "sync-indicator namespace=\(namespace) source=remote_sync_status_failed status=\(fallbackStatus.rawValue) pendingCount=\(diagnostics.pendingCount) hasDelayedRetries=\(diagnostics.hasDelayedRetries) lastSyncError=\(diagnostics.lastSyncError ?? "-")",
+            )
+            return fallbackStatus
         }
     }
 

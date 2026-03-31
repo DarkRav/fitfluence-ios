@@ -3,8 +3,8 @@ import XCTest
 
 final class DesignSystemTests: XCTestCase {
     func testThemeRadiiMatchDesignSpec() {
-        XCTAssertEqual(FFTheme.Radius.card, 16)
-        XCTAssertEqual(FFTheme.Radius.control, 12)
+        XCTAssertEqual(FFTheme.Radius.card, 22)
+        XCTAssertEqual(FFTheme.Radius.control, 14)
     }
 
     func testSpacingScaleIsStable() {

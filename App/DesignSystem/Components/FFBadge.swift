@@ -31,13 +31,13 @@ struct FFBadge: View {
             case .draft:
                 FFColors.background
             case .published:
-                FFColors.accent
+                FFColors.textPrimary
             case .archived:
-                FFColors.gray300
+                FFColors.textSecondary
             case .notStarted:
-                FFColors.gray300
+                FFColors.textSecondary
             case .inProgress:
-                FFColors.accent
+                FFColors.textPrimary
             case .completed:
                 FFColors.background
             }
@@ -48,11 +48,11 @@ struct FFBadge: View {
             case .draft:
                 FFColors.primary
             case .published:
-                FFColors.accent.opacity(0.18)
+                FFColors.gray100
             case .archived:
-                FFColors.gray700
+                FFColors.gray100
             case .notStarted:
-                FFColors.gray700
+                FFColors.gray100
             case .inProgress:
                 FFColors.accent.opacity(0.18)
             case .completed:

@@ -74,7 +74,7 @@ struct FitfluenceApp: App {
         let appearance = UINavigationBarAppearance()
         appearance.configureWithOpaqueBackground()
         appearance.backgroundColor = UIColor(FFColors.background)
-        appearance.shadowColor = .clear
+        appearance.shadowColor = UIColor(FFColors.gray700)
         appearance.titleTextAttributes = [
             .foregroundColor: UIColor(FFColors.textPrimary),
         ]
@@ -88,6 +88,31 @@ struct FitfluenceApp: App {
         navigationBar.compactAppearance = appearance
         navigationBar.compactScrollEdgeAppearance = appearance
         navigationBar.tintColor = UIColor(FFColors.accent)
+
+        let tabBarAppearance = UITabBarAppearance()
+        tabBarAppearance.configureWithOpaqueBackground()
+        tabBarAppearance.backgroundColor = UIColor(FFColors.surface)
+        tabBarAppearance.shadowColor = UIColor(FFColors.gray700)
+
+        let normalColor = UIColor(FFColors.textSecondary)
+        let selectedColor = UIColor(FFColors.textPrimary)
+
+        for layoutAppearance in [
+            tabBarAppearance.stackedLayoutAppearance,
+            tabBarAppearance.inlineLayoutAppearance,
+            tabBarAppearance.compactInlineLayoutAppearance,
+        ] {
+            layoutAppearance.normal.iconColor = normalColor
+            layoutAppearance.normal.titleTextAttributes = [.foregroundColor: normalColor]
+            layoutAppearance.selected.iconColor = selectedColor
+            layoutAppearance.selected.titleTextAttributes = [.foregroundColor: selectedColor]
+        }
+
+        let tabBar = UITabBar.appearance()
+        tabBar.standardAppearance = tabBarAppearance
+        tabBar.scrollEdgeAppearance = tabBarAppearance
+        tabBar.tintColor = selectedColor
+        tabBar.unselectedItemTintColor = normalColor
     }
 
     var body: some Scene {

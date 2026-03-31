@@ -4695,8 +4695,9 @@ struct CardContainerStyle: ViewModifier {
             .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
             .overlay {
                 RoundedRectangle(cornerRadius: 24, style: .continuous)
-                    .stroke(FFColors.gray700.opacity(0.7), lineWidth: 1)
+                    .stroke(FFColors.gray700.opacity(0.55), lineWidth: 1)
             }
+            .shadow(color: FFTheme.Shadow.color, radius: FFTheme.Shadow.radius, y: FFTheme.Shadow.y)
     }
 }
 

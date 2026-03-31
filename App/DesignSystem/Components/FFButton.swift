@@ -43,11 +43,11 @@ struct FFButton: View {
     private var foregroundColor: Color {
         switch effectiveVariant {
         case .primary:
-            FFColors.background
+            FFColors.surface
         case .secondary:
-            FFColors.accent
-        case .destructive:
             FFColors.textPrimary
+        case .destructive:
+            FFColors.surface
         case .disabled:
             FFColors.gray500
         }
@@ -67,7 +67,7 @@ private struct FFButtonStyle: ButtonStyle {
             .overlay {
                 if variant == .secondary {
                     RoundedRectangle(cornerRadius: FFTheme.Radius.control)
-                        .stroke(FFColors.accent, lineWidth: 1.5)
+                        .stroke(FFColors.gray300, lineWidth: 1)
                 }
             }
             .clipShape(RoundedRectangle(cornerRadius: FFTheme.Radius.control))
@@ -79,11 +79,11 @@ private struct FFButtonStyle: ButtonStyle {
     private var foregroundColor: Color {
         switch variant {
         case .primary:
-            FFColors.background
+            FFColors.surface
         case .secondary:
-            FFColors.accent
-        case .destructive:
             FFColors.textPrimary
+        case .destructive:
+            FFColors.surface
         case .disabled:
             FFColors.gray500
         }
@@ -92,13 +92,13 @@ private struct FFButtonStyle: ButtonStyle {
     private func backgroundColor(configuration: Configuration) -> Color {
         switch variant {
         case .primary:
-            configuration.isPressed ? FFColors.primary.opacity(0.85) : FFColors.primary
+            configuration.isPressed ? FFColors.primary.opacity(0.88) : FFColors.primary
         case .secondary:
-            FFColors.surface
+            configuration.isPressed ? FFColors.gray100 : FFColors.surface
         case .destructive:
             configuration.isPressed ? FFColors.danger.opacity(0.85) : FFColors.danger
         case .disabled:
-            FFColors.gray700
+            FFColors.gray100
         }
     }
 }

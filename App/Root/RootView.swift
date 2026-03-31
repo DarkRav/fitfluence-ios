@@ -2265,7 +2265,9 @@ private struct TrainingTabContent: View {
                     exerciseCatalogRepository: exerciseCatalogRepository,
                     exercisePickerSuggestionsProvider: exercisePickerSuggestionsProvider,
                 ) { workout in
-                    presetWorkoutRoute = PresetWorkoutRoute(programId: nil, workout: workout, source: .freestyle)
+                    Task {
+                        await openBuiltCustomWorkout(workout)
+                    }
                 }
             }
             .onAppear {

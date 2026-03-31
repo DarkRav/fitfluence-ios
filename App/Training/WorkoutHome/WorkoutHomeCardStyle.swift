@@ -15,9 +15,9 @@ struct WorkoutCardContainer<Content: View>: View {
             .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
             .overlay {
                 RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                    .stroke(FFColors.gray700.opacity(0.9), lineWidth: 1)
+                    .stroke(FFColors.gray700.opacity(0.6), lineWidth: 1)
             }
-            .shadow(color: Color.black.opacity(0.24), radius: 4, x: 0, y: 1)
+            .shadow(color: FFTheme.Shadow.color, radius: FFTheme.Shadow.radius, x: 0, y: FFTheme.Shadow.y)
     }
 
     private var cardBackground: some View {

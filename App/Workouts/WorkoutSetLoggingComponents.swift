@@ -139,7 +139,7 @@ struct WorkoutSetRowView: View {
     let showsRPE: Bool
     let targetRPE: Int?
     let canRemove: Bool
-    let onToggleComplete: () -> Void
+    let onSelect: () -> Void
     let onCopy: () -> Void
     let onToggleWarmup: () -> Void
     let onRemove: () -> Void
@@ -156,7 +156,7 @@ struct WorkoutSetRowView: View {
             HStack(spacing: FFSpacing.sm) {
                 HStack(spacing: FFSpacing.xxs) {
                     Text("\(index + 1)")
-                        .font(.system(size: 24, weight: .bold, design: .rounded))
+                        .font(.system(size: 22, weight: .bold, design: .rounded))
                         .foregroundStyle(isFocused ? FFColors.primary : FFColors.textSecondary)
 
                     if set.isWarmup {
@@ -165,7 +165,7 @@ struct WorkoutSetRowView: View {
                             .foregroundStyle(FFColors.primary)
                     }
                 }
-                .frame(width: 44, alignment: .leading)
+                .frame(width: 72, alignment: .leading)
 
                 if !isBodyweight {
                     WorkoutSetMetricInput(
@@ -192,24 +192,6 @@ struct WorkoutSetRowView: View {
                     onMinus: onDecreaseReps,
                     onPlus: onIncreaseReps,
                 )
-
-                Button(action: onToggleComplete) {
-                    ZStack {
-                        RoundedRectangle(cornerRadius: 14)
-                            .stroke(checkboxBorderColor, lineWidth: 2)
-                            .frame(width: 40, height: 40)
-                        if set.isCompleted {
-                            RoundedRectangle(cornerRadius: 14)
-                                .fill(Color.white.opacity(0.38))
-                                .frame(width: 40, height: 40)
-                            Image(systemName: "checkmark")
-                                .font(.system(size: 16, weight: .bold))
-                                .foregroundStyle(Color.black)
-                        }
-                    }
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Отметить подход \(index + 1) выполненным")
             }
 
             if showsRPE {
@@ -221,14 +203,18 @@ struct WorkoutSetRowView: View {
             }
         }
         .padding(.horizontal, FFSpacing.sm)
-        .padding(.vertical, 14)
+        .padding(.vertical, 10)
         .background(rowBackground)
-        .clipShape(RoundedRectangle(cornerRadius: 22))
+        .clipShape(RoundedRectangle(cornerRadius: 18))
+        .contentShape(RoundedRectangle(cornerRadius: 18))
         .overlay {
-            RoundedRectangle(cornerRadius: 22)
+            RoundedRectangle(cornerRadius: 18)
                 .stroke(rowBorder, lineWidth: isFocused ? 1.5 : 1)
         }
         .opacity(set.isCompleted ? 0.76 : 1)
+        .onTapGesture {
+            onSelect()
+        }
         .contextMenu {
             if showsCopyAction {
                 Button("Скопировать прошлый подход", systemImage: "doc.on.doc") {
@@ -261,13 +247,6 @@ struct WorkoutSetRowView: View {
         }
         return FFColors.gray700.opacity(0.55)
     }
-
-    private var checkboxBorderColor: Color {
-        if set.isCompleted {
-            return Color.clear
-        }
-        return isFocused ? FFColors.primary : FFColors.gray700.opacity(0.9)
-    }
 }
 
 private struct WorkoutSetMetricInput: View {
@@ -286,6 +265,7 @@ private struct WorkoutSetMetricInput: View {
     let onMinus: () -> Void
     let onPlus: () -> Void
 
+    @State private var isEditing = false
     @FocusState private var isFocused: Bool
     @State private var draftText: String
 
@@ -313,7 +293,7 @@ private struct WorkoutSetMetricInput: View {
     }
 
     var body: some View {
-        HStack(spacing: FFSpacing.xs) {
+        HStack(spacing: FFSpacing.xxs) {
             stepControlButton(
                 systemName: "minus",
                 accessibilityLabel: "Уменьшить \(title.lowercased())",
@@ -326,7 +306,7 @@ private struct WorkoutSetMetricInput: View {
                 RoundedRectangle(cornerRadius: 16)
                     .stroke(isFocused ? FFColors.primary.opacity(0.6) : Color.clear, lineWidth: 1.5)
 
-                if isFocused {
+                if isEditing {
                     TextField(
                         "",
                         text: $draftText,
@@ -336,19 +316,26 @@ private struct WorkoutSetMetricInput: View {
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
                     .multilineTextAlignment(.center)
-                    .font(.system(size: 26, weight: .bold, design: .rounded))
+                    .font(.system(size: 22, weight: .bold, design: .rounded))
                     .foregroundStyle(FFColors.textPrimary)
-                    .padding(.horizontal, FFSpacing.xs)
-                    .frame(maxWidth: .infinity, minHeight: 68)
+                    .tint(FFColors.textPrimary)
+                    .padding(.horizontal, 6)
+                    .frame(maxWidth: .infinity, minHeight: 60)
                     .focused($isFocused)
+                    .onAppear {
+                        DispatchQueue.main.async {
+                            isFocused = true
+                        }
+                    }
                 } else {
                     Button(action: beginEditing) {
                         Text(displayText)
-                            .font(.system(size: 34, weight: .bold, design: .rounded))
+                            .font(.system(size: 28, weight: .bold, design: .rounded))
                             .foregroundStyle(valueText.isEmpty ? FFColors.textSecondary : FFColors.textPrimary)
                             .lineLimit(1)
-                            .minimumScaleFactor(0.7)
-                            .frame(maxWidth: .infinity, minHeight: 68)
+                            .minimumScaleFactor(0.5)
+                            .allowsTightening(true)
+                            .frame(maxWidth: .infinity, minHeight: 60)
                     }
                     .buttonStyle(.plain)
                     .accessibilityLabel("Редактировать \(title.lowercased()) для подхода")
@@ -371,17 +358,9 @@ private struct WorkoutSetMetricInput: View {
             if focused {
                 draftText = valueText
             } else {
+                guard isEditing else { return }
                 commitDraft()
-            }
-        }
-        .toolbar {
-            if isFocused {
-                ToolbarItemGroup(placement: .keyboard) {
-                    Spacer()
-                    Button("Готово") {
-                        isFocused = false
-                    }
-                }
+                isEditing = false
             }
         }
     }
@@ -392,7 +371,7 @@ private struct WorkoutSetMetricInput: View {
 
     private func beginEditing() {
         draftText = valueText
-        isFocused = true
+        isEditing = true
     }
 
     private func commitDraft() {
@@ -426,9 +405,9 @@ private struct WorkoutSetMetricInput: View {
     ) -> some View {
         Button(action: action) {
             Image(systemName: systemName)
-                .font(.system(size: 18, weight: .bold))
+                .font(.system(size: 16, weight: .bold))
                 .foregroundStyle(FFColors.textSecondary)
-                .frame(width: 28, height: 28)
+                .frame(width: 24, height: 24)
         }
         .buttonStyle(.plain)
         .accessibilityLabel(accessibilityLabel)

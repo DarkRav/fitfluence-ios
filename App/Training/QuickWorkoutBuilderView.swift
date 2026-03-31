@@ -347,7 +347,7 @@ struct QuickWorkoutBuilderView: View {
             }
         }
         .tint(FFColors.accent)
-        .sheet(isPresented: $isExercisePickerPresented) {
+        .fullScreenCover(isPresented: $isExercisePickerPresented) {
             NavigationStack {
                 ExercisePickerView(
                     repository: exerciseCatalogRepository,
@@ -803,13 +803,14 @@ private struct QuickWorkoutExerciseCard: View {
                 .lineLimit(1 ... 3)
                 .font(FFTypography.body)
                 .foregroundStyle(FFColors.textPrimary)
+                .tint(FFColors.textPrimary)
                 .padding(.horizontal, FFSpacing.md)
                 .padding(.vertical, FFSpacing.sm)
-                .background(FFColors.background.opacity(0.75))
+                .background(FFColors.surface)
                 .clipShape(RoundedRectangle(cornerRadius: FFTheme.Radius.control))
                 .overlay {
                     RoundedRectangle(cornerRadius: FFTheme.Radius.control)
-                        .stroke(FFColors.gray700.opacity(0.9), lineWidth: 1)
+                        .stroke(FFColors.gray300, lineWidth: 1)
                 }
             }
         }

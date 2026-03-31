@@ -1,5 +1,60 @@
 import SwiftUI
 
+struct WorkoutOverviewHeroView: View {
+    let title: String
+    let subtitle: String
+    let durationChipTitle: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: FFSpacing.md) {
+            Text(title)
+                .font(.system(size: 34, weight: .bold, design: .rounded))
+                .foregroundStyle(FFColors.textPrimary)
+                .lineLimit(3)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Text(subtitle)
+                .font(.system(size: 18, weight: .medium, design: .rounded))
+                .foregroundStyle(FFColors.textSecondary)
+                .lineLimit(1)
+
+            if let durationChipTitle {
+                HStack(spacing: FFSpacing.sm) {
+                    heroChip(title: durationChipTitle, systemImage: "clock.fill")
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, FFSpacing.md)
+        .padding(.vertical, FFSpacing.lg)
+        .background(
+            LinearGradient(
+                colors: [
+                    FFColors.surface.opacity(0.94),
+                    FFColors.surface.opacity(0.84),
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing,
+            )
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 28))
+        .overlay {
+            RoundedRectangle(cornerRadius: 28)
+                .stroke(FFColors.gray700.opacity(0.42), lineWidth: 1)
+        }
+    }
+
+    private func heroChip(title: String, systemImage: String) -> some View {
+        Label(title, systemImage: systemImage)
+            .font(FFTypography.body.weight(.semibold))
+            .foregroundStyle(FFColors.textPrimary)
+            .padding(.horizontal, FFSpacing.md)
+            .padding(.vertical, FFSpacing.sm)
+            .background(FFColors.gray700.opacity(0.72))
+            .clipShape(Capsule())
+    }
+}
+
 enum WorkoutExercisePickerFlow: String, Identifiable, Equatable, Sendable {
     case addAfterCurrent
     case replaceCurrent
@@ -78,10 +133,10 @@ struct WorkoutSetListActionsView: View {
     let onDuplicateLastSet: () -> Void
 
     var body: some View {
-        VStack(spacing: FFSpacing.xs) {
+        VStack(alignment: .leading, spacing: FFSpacing.xs) {
             listActionButton(
                 title: "Добавить подход",
-                systemImage: "plus.circle",
+                systemImage: "plus",
                 action: onAddSet,
             )
 
@@ -101,16 +156,190 @@ struct WorkoutSetListActionsView: View {
         action: @escaping () -> Void,
     ) -> some View {
         Button(action: action) {
-            Label(title, systemImage: systemImage)
-                .font(FFTypography.caption.weight(.semibold))
+            HStack(spacing: FFSpacing.xs) {
+                Image(systemName: systemImage)
+                    .font(.system(size: 14, weight: .bold))
+                Text(title)
+                    .font(FFTypography.body.weight(.semibold))
+            }
+            .foregroundStyle(FFColors.textSecondary)
+            .frame(maxWidth: .infinity, minHeight: 52, alignment: .leading)
+            .padding(.horizontal, FFSpacing.md)
+            .background(FFColors.surface.opacity(0.34))
+            .clipShape(RoundedRectangle(cornerRadius: 18))
+            .overlay {
+                RoundedRectangle(cornerRadius: 18)
+                    .stroke(FFColors.gray700.opacity(0.45), lineWidth: 1)
+                }
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+struct WorkoutExerciseQueueView: View {
+    let items: [WorkoutPlayerViewModel.ExerciseProgressItem]
+    let subtitlesByID: [String: String]
+    let thumbnailURLsByID: [String: URL]
+    let onSelect: (String) -> Void
+    let onReplace: (String) -> Void
+    let onReorder: (String, String) -> Void
+
+    var body: some View {
+        VStack(spacing: FFSpacing.lg) {
+            ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
+                HStack(spacing: FFSpacing.md) {
+                    Button {
+                        onSelect(item.id)
+                    } label: {
+                        HStack(spacing: FFSpacing.md) {
+                            thumbnail(for: item)
+
+                            VStack(alignment: .leading, spacing: 4) {
+                                if item.isCurrent {
+                                    Text("ТЕКУЩЕЕ УПРАЖНЕНИЕ")
+                                        .font(FFTypography.caption.weight(.bold))
+                                        .foregroundStyle(FFColors.primary)
+                                }
+
+                                Text(item.title)
+                                    .font(.system(size: 18, weight: item.isCurrent ? .bold : .semibold, design: .rounded))
+                                    .foregroundStyle(FFColors.textPrimary)
+                                    .lineLimit(2)
+
+                                Text(subtitlesByID[item.id] ?? itemSubtitle(item))
+                                    .font(FFTypography.body)
+                                    .foregroundStyle(FFColors.textSecondary)
+                                    .lineLimit(1)
+                            }
+
+                            Spacer(minLength: FFSpacing.sm)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.vertical, FFSpacing.xxs)
+                    }
+                    .buttonStyle(.plain)
+
+                    Menu {
+                        Button("Заменить упражнение", systemImage: "arrow.triangle.2.circlepath") {
+                            onReplace(item.id)
+                        }
+                    } label: {
+                        Image(systemName: "ellipsis")
+                            .font(.system(size: 18, weight: .bold))
+                            .foregroundStyle(FFColors.textSecondary)
+                            .frame(width: 36, height: 36)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+
+                    Image(systemName: "line.3.horizontal")
+                        .font(.system(size: 18, weight: .semibold))
+                        .foregroundStyle(FFColors.textSecondary)
+                        .frame(width: 36, height: 36)
+                        .contentShape(Rectangle())
+                        .draggable(item.id)
+                }
+                .dropDestination(for: String.self) { items, _ in
+                    guard let draggedId = items.first else { return false }
+                    onReorder(draggedId, item.id)
+                    return true
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func thumbnail(for item: WorkoutPlayerViewModel.ExerciseProgressItem) -> some View {
+        if let url = thumbnailURLsByID[item.id] {
+            AsyncImage(url: url) { phase in
+                switch phase {
+                case let .success(image):
+                    image
+                        .resizable()
+                        .scaledToFill()
+                default:
+                    placeholderThumbnail
+                }
+            }
+            .frame(width: 64, height: 64)
+            .clipShape(RoundedRectangle(cornerRadius: 14))
+        } else {
+            placeholderThumbnail
+                .frame(width: 64, height: 64)
+        }
+    }
+
+    private var placeholderThumbnail: some View {
+        ZStack {
+            FFColors.surface
+            Image(systemName: "figure.strengthtraining.traditional")
+                .font(.system(size: 20, weight: .semibold))
                 .foregroundStyle(FFColors.textSecondary)
-                .frame(maxWidth: .infinity, minHeight: 44)
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 14))
+    }
+
+    private func itemBadgeTitle(_ item: WorkoutPlayerViewModel.ExerciseProgressItem, index: Int) -> String {
+        if item.isSkipped {
+            return "S"
+        }
+        if item.completedSets >= item.totalSets, item.totalSets > 0 {
+            return "✓"
+        }
+        return "\(index + 1)"
+    }
+
+    private func itemSubtitle(_ item: WorkoutPlayerViewModel.ExerciseProgressItem) -> String {
+        if item.isSkipped {
+            return "Пропущено"
+        }
+        return "\(item.totalSets) подходов"
+    }
+}
+
+struct WorkoutPrimaryActionStrip: View {
+    let secondaryTitle: String
+    let primaryTitle: String
+    let isPrimaryEnabled: Bool
+    let onSecondary: () -> Void
+    let onPrimary: () -> Void
+
+    var body: some View {
+        HStack(spacing: FFSpacing.sm) {
+            actionButton(
+                title: secondaryTitle,
+                isPrimary: false,
+                action: onSecondary,
+            )
+
+            actionButton(
+                title: primaryTitle,
+                isPrimary: true,
+                action: onPrimary,
+            )
+            .opacity(isPrimaryEnabled ? 1 : 0.55)
+            .disabled(!isPrimaryEnabled)
+        }
+    }
+
+    private func actionButton(
+        title: String,
+        isPrimary: Bool,
+        action: @escaping () -> Void,
+    ) -> some View {
+        Button(action: action) {
+            Text(title)
+                .font(FFTypography.body.weight(.bold))
+                .foregroundStyle(isPrimary ? Color.black : FFColors.textPrimary)
+                .frame(maxWidth: .infinity, minHeight: 56)
                 .padding(.horizontal, FFSpacing.sm)
-                .background(FFColors.background.opacity(0.22))
+                .background(isPrimary ? FFColors.primary : FFColors.surface)
                 .clipShape(RoundedRectangle(cornerRadius: 18))
                 .overlay {
-                    RoundedRectangle(cornerRadius: 18)
-                        .stroke(FFColors.gray700.opacity(0.45), lineWidth: 1)
+                    if !isPrimary {
+                        RoundedRectangle(cornerRadius: 18)
+                            .stroke(FFColors.gray700.opacity(0.55), lineWidth: 1)
+                    }
                 }
         }
         .buttonStyle(.plain)

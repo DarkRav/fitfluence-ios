@@ -512,6 +512,12 @@ enum SessionUndoAction: Equatable, Sendable {
         previousState: SessionExerciseState,
         previousLocalOnlyStructuralChanges: Bool
     )
+    case reorderExercises(
+        previousExercises: [WorkoutExercise],
+        previousStates: [SessionExerciseState],
+        previousCurrentExerciseIndex: Int,
+        previousLocalOnlyStructuralChanges: Bool
+    )
 }
 
 actor WorkoutSessionManager {
@@ -888,6 +894,60 @@ actor WorkoutSessionManager {
         }
     }
 
+    func reorderExercises(
+        _ session: WorkoutSessionState,
+        sourceExerciseId: String,
+        targetExerciseId: String,
+    ) async -> WorkoutSessionState {
+        await mutate(
+            session,
+            action: .reorderExercises(
+                previousExercises: session.workoutDetails.exercises,
+                previousStates: session.exercises,
+                previousCurrentExerciseIndex: session.currentExerciseIndex,
+                previousLocalOnlyStructuralChanges: session.hasLocalOnlyStructuralChanges,
+            ),
+        ) { target in
+            guard let sourceIndex = target.workoutDetails.exercises.firstIndex(where: { $0.id == sourceExerciseId }),
+                  let targetIndex = target.workoutDetails.exercises.firstIndex(where: { $0.id == targetExerciseId }),
+                  sourceIndex != targetIndex
+            else {
+                return
+            }
+
+            let previousExercises = target.workoutDetails.exercises
+            let previousStates = target.exercises
+            let previousCurrentExerciseIndex = target.currentExerciseIndex
+            let previousLocalOnlyFlag = target.hasLocalOnlyStructuralChanges
+            recordUndo(
+                for: target,
+                action: .reorderExercises(
+                    previousExercises: previousExercises,
+                    previousStates: previousStates,
+                    previousCurrentExerciseIndex: previousCurrentExerciseIndex,
+                    previousLocalOnlyStructuralChanges: previousLocalOnlyFlag,
+                ),
+            )
+
+            var updatedExercises = target.workoutDetails.exercises
+            let movedExercise = updatedExercises.remove(at: sourceIndex)
+            updatedExercises.insert(movedExercise, at: targetIndex)
+            target.workoutDetails = target.workoutDetails.updatingExercises(updatedExercises.normalizedWorkoutOrder())
+
+            var updatedStates = target.exercises
+            let movedState = updatedStates.remove(at: sourceIndex)
+            updatedStates.insert(movedState, at: targetIndex)
+            target.exercises = updatedStates
+
+            if let currentExerciseId = previousExercises[safe: previousCurrentExerciseIndex]?.id,
+               let newCurrentIndex = target.workoutDetails.exercises.firstIndex(where: { $0.id == currentExerciseId }) {
+                target.currentExerciseIndex = newCurrentIndex
+            }
+
+            target.hasLocalOnlyStructuralChanges = true
+        }
+    }
+
     func applySetDefaults(
         _ session: WorkoutSessionState,
         exerciseId: String,
@@ -1105,6 +1165,11 @@ actor WorkoutSessionManager {
             updatedExercises[exerciseIndex] = previousExercise.updatingOrderIndex(exerciseIndex)
             session.workoutDetails = session.workoutDetails.updatingExercises(updatedExercises)
             session.exercises[exerciseIndex] = previousState
+            session.hasLocalOnlyStructuralChanges = previousLocalOnlyStructuralChanges
+        case let .reorderExercises(previousExercises, previousStates, previousCurrentExerciseIndex, previousLocalOnlyStructuralChanges):
+            session.workoutDetails = session.workoutDetails.updatingExercises(previousExercises)
+            session.exercises = previousStates
+            session.currentExerciseIndex = previousCurrentExerciseIndex
             session.hasLocalOnlyStructuralChanges = previousLocalOnlyStructuralChanges
         }
     }
