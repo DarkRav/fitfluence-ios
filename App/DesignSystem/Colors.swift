@@ -5,11 +5,12 @@ enum FFColors {
     static let primary = Color(red: 0.10, green: 0.09, blue: 0.09)
     static let accent = Color(red: 0.55, green: 0.49, blue: 0.42)
 
-    static let background = Color(red: 0.975, green: 0.972, blue: 0.965)
-    static let surface = Color(red: 0.995, green: 0.992, blue: 0.988)
+    static let background = Color(red: 0.962, green: 0.957, blue: 0.949)
+    static let surface = Color(red: 0.984, green: 0.979, blue: 0.972)
 
     static let textPrimary = Color(red: 0.12, green: 0.11, blue: 0.10)
     static let textSecondary = Color(red: 0.29, green: 0.26, blue: 0.23)
+    static let textOnEmphasis = Color(red: 0.97, green: 0.965, blue: 0.955)
 
     static let gray100 = Color(red: 0.95, green: 0.93, blue: 0.90)
     static let gray300 = Color(red: 0.80, green: 0.76, blue: 0.71)

@@ -4,20 +4,20 @@ struct QuickActionsSection: View {
     let onOpenTemplates: () -> Void
 
     var body: some View {
-        WorkoutCardContainer(cornerRadius: 22, padding: 16) {
-            VStack(alignment: .leading, spacing: 10) {
+        FFCard {
+            VStack(alignment: .leading, spacing: FFSpacing.sm) {
                 Text("Шаблоны")
-                    .font(.headline.weight(.semibold))
+                    .font(FFTypography.h2)
                     .foregroundStyle(FFColors.textPrimary)
 
                 Button(action: onOpenTemplates) {
                     HStack(spacing: 8) {
                         Image(systemName: "square.stack.3d.up.fill")
                             .font(.system(size: 14, weight: .semibold))
-                        Text("Открыть шаблоны")
+                        Text("Мои шаблоны")
                             .font(FFTypography.caption.weight(.semibold))
                         Spacer()
-                        Text("Готовые заготовки")
+                        Text("Собственные тренировки")
                             .font(FFTypography.caption)
                     }
                     .foregroundStyle(FFColors.textSecondary)

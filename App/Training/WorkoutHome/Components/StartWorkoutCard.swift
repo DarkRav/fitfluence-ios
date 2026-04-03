@@ -7,49 +7,21 @@ struct StartWorkoutCard: View {
     let onStartWorkout: () -> Void
 
     var body: some View {
-        WorkoutCardContainer(cornerRadius: 24, padding: 16) {
-            VStack(alignment: .leading, spacing: 10) {
-                HStack(alignment: .top, spacing: 12) {
-                    VStack(alignment: .leading, spacing: 10) {
-                        Text("Начните тренировку")
-                            .font(FFTypography.h2)
-                            .foregroundStyle(FFColors.textPrimary)
+        FFCard {
+            VStack(alignment: .leading, spacing: FFSpacing.sm) {
+                Text("Начните тренировку")
+                    .font(FFTypography.h2)
+                    .foregroundStyle(FFColors.textPrimary)
 
-                        Text("Быстрый вход в текущую сессию. Планирование и шаблоны доступны ниже.")
-                            .font(FFTypography.body)
-                            .foregroundStyle(FFColors.textSecondary)
-                    }
+                Text("Быстрый вход в текущую сессию. Планирование и шаблоны доступны ниже.")
+                    .font(FFTypography.body)
+                    .foregroundStyle(FFColors.textSecondary)
 
-                    Spacer(minLength: 8)
-
-                    SyncStatusIndicator(
-                        status: syncStatus,
-                        compact: true,
-                    )
-                }
-
-                if showsCacheTag {
-                    cacheTag
-                }
-
-                WorkoutPrimaryButton(
-                    title: "Начать тренировку",
-                    isLoading: isLoading,
-                    action: onStartWorkout,
-                )
+                FFButton(title: "Начать тренировку", variant: .primary, isLoading: isLoading, action: onStartWorkout)
             }
         }
     }
 
-    private var cacheTag: some View {
-        Text("Показываем сохранённые данные")
-            .font(FFTypography.caption.weight(.semibold))
-            .foregroundStyle(FFColors.primary)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 4)
-            .background(FFColors.primary.opacity(0.14))
-            .clipShape(Capsule())
-    }
 }
 
 struct TodayWorkoutCard: View {
@@ -62,51 +34,27 @@ struct TodayWorkoutCard: View {
     let onStartWorkout: () -> Void
 
     var body: some View {
-        WorkoutCardContainer(cornerRadius: 24, padding: 16) {
-            VStack(alignment: .leading, spacing: 12) {
-                HStack(alignment: .top, spacing: 12) {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Тренировка на сегодня")
-                            .font(FFTypography.h2)
-                            .foregroundStyle(FFColors.textPrimary)
+        FFCard {
+            VStack(alignment: .leading, spacing: FFSpacing.sm) {
+                Text("Тренировка на сегодня")
+                    .font(FFTypography.h2)
+                    .foregroundStyle(FFColors.textPrimary)
 
-                        Text(title)
-                            .font(FFTypography.body.weight(.semibold))
-                            .foregroundStyle(FFColors.textPrimary)
-                            .lineLimit(2)
+                Text(title)
+                    .font(FFTypography.body.weight(.semibold))
+                    .foregroundStyle(FFColors.textPrimary)
+                    .lineLimit(2)
 
-                        Text(subtitle)
-                            .font(FFTypography.body)
-                            .foregroundStyle(FFColors.textSecondary)
-                            .lineLimit(2)
-                    }
-
-                    Spacer(minLength: 8)
-
-                    SyncStatusIndicator(
-                        status: syncStatus,
-                        compact: true,
-                    )
-                }
+                Text(subtitle)
+                    .font(FFTypography.body)
+                    .foregroundStyle(FFColors.textSecondary)
+                    .lineLimit(2)
 
                 Text(detailText)
                     .font(FFTypography.caption)
                     .foregroundStyle(FFColors.textSecondary)
 
-                if showsCacheTag {
-                    Text("Показываем сохранённые данные")
-                        .font(FFTypography.caption.weight(.semibold))
-                        .foregroundStyle(FFColors.primary)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 4)
-                        .background(FFColors.primary.opacity(0.14))
-                        .clipShape(Capsule())
-                }
-
-                WorkoutPrimaryButton(
-                    title: buttonTitle,
-                    action: onStartWorkout,
-                )
+                FFButton(title: buttonTitle, variant: .primary, action: onStartWorkout)
             }
         }
     }

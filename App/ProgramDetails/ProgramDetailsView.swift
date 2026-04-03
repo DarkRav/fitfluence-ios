@@ -1,6 +1,11 @@
 import Observation
 import SwiftUI
 
+enum ProgramDetailsDisplayMode: Equatable, Sendable {
+    case discovery
+    case active
+}
+
 enum ProgramScheduleWeekday: Int, CaseIterable, Identifiable, Hashable, Sendable {
     case monday
     case tuesday
@@ -92,6 +97,30 @@ final class PlanNavigationCoordinator {
 @Observable
 @MainActor
 final class ProgramDetailsViewModel {
+    struct TemplatePlanAnchor: Equatable, Sendable {
+        let workoutId: String
+        let dayOrder: Int
+        let day: Date
+        let status: TrainingDayStatus
+    }
+
+    struct ScheduleValidationResult: Equatable, Sendable {
+        let dates: [Date]
+        let message: String?
+    }
+
+    struct UpcomingWorkout: Equatable, Identifiable {
+        let id: String
+        let title: String
+        let dateText: String
+    }
+
+    struct WorkoutScheduleReference: Equatable {
+        let day: Date
+        let dateText: String
+        let status: TrainingDayStatus
+    }
+
     struct PlannableWorkout: Equatable, Identifiable {
         let id: String
         let dayOrder: Int
@@ -105,7 +134,11 @@ final class ProgramDetailsViewModel {
         let workoutId: String
         let presetWorkout: WorkoutDetailsModel?
         let source: WorkoutSource
+        let displayMode: ProgramDetailsDisplayMode
         let isFirstWorkoutAfterEnrollment: Bool
+        let allowsImmediateStart: Bool
+        let plannedDay: Date?
+        let plannedDateText: String?
 
         var id: String {
             "\(programId)::\(workoutId)"
@@ -127,6 +160,7 @@ final class ProgramDetailsViewModel {
         let firstWorkoutTitle: String?
         let firstWorkoutInstanceId: String?
         let plannableWorkouts: [PlannableWorkout]
+        let fixedAnchors: [TemplatePlanAnchor]
         let isPendingEnrollment: Bool
 
         var canStartFirstWorkout: Bool {
@@ -173,9 +207,18 @@ final class ProgramDetailsViewModel {
     var completedWorkoutsCount = 0
     var totalWorkoutsCount = 0
     var upcomingWorkoutTitle: String?
+    var upcomingWorkouts: [UpcomingWorkout] = []
+    var remainingPlannableWorkouts: [PlannableWorkout] = []
+    var templatePlanAnchors: [String: TemplatePlanAnchor] = [:]
+    var workoutScheduleReferences: [String: WorkoutScheduleReference] = [:]
+    var firstScheduledDay: Date?
+    var scheduledWeekdays: Set<ProgramScheduleWeekday> = []
+    var nextTemplateWorkoutId: String?
     var lastCompletionTitle: String?
     var isProgramAlreadyActive = false
     var hasResumableWorkout = false
+    var hasTodayWorkout = false
+    var isProgramScheduled = false
     var currentEnrollmentId: String?
     var nextWorkoutInstanceId: String?
     var nextWorkoutInstanceTitle: String?
@@ -187,8 +230,19 @@ final class ProgramDetailsViewModel {
     var creatorInfoMessage: String?
     var creatorProfileRoute: InfluencerPublicCard?
 
+    var canAdjustSchedule: Bool {
+        if !isProgramAlreadyActive {
+            return false
+        }
+        if !isProgramScheduled {
+            return true
+        }
+        return !remainingPlannableWorkouts.isEmpty
+    }
+
     var canAccessProgramWorkouts: Bool {
         isProgramAlreadyActive
+            && isProgramScheduled
     }
 
     var canToggleCreatorFollow: Bool {
@@ -230,6 +284,11 @@ final class ProgramDetailsViewModel {
     }
 
     func handlePrimaryProgramAction() async {
+        if isProgramAlreadyActive, !isProgramScheduled {
+            openPlanningFlow()
+            return
+        }
+
         if isProgramAlreadyActive, let nextWorkoutInstanceId {
             selectedWorkout = SelectedWorkout(
                 userSub: userSub,
@@ -237,7 +296,11 @@ final class ProgramDetailsViewModel {
                 workoutId: nextWorkoutInstanceId,
                 presetWorkout: nil,
                 source: .program,
+                displayMode: .active,
                 isFirstWorkoutAfterEnrollment: false,
+                allowsImmediateStart: true,
+                plannedDay: nil,
+                plannedDateText: nil,
             )
             return
         }
@@ -254,41 +317,69 @@ final class ProgramDetailsViewModel {
             return "Запускаем программу..."
         }
         if hasResumableWorkout {
-            return "Продолжить программу"
+            return "Продолжить"
         }
-        if isProgramAlreadyActive {
-            return "Открыть тренировку программы"
+        if isProgramAlreadyActive, hasTodayWorkout {
+            return "Начать сегодня"
         }
-        return "Начать программу"
+        if isProgramAlreadyActive, !isProgramScheduled {
+            return "Распланировать"
+        }
+        return "Начать"
     }
 
     var isPrimaryProgramActionEnabled: Bool {
         if isStartingProgram {
             return false
         }
-        if isProgramAlreadyActive {
+        if isProgramAlreadyActive, hasTodayWorkout {
             return nextWorkoutInstanceId != nil
+        }
+        if isProgramAlreadyActive, !isProgramScheduled {
+            return true
         }
         return details?.currentPublishedVersion?.id != nil
     }
 
+    var shouldShowPrimaryProgramAction: Bool {
+        if isStartingProgram {
+            return true
+        }
+        if hasResumableWorkout {
+            return true
+        }
+        if isProgramAlreadyActive, !isProgramScheduled {
+            return true
+        }
+        if isProgramAlreadyActive {
+            return hasTodayWorkout
+        }
+        return true
+    }
+
     var primaryProgramActionHint: String? {
         if isStartingProgram {
-            return "Подключаем программу и готовим следующий шаг."
+            return "Подключаем программу."
         }
         if hasResumableWorkout {
             if let title = nextWorkoutInstanceTitle?.trimmedNilIfEmpty {
-                return "Вернёт к текущей тренировке: \(title)."
+                return title
             }
-            return "Вернёт к текущей тренировке."
+            return "Текущая тренировка"
+        }
+        if isProgramAlreadyActive, hasTodayWorkout {
+            if let title = nextWorkoutInstanceTitle?.trimmedNilIfEmpty {
+                return title
+            }
+            return "Тренировка на сегодня"
+        }
+        if isProgramAlreadyActive, !isProgramScheduled {
+            return "Сначала сохраните расписание."
         }
         if isProgramAlreadyActive {
-            if let title = nextWorkoutInstanceTitle?.trimmedNilIfEmpty {
-                return "Откроет текущую доступную тренировку: \(title)."
-            }
-            return "Откроет доступную тренировку из вашей программы."
+            return "Посмотрите ближайшие даты ниже или измените расписание."
         }
-        return "После записи предложим сразу начать первую тренировку или разложить программу по плану."
+        return "После старта откроем следующий шаг."
     }
 
     private func startProgram() async {
@@ -378,6 +469,57 @@ final class ProgramDetailsViewModel {
         isWorkoutsPresented = true
     }
 
+    func canInteractWithWorkoutStructureItem(_ workoutID: String) -> Bool {
+        if isProgramAlreadyActive {
+            return true
+        }
+        return canAccessProgramWorkouts && !workoutID.isEmpty
+    }
+
+    func scheduleReference(for workoutID: String) -> WorkoutScheduleReference? {
+        workoutScheduleReferences[workoutID]
+    }
+
+    var scheduleActionTitle: String {
+        isProgramScheduled ? "Изменить расписание" : "Распланировать"
+    }
+
+    var structureHint: String {
+        if isProgramAlreadyActive, !isProgramScheduled {
+            return "Сначала распланируйте даты."
+        }
+        if isProgramAlreadyActive {
+            return "Нажмите на тренировку."
+        }
+        return "Список тренировок откроется после старта программы."
+    }
+
+    func shouldLaunchWorkoutDirectly(for workoutID: String) -> Bool {
+        guard nextWorkoutInstanceId?.trimmedNilIfEmpty != nil else { return false }
+        guard workoutID == nextTemplateWorkoutId else { return false }
+        if hasResumableWorkout {
+            return true
+        }
+        guard let reference = scheduleReference(for: workoutID) else { return false }
+        return reference.status == .inProgress || Calendar.current.isDateInToday(reference.day)
+    }
+
+    func launchNextWorkoutIfPossible() {
+        guard let nextWorkoutInstanceId else { return }
+        selectedWorkout = SelectedWorkout(
+            userSub: userSub,
+            programId: programId,
+            workoutId: nextWorkoutInstanceId,
+            presetWorkout: nil,
+            source: .program,
+            displayMode: .active,
+            isFirstWorkoutAfterEnrollment: false,
+            allowsImmediateStart: true,
+            plannedDay: nil,
+            plannedDateText: nil,
+        )
+    }
+
     func workoutPicked(_ workoutID: String) {
         guard canAccessProgramWorkouts else { return }
         selectedWorkout = SelectedWorkout(
@@ -386,7 +528,11 @@ final class ProgramDetailsViewModel {
             workoutId: workoutID,
             presetWorkout: nil,
             source: .program,
+            displayMode: .active,
             isFirstWorkoutAfterEnrollment: false,
+            allowsImmediateStart: false,
+            plannedDay: nil,
+            plannedDateText: nil,
         )
     }
 
@@ -403,7 +549,32 @@ final class ProgramDetailsViewModel {
             workoutId: route.workoutId,
             presetWorkout: route.workout,
             source: route.source,
+            displayMode: .active,
             isFirstWorkoutAfterEnrollment: route.isFirstWorkoutAfterEnrollment,
+            allowsImmediateStart: true,
+            plannedDay: nil,
+            plannedDateText: nil,
+        )
+    }
+
+    func previewWorkoutFromStructure(
+        _ workoutID: String,
+        plannedDay: Date?,
+        plannedDateText: String?,
+        displayMode: ProgramDetailsDisplayMode = .active
+    ) {
+        guard canInteractWithWorkoutStructureItem(workoutID) else { return }
+        selectedWorkout = SelectedWorkout(
+            userSub: userSub,
+            programId: programId,
+            workoutId: workoutID,
+            presetWorkout: nil,
+            source: .program,
+            displayMode: displayMode,
+            isFirstWorkoutAfterEnrollment: false,
+            allowsImmediateStart: false,
+            plannedDay: plannedDay,
+            plannedDateText: plannedDateText,
         )
     }
 
@@ -506,11 +677,30 @@ final class ProgramDetailsViewModel {
             programId: programId,
             workoutIds: workouts.map(\.id),
         )
+        let templatePlanAnchors = await resolveTemplatePlanAnchors()
+        self.templatePlanAnchors = templatePlanAnchors
         completedWorkoutsCount = statuses.values.count(where: { $0 == .completed })
-        upcomingWorkoutTitle = workouts
-            .sorted(by: { $0.dayOrder < $1.dayOrder })
-            .first(where: { statuses[$0.id] != .completed })?
-            .title ?? workouts.sorted(by: { $0.dayOrder < $1.dayOrder }).first?.title
+        let sortedWorkouts = workouts.sorted(by: { $0.dayOrder < $1.dayOrder })
+        let nextTemplateWorkout = sortedWorkouts.first(where: { statuses[$0.id] != .completed }) ?? sortedWorkouts.first
+        upcomingWorkoutTitle = nextTemplateWorkout?.title
+        nextTemplateWorkoutId = nextTemplateWorkout?.id
+        remainingPlannableWorkouts = sortedWorkouts
+            .filter {
+                templateIsReplannable(
+                    $0.id,
+                    progressStatuses: statuses,
+                    templatePlanAnchors: templatePlanAnchors,
+                    allTemplates: sortedWorkouts
+                )
+            }
+            .map { template in
+                PlannableWorkout(
+                    id: template.id,
+                    dayOrder: template.dayOrder,
+                    title: template.title?.trimmedNilIfEmpty ?? "Тренировка \(template.dayOrder)",
+                    workout: mapTemplateWorkout(template),
+                )
+            }
 
         if let last = await trainingStore.history(userSub: userSub, source: nil, limit: 40)
             .first(where: { $0.programId == programId })
@@ -521,10 +711,376 @@ final class ProgramDetailsViewModel {
         } else {
             lastCompletionTitle = nil
         }
+
+        let scheduleContext = await resolveScheduleContext()
+        upcomingWorkouts = scheduleContext.upcomingWorkouts
+        workoutScheduleReferences = scheduleContext.references
+        firstScheduledDay = scheduleContext.firstDay
+        scheduledWeekdays = scheduleContext.weekdays
     }
 
     private var cacheKey: String {
         "program.details:\(programId)"
+    }
+
+    private struct ScheduleContext {
+        let upcomingWorkouts: [UpcomingWorkout]
+        let references: [String: WorkoutScheduleReference]
+        let firstDay: Date?
+        let weekdays: Set<ProgramScheduleWeekday>
+    }
+
+    private func resolveScheduleContext() async -> ScheduleContext {
+        let today = Calendar.current.startOfDay(for: Date())
+
+        if let remotePlans = await remoteProgramSchedulePlans(), !remotePlans.isEmpty {
+            let formatter = DateFormatter()
+            formatter.locale = Locale(identifier: "ru_RU")
+            formatter.setLocalizedDateFormatFromTemplate("EEE d MMM")
+
+            let normalizedRemotePlans: [(plan: TrainingDayPlan, status: TrainingDayStatus)] = remotePlans.map { plan in
+                (
+                    plan: plan,
+                    status: normalizedDisplayStatus(plan.status, day: plan.day)
+                )
+            }
+            let relevantPlans = normalizedRemotePlans
+                .filter { $0.status == .planned || $0.status == .inProgress }
+                .sorted { $0.plan.day < $1.plan.day }
+
+            let references = makeWorkoutScheduleReferences(
+                from: normalizedRemotePlans,
+                formatter: formatter,
+                today: today
+            )
+
+            let weekdays = Set(
+                relevantPlans.compactMap { plan in
+                    ProgramScheduleWeekday.from(date: plan.plan.day, calendar: Calendar.current)
+                }
+            )
+
+            let upcoming = relevantPlans
+                .filter { Calendar.current.startOfDay(for: $0.plan.day) >= today }
+                .prefix(3)
+                .map { plan in
+                    UpcomingWorkout(
+                        id: plan.plan.id,
+                        title: plan.plan.title,
+                        dateText: formatter.string(from: plan.plan.day).capitalized
+                    )
+                }
+
+            return ScheduleContext(
+                upcomingWorkouts: upcoming,
+                references: references,
+                firstDay: relevantPlans.first?.plan.day,
+                weekdays: weekdays
+            )
+        }
+
+        var plans: [TrainingDayPlan] = []
+        let targetCount = max(1, details?.workouts?.count ?? 0)
+        for monthOffset in 0..<6 {
+            let month = Calendar.current.date(byAdding: .month, value: monthOffset, to: today) ?? today
+            let monthPlans = await trainingStore.plans(userSub: userSub, month: month)
+            plans.append(contentsOf: monthPlans)
+            let matchedTemplateIDs = Set(
+                plans
+                    .filter { $0.programId == programId }
+                    .compactMap { $0.workoutId?.trimmedNilIfEmpty }
+            )
+            if matchedTemplateIDs.count >= targetCount {
+                break
+            }
+        }
+
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "ru_RU")
+        formatter.setLocalizedDateFormatFromTemplate("EEE d MMM")
+
+        let programPlans = plans.filter { $0.programId == programId }
+        let normalizedPlans: [(plan: TrainingDayPlan, status: TrainingDayStatus)] = programPlans.map { plan in
+            (
+                plan: plan,
+                status: normalizedDisplayStatus(plan.status, day: plan.day)
+            )
+        }
+        let relevantPlans = normalizedPlans
+            .filter { $0.status == .planned || $0.status == .inProgress }
+            .sorted { $0.plan.day < $1.plan.day }
+
+        let references = makeWorkoutScheduleReferences(
+            from: normalizedPlans,
+            formatter: formatter,
+            today: today
+        )
+
+        let weekdays = Set(
+            relevantPlans.compactMap { plan in
+                ProgramScheduleWeekday.from(date: plan.plan.day, calendar: Calendar.current)
+            }
+        )
+
+        let upcoming = relevantPlans
+            .filter { Calendar.current.startOfDay(for: $0.plan.day) >= today }
+            .prefix(3)
+            .map { plan in
+                UpcomingWorkout(
+                    id: plan.plan.id,
+                    title: plan.plan.title,
+                    dateText: formatter.string(from: plan.plan.day).capitalized
+                )
+            }
+
+        return ScheduleContext(
+            upcomingWorkouts: upcoming,
+            references: references,
+            firstDay: relevantPlans.first?.plan.day,
+            weekdays: weekdays
+        )
+    }
+
+    private func makeWorkoutScheduleReferences(
+        from plans: [(plan: TrainingDayPlan, status: TrainingDayStatus)],
+        formatter: DateFormatter,
+        today: Date
+    ) -> [String: WorkoutScheduleReference] {
+        var references: [String: WorkoutScheduleReference] = [:]
+        var priorities: [String: Int] = [:]
+
+        for candidate in plans {
+            let scheduleKey = candidate.plan.workoutDetails?.id.trimmedNilIfEmpty
+                ?? candidate.plan.workoutId?.trimmedNilIfEmpty
+            guard let workoutID = scheduleKey else { continue }
+
+            let priority = scheduleReferencePriority(
+                for: candidate.status,
+                day: candidate.plan.day,
+                today: today
+            )
+
+            if let existingPriority = priorities[workoutID], existingPriority > priority {
+                continue
+            }
+
+            if let existingPriority = priorities[workoutID],
+               existingPriority == priority,
+               let existing = references[workoutID],
+               existing.day > candidate.plan.day {
+                continue
+            }
+
+            priorities[workoutID] = priority
+            references[workoutID] = WorkoutScheduleReference(
+                day: candidate.plan.day,
+                dateText: formatter.string(from: candidate.plan.day).capitalized,
+                status: candidate.status
+            )
+        }
+
+        return references
+    }
+
+    private func scheduleReferencePriority(
+        for status: TrainingDayStatus,
+        day: Date,
+        today: Date
+    ) -> Int {
+        let normalizedDay = Calendar.current.startOfDay(for: day)
+        switch status {
+        case .inProgress:
+            return 5
+        case .planned:
+            return normalizedDay >= today ? 4 : 3
+        case .completed:
+            return 2
+        case .missed, .skipped:
+            return 1
+        }
+    }
+
+    private func resolveTemplatePlanAnchors() async -> [String: TemplatePlanAnchor] {
+        if let remotePlans = await remoteProgramSchedulePlans(), !remotePlans.isEmpty {
+            var anchors: [String: TemplatePlanAnchor] = [:]
+            for plan in remotePlans where plan.programId == programId {
+                guard let workoutID = plan.workoutDetails?.id.trimmedNilIfEmpty ?? plan.workoutId?.trimmedNilIfEmpty else { continue }
+                guard let dayOrder = plan.workoutDetails?.dayOrder, dayOrder > 0 else { continue }
+
+                let candidate = TemplatePlanAnchor(
+                    workoutId: workoutID,
+                    dayOrder: dayOrder,
+                    day: Calendar.current.startOfDay(for: plan.day),
+                    status: normalizedDisplayStatus(plan.status, day: plan.day),
+                )
+
+                if let existing = anchors[workoutID] {
+                    if candidate.day > existing.day {
+                        anchors[workoutID] = candidate
+                    }
+                } else {
+                    anchors[workoutID] = candidate
+                }
+            }
+            return anchors
+        }
+
+        let today = Calendar.current.startOfDay(for: Date())
+        var plans: [TrainingDayPlan] = []
+
+        for monthOffset in -6..<6 {
+            let month = Calendar.current.date(byAdding: .month, value: monthOffset, to: today) ?? today
+            let monthPlans = await trainingStore.plans(userSub: userSub, month: month)
+            plans.append(contentsOf: monthPlans)
+        }
+
+        var anchors: [String: TemplatePlanAnchor] = [:]
+        for plan in plans where plan.programId == programId {
+            guard let workoutID = plan.workoutId?.trimmedNilIfEmpty else { continue }
+            guard let dayOrder = plan.workoutDetails?.dayOrder, dayOrder > 0 else { continue }
+
+            let candidate = TemplatePlanAnchor(
+                workoutId: workoutID,
+                dayOrder: dayOrder,
+                day: Calendar.current.startOfDay(for: plan.day),
+                status: normalizedDisplayStatus(plan.status, day: plan.day),
+            )
+
+            if let existing = anchors[workoutID] {
+                if candidate.day > existing.day {
+                    anchors[workoutID] = candidate
+                }
+            } else {
+                anchors[workoutID] = candidate
+            }
+        }
+
+        return anchors
+    }
+
+    private func remoteProgramSchedulePlans() async -> [TrainingDayPlan]? {
+        guard let athleteTrainingClient,
+              networkMonitor.currentStatus,
+              let enrollmentId = currentEnrollmentId?.trimmedNilIfEmpty,
+              let details
+        else {
+            return nil
+        }
+
+        let result = await athleteTrainingClient.enrollmentSchedule(enrollmentId: enrollmentId)
+        guard case let .success(response) = result else {
+            return nil
+        }
+
+        let templatesById = Dictionary(uniqueKeysWithValues: (details.workouts ?? []).map { ($0.id, $0) })
+
+        return response.workouts.compactMap { workout in
+            guard workout.programId?.trimmedNilIfEmpty == programId else { return nil }
+            guard let rawDate = workout.scheduledDate?.trimmedNilIfEmpty
+                    ?? workout.startedAt?.trimmedNilIfEmpty
+                    ?? workout.completedAt?.trimmedNilIfEmpty,
+                  let day = Self.scheduleDateFormatter.date(from: rawDate)
+                    ?? ISO8601DateFormatter().date(from: rawDate)
+            else {
+                return nil
+            }
+
+            let templateId = workout.workoutTemplateId?.trimmedNilIfEmpty
+            let template = templateId.flatMap { templatesById[$0] }
+            let mappedWorkout = template.map(mapTemplateWorkout)
+
+            return TrainingDayPlan(
+                id: "remote-schedule-\(workout.id)",
+                userSub: userSub,
+                day: Calendar.current.startOfDay(for: day),
+                status: mapWorkoutInstanceStatus(workout.status),
+                programId: programId,
+                programTitle: details.title.trimmedNilIfEmpty,
+                workoutId: templateId ?? workout.id,
+                title: workout.title?.trimmedNilIfEmpty ?? template?.title?.trimmedNilIfEmpty ?? "Тренировка",
+                source: .program,
+                workoutDetails: mappedWorkout
+            )
+        }
+    }
+
+    private func mapWorkoutInstanceStatus(_ status: AthleteWorkoutInstanceStatus?) -> TrainingDayStatus {
+        switch status {
+        case .completed:
+            return .completed
+        case .missed:
+            return .missed
+        case .abandoned:
+            return .skipped
+        case .inProgress:
+            return .inProgress
+        case .planned, .none:
+            return .planned
+        }
+    }
+
+    private func templateIsReplannable(
+        _ workoutID: String,
+        progressStatuses: [String: WorkoutProgressStatus],
+        templatePlanAnchors: [String: TemplatePlanAnchor],
+        allTemplates: [WorkoutTemplate]
+    ) -> Bool {
+        if progressStatuses[workoutID] == .completed {
+            return false
+        }
+
+        guard let planStatus = templatePlanAnchors[workoutID]?.status else {
+            return true
+        }
+
+        switch planStatus {
+        case .planned:
+            return true
+        case .missed, .skipped:
+            return !hasLockedProgressAfterWorkout(
+                workoutID,
+                progressStatuses: progressStatuses,
+                templatePlanAnchors: templatePlanAnchors,
+                allTemplates: allTemplates
+            )
+        case .inProgress, .completed:
+            return false
+        }
+    }
+
+    private func hasLockedProgressAfterWorkout(
+        _ workoutID: String,
+        progressStatuses: [String: WorkoutProgressStatus],
+        templatePlanAnchors: [String: TemplatePlanAnchor],
+        allTemplates: [WorkoutTemplate]
+    ) -> Bool {
+        guard let currentDayOrder = allTemplates.first(where: { $0.id == workoutID })?.dayOrder else {
+            return false
+        }
+
+        for template in allTemplates where template.dayOrder > currentDayOrder {
+            if progressStatuses[template.id] == .completed {
+                return true
+            }
+
+            switch templatePlanAnchors[template.id]?.status {
+            case .inProgress, .completed:
+                return true
+            default:
+                continue
+            }
+        }
+
+        return false
+    }
+
+    private func normalizedDisplayStatus(_ status: TrainingDayStatus, day: Date) -> TrainingDayStatus {
+        let normalizedDay = Calendar.current.startOfDay(for: day)
+        let today = Calendar.current.startOfDay(for: Date())
+        if normalizedDay >= today, status.isMissedLike {
+            return .planned
+        }
+        return status
     }
 
     private func persistPendingEnrollment(programVersionId: String) async {
@@ -543,11 +1099,41 @@ final class ProgramDetailsViewModel {
     }
 
     private func openEnrollmentConfirmation(isPendingEnrollment: Bool) {
-        guard let details else { return }
+        guard let route = makePlanningRoute(isPendingEnrollment: isPendingEnrollment) else { return }
+        enrollmentConfirmation = route
+    }
+
+    func planningSetupRoute() -> ProgramOnboardingRoute? {
+        guard canAdjustSchedule else { return nil }
+        return makePlanningRoute(isPendingEnrollment: false)
+    }
+
+    private func makePlanningRoute(isPendingEnrollment: Bool) -> ProgramOnboardingRoute? {
+        guard let details else { return nil }
         let sortedWorkouts = (details.workouts ?? []).sorted(by: { $0.dayOrder < $1.dayOrder })
-        let fallbackWorkout = sortedWorkouts.first
-        let fallbackTitle = fallbackWorkout?.title?.trimmedNilIfEmpty ?? fallbackWorkout.map { "День \($0.dayOrder)" }
-        let preview = onboardingPreview(for: sortedWorkouts)
+        let planningWorkouts = isProgramScheduled && !remainingPlannableWorkouts.isEmpty
+            ? remainingPlannableWorkouts
+            : sortedWorkouts.map { template in
+                PlannableWorkout(
+                    id: template.id,
+                    dayOrder: template.dayOrder,
+                    title: template.title?.trimmedNilIfEmpty ?? "Тренировка \(template.dayOrder)",
+                    workout: mapTemplateWorkout(template),
+                )
+            }
+        let previewTemplates = planningWorkouts.map { workout in
+            WorkoutTemplate(
+                id: workout.id,
+                dayOrder: workout.dayOrder,
+                title: workout.title,
+                coachNote: workout.workout.coachNote,
+                exercises: nil,
+                media: nil
+            )
+        }
+        let fallbackWorkout = planningWorkouts.first
+        let fallbackTitle = fallbackWorkout?.title.trimmedNilIfEmpty ?? fallbackWorkout.map { "День \($0.dayOrder)" }
+        let preview = onboardingPreview(for: previewTemplates)
         let frequencyPerWeek = details.currentPublishedVersion?.frequencyPerWeek
         let level = localizedLevel(details.currentPublishedVersion?.level)
         let estimatedDurationMinutes = estimatedProgramDurationMinutes(details: details)
@@ -556,16 +1142,13 @@ final class ProgramDetailsViewModel {
 
         let firstWorkoutInstanceId = nextWorkoutInstanceId?.trimmedNilIfEmpty
         let firstWorkoutTitle = nextWorkoutInstanceTitle?.trimmedNilIfEmpty ?? fallbackTitle
-        let plannableWorkouts = sortedWorkouts.map { template in
-            PlannableWorkout(
-                id: template.id,
-                dayOrder: template.dayOrder,
-                title: template.title?.trimmedNilIfEmpty ?? "Тренировка \(template.dayOrder)",
-                workout: mapTemplateWorkout(template),
-            )
-        }
+        let fixedAnchors = templatePlanAnchors.values
+            .filter { anchor in
+                !planningWorkouts.contains(where: { $0.id == anchor.workoutId })
+            }
+            .sorted(by: { $0.dayOrder < $1.dayOrder })
 
-        enrollmentConfirmation = ProgramOnboardingRoute(
+        return ProgramOnboardingRoute(
             id: "enrollment-confirmation-\(programId)-\(Date().timeIntervalSince1970)",
             programId: programId,
             programTitle: details.title,
@@ -582,7 +1165,8 @@ final class ProgramDetailsViewModel {
             estimatedDurationMinutes: estimatedDurationMinutes,
             firstWorkoutTitle: firstWorkoutTitle,
             firstWorkoutInstanceId: firstWorkoutInstanceId,
-            plannableWorkouts: plannableWorkouts,
+            plannableWorkouts: planningWorkouts,
+            fixedAnchors: fixedAnchors,
             isPendingEnrollment: isPendingEnrollment,
         )
     }
@@ -787,19 +1371,53 @@ final class ProgramDetailsViewModel {
         guard let details else { return nil }
         let templates = (details.workouts ?? []).sorted(by: { $0.dayOrder < $1.dayOrder })
         guard !templates.isEmpty else { return nil }
+        let statuses = await progressStore.statuses(
+            userSub: userSub,
+            programId: programId,
+            workoutIds: templates.map(\.id),
+        )
+        let templatePlanAnchors = await resolveTemplatePlanAnchors()
+        let remainingTemplates = templates.filter {
+            templateIsReplannable(
+                $0.id,
+                progressStatuses: statuses,
+                templatePlanAnchors: templatePlanAnchors,
+                allTemplates: templates
+            )
+        }
+        guard !remainingTemplates.isEmpty else { return nil }
 
         let recommended = ProgramScheduleWeekday.recommended(
             for: details.currentPublishedVersion?.frequencyPerWeek ?? min(templates.count, 3)
         )
         let resolvedDays = weekdays.isEmpty ? Set(recommended) : weekdays
-        let scheduledDays = generateScheduleDates(
+        guard let validation = Self.validateSchedule(
             startDate: startDate,
             weekdays: resolvedDays,
-            count: templates.count,
-        )
-        guard scheduledDays.count == templates.count else { return nil }
+            plannableWorkouts: remainingTemplates.map { template in
+                PlannableWorkout(
+                    id: template.id,
+                    dayOrder: template.dayOrder,
+                    title: template.title?.trimmedNilIfEmpty ?? "Тренировка \(template.dayOrder)",
+                    workout: mapTemplateWorkout(template),
+                )
+            },
+            fixedAnchors: templatePlanAnchors.values.sorted(by: { $0.dayOrder < $1.dayOrder }),
+        ) else {
+            successMessage = nil
+            error = UserFacingError(
+                title: "Не удалось изменить расписание",
+                message: "Выбранные дни не помещаются между уже зафиксированными тренировками программы.",
+            )
+            return nil
+        }
 
-        for (index, template) in templates.enumerated() {
+        error = nil
+        successMessage = validation.message?.trimmedNilIfEmpty
+
+        let scheduledDays = validation.dates
+
+        for (index, template) in remainingTemplates.enumerated() {
             let workout = mapTemplateWorkout(template)
             let plan = TrainingDayPlan(
                 id: localProgramPlanID(workoutId: template.id),
@@ -816,6 +1434,8 @@ final class ProgramDetailsViewModel {
             await trainingStore.schedule(plan)
         }
 
+        isProgramScheduled = true
+        await refreshProgress(with: details)
         return scheduledDays.first
     }
 
@@ -849,7 +1469,17 @@ final class ProgramDetailsViewModel {
             return nil
         }
 
+        await trainingStore.deleteProgramPlans(
+            userSub: userSub,
+            programId: programId,
+            statuses: [.planned, .inProgress]
+        )
+
         await refreshEnrollmentContext()
+        isProgramScheduled = hasScheduledWorkout(in: response.workouts)
+        if let details {
+            await refreshProgress(with: details)
+        }
 
         return response.workouts
             .compactMap { workout in
@@ -860,30 +1490,89 @@ final class ProgramDetailsViewModel {
             .first
     }
 
-    private func generateScheduleDates(
+    static func validateSchedule(
         startDate: Date,
         weekdays: Set<ProgramScheduleWeekday>,
-        count: Int,
-    ) -> [Date] {
-        guard count > 0, !weekdays.isEmpty else { return [] }
+        plannableWorkouts: [PlannableWorkout],
+        fixedAnchors: [TemplatePlanAnchor]? = nil,
+    ) -> ScheduleValidationResult? {
+        guard !plannableWorkouts.isEmpty, !weekdays.isEmpty else { return nil }
 
-        let minimumDay = Calendar.current.startOfDay(for: Date())
-        var cursor = max(Calendar.current.startOfDay(for: startDate), minimumDay)
+        let calendar = Calendar.current
+        let minimumDay = calendar.startOfDay(for: Date())
+        let anchors = fixedAnchors ?? []
+        let normalizedStart = max(calendar.startOfDay(for: startDate), minimumDay)
         var result: [Date] = []
+        let sortedWorkouts = plannableWorkouts.sorted(by: { $0.dayOrder < $1.dayOrder })
+
+        for workout in sortedWorkouts {
+            let previousGenerated = result.last
+            let previousAnchor = anchors
+                .filter { $0.dayOrder < workout.dayOrder }
+                .map(\.day)
+                .max()
+            let nextAnchor = anchors
+                .filter { $0.dayOrder > workout.dayOrder }
+                .map(\.day)
+                .min()
+
+            let earliest = [
+                normalizedStart,
+                previousGenerated.flatMap { calendar.date(byAdding: .day, value: 1, to: $0) },
+                previousAnchor.flatMap { calendar.date(byAdding: .day, value: 1, to: $0) },
+            ]
+            .compactMap { $0 }
+            .max() ?? normalizedStart
+
+            guard let scheduledDay = nextMatchingDate(
+                onOrAfter: earliest,
+                weekdays: weekdays,
+                before: nextAnchor
+            ) else {
+                return nil
+            }
+
+            result.append(scheduledDay)
+        }
+
+        if result.isEmpty {
+            return nil
+        }
+
+        return ScheduleValidationResult(
+            dates: result,
+            message: anchors.isEmpty ? nil : "Мы перестроим только оставшиеся тренировки и сохраним уже зафиксированные даты."
+        )
+    }
+
+    private static func nextMatchingDate(
+        onOrAfter day: Date,
+        weekdays: Set<ProgramScheduleWeekday>,
+        before limitDay: Date?,
+    ) -> Date? {
+        let calendar = Calendar.current
+        let minimumDay = calendar.startOfDay(for: day)
+        let normalizedLimit = limitDay.map { calendar.startOfDay(for: $0) }
+        var cursor = minimumDay
         var attempts = 0
 
-        while result.count < count, attempts < count * 21 {
+        while attempts < 365 {
             attempts += 1
-            if let weekday = ProgramScheduleWeekday.from(date: cursor, calendar: Calendar.current),
+            if let normalizedLimit, cursor >= normalizedLimit {
+                return nil
+            }
+
+            if let weekday = ProgramScheduleWeekday.from(date: cursor, calendar: calendar),
                weekdays.contains(weekday)
             {
-                result.append(cursor)
+                return cursor
             }
-            guard let next = Calendar.current.date(byAdding: .day, value: 1, to: cursor) else { break }
+
+            guard let next = calendar.date(byAdding: .day, value: 1, to: cursor) else { break }
             cursor = next
         }
 
-        return result
+        return nil
     }
 
     private func localProgramPlanID(workoutId: String) -> String {
@@ -1022,6 +1711,8 @@ final class ProgramDetailsViewModel {
             let isActive = status.enrollment?.status.uppercased() == EnrollmentStatus.active.rawValue
             isProgramAlreadyActive = isActive
             hasResumableWorkout = isActive && status.resumeWorkout != nil
+            hasTodayWorkout = isActive && status.todayWorkout != nil && status.resumeWorkout == nil
+            isProgramScheduled = isActive && hasScheduledWorkout(in: status)
             nextWorkoutInstanceId = isActive ? status.launchWorkout?.workoutInstanceId : nil
             nextWorkoutInstanceTitle = isActive ? status.launchWorkout?.title?.trimmedNilIfEmpty : nil
             upcomingWorkoutTitle = isActive
@@ -1038,8 +1729,34 @@ final class ProgramDetailsViewModel {
             currentEnrollmentId = nil
             isProgramAlreadyActive = false
             hasResumableWorkout = false
+            hasTodayWorkout = false
+            isProgramScheduled = false
             nextWorkoutInstanceId = nil
             nextWorkoutInstanceTitle = nil
+        }
+    }
+
+    private func hasScheduledWorkout(in status: AthleteProgramStatusResponse) -> Bool {
+        let targets = [
+            status.resumeWorkout,
+            status.currentWorkout,
+            status.todayWorkout,
+            status.nextWorkout,
+            status.launchWorkout,
+        ]
+
+        return targets.contains { target in
+            guard let target else { return false }
+            if target.status == .inProgress {
+                return true
+            }
+            return target.scheduledDate?.trimmedNilIfEmpty != nil
+        }
+    }
+
+    private func hasScheduledWorkout(in workouts: [AthleteWorkoutInstance]) -> Bool {
+        workouts.contains { workout in
+            workout.scheduledDate?.trimmedNilIfEmpty != nil
         }
     }
 
@@ -1068,23 +1785,27 @@ private extension ProgramScheduleWeekday {
 struct ProgramDetailsScreen: View {
     @State var viewModel: ProgramDetailsViewModel
     @State private var isProgramScreenOpenTracked = false
+    @State private var isPlanningSetupPresented = false
     let apiClient: APIClientProtocol?
     let environment: AppEnvironment?
+    let displayMode: ProgramDetailsDisplayMode
     let onOpenProgramPlan: (() -> Void)?
     let onOpenWorkoutHub: (() -> Void)?
-    let onOpenProgram: ((String) -> Void)?
+    let onOpenProgram: ((String, ProgramDetailsDisplayMode) -> Void)?
 
     init(
         viewModel: ProgramDetailsViewModel,
         apiClient: APIClientProtocol?,
         environment: AppEnvironment? = nil,
+        displayMode: ProgramDetailsDisplayMode = .discovery,
         onOpenProgramPlan: (() -> Void)? = nil,
         onOpenWorkoutHub: (() -> Void)? = nil,
-        onOpenProgram: ((String) -> Void)? = nil,
+        onOpenProgram: ((String, ProgramDetailsDisplayMode) -> Void)? = nil,
     ) {
         _viewModel = State(initialValue: viewModel)
         self.apiClient = apiClient
         self.environment = environment
+        self.displayMode = displayMode
         self.onOpenProgramPlan = onOpenProgramPlan
         self.onOpenWorkoutHub = onOpenWorkoutHub
         self.onOpenProgram = onOpenProgram
@@ -1111,11 +1832,12 @@ struct ProgramDetailsScreen: View {
                         onRetry: { Task { await viewModel.retry() } },
                     )
                 } else if let details = viewModel.details {
-                    header(details: details)
-                    authorCard(details: details)
-                    decisionGuideCard(details: details)
-                    progressCard(details: details)
-                    workouts(details: details)
+                    heroCard(details: details)
+                    if displayMode == .discovery {
+                        discoverySections(details: details)
+                    } else {
+                        workouts(details: details)
+                    }
                     if let error = viewModel.error {
                         FFCard {
                             VStack(alignment: .leading, spacing: FFSpacing.xxs) {
@@ -1144,9 +1866,34 @@ struct ProgramDetailsScreen: View {
             .padding(.vertical, FFSpacing.md)
         }
         .background(FFColors.background)
-        .safeAreaInset(edge: .bottom) {
-            if let details = viewModel.details {
-                stickyPrimaryAction(details: details)
+        .sheet(isPresented: $isPlanningSetupPresented) {
+            if let route = viewModel.planningSetupRoute() {
+                ProgramPlanningSetupView(
+                    route: route,
+                    title: viewModel.isProgramScheduled ? "Изменить расписание" : "Распланировать программу",
+                    description: viewModel.isProgramScheduled
+                        ? (viewModel.completedWorkoutsCount > 0
+                            ? "Завершённые тренировки останутся на своих датах. Пропущенные тоже попадут в перенос, если цикл ещё не ушёл дальше выполненными тренировками."
+                            : "Выберите новые дни недели и дату старта. Мы перестроим оставшиеся тренировки.")
+                        : "Выберите дни недели. Мы равномерно разложим все тренировки программы по календарю.",
+                    buttonTitle: viewModel.isProgramScheduled ? "Сохранить расписание" : "Сохранить в план",
+                    initialSelectedDays: viewModel.scheduledWeekdays,
+                    initialStartDate: viewModel.firstScheduledDay,
+                    onClose: {
+                        isPlanningSetupPresented = false
+                    },
+                    onApply: { startDate, weekdays in
+                        Task {
+                            _ = await viewModel.scheduleProgramWorkouts(
+                                startDate: startDate,
+                                weekdays: weekdays,
+                            )
+                            await MainActor.run {
+                                isPlanningSetupPresented = false
+                            }
+                        }
+                    },
+                )
             }
         }
         .task {
@@ -1171,7 +1918,7 @@ struct ProgramDetailsScreen: View {
                         viewModel.workoutPicked(workoutID)
                     },
                 )
-                .navigationTitle("Тренировки")
+                .navigationTitle("Тренировки программы")
             } else {
                 FFErrorState(
                     title: "Тренировки недоступны",
@@ -1216,7 +1963,7 @@ struct ProgramDetailsScreen: View {
         .navigationDestination(item: $viewModel.workoutIntro) { route in
             WorkoutIntroView(
                 workout: route.workout,
-                onStartWorkout: {
+                onPrimaryAction: {
                     viewModel.launchWorkoutFromIntro(route)
                 },
             )
@@ -1234,7 +1981,7 @@ struct ProgramDetailsScreen: View {
                 ),
                 environment: environment,
                 onProgramTap: { programID in
-                    onOpenProgram?(programID)
+                    onOpenProgram?(programID, .discovery)
                 },
                 onCreatorUpdated: { updated in
                     viewModel.applyCreatorUpdate(updated)
@@ -1250,7 +1997,11 @@ struct ProgramDetailsScreen: View {
                 apiClient: apiClient,
                 presetWorkout: selectedWorkout.presetWorkout,
                 source: selectedWorkout.source,
+                displayMode: selectedWorkout.displayMode,
                 isFirstWorkoutInProgramFlow: selectedWorkout.isFirstWorkoutAfterEnrollment,
+                allowsImmediateStart: selectedWorkout.allowsImmediateStart,
+                plannedDay: selectedWorkout.plannedDay,
+                plannedDateText: selectedWorkout.plannedDateText,
                 onBackToWorkoutHub: onOpenWorkoutHub,
                 onOpenPlan: onOpenProgramPlan,
             )
@@ -1286,292 +2037,225 @@ struct ProgramDetailsScreen: View {
             .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    private func header(details: ProgramDetails) -> some View {
+    private func heroCard(details: ProgramDetails) -> some View {
         FFCard {
-            VStack(alignment: .leading, spacing: FFSpacing.sm) {
-                if let imageURL = resolveImageURL(details.cover?.url ?? details.media?.first?.url) {
-                    FFRemoteImage(url: imageURL) {
-                        placeholderImage
-                    }
-                    .frame(height: 180)
-                    .frame(maxWidth: .infinity)
-                    .clipped()
-                    .clipShape(RoundedRectangle(cornerRadius: FFTheme.Radius.control))
-                }
-
+            VStack(alignment: .leading, spacing: FFSpacing.md) {
                 Text(details.title)
                     .font(FFTypography.h1)
                     .foregroundStyle(FFColors.textPrimary)
                     .multilineTextAlignment(.leading)
 
-                if let shortDescription = details.description?.trimmedNilIfEmpty {
-                    Text(shortDescription)
-                        .font(FFTypography.body)
-                        .foregroundStyle(FFColors.textSecondary)
-                        .multilineTextAlignment(.leading)
-                }
-
-                let highlights = quickFactItems(details: details)
-                if !highlights.isEmpty {
-                    LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: FFSpacing.xs) {
-                        ForEach(highlights, id: \.title) { item in
-                            parameterChip(title: item.title, value: item.value)
-                        }
-                    }
-                }
-
-                if let hint = viewModel.primaryProgramActionHint {
-                    HStack(alignment: .top, spacing: FFSpacing.xs) {
-                        Image(systemName: "arrow.forward.circle.fill")
-                            .font(.system(size: 15, weight: .semibold))
-                            .foregroundStyle(FFColors.accent)
-                            .padding(.top, 1)
-                        Text(hint)
-                            .font(FFTypography.caption)
-                            .foregroundStyle(FFColors.textSecondary)
-                            .multilineTextAlignment(.leading)
-                    }
-                }
-            }
-        }
-    }
-
-    private func authorCard(details: ProgramDetails) -> some View {
-        let creatorName = viewModel.creatorCard?.displayName
-            ?? details.influencer?.displayName.trimmedNilIfEmpty
-            ?? "Атлет не указан"
-        let creatorTag = details.goals?.first?.trimmedNilIfEmpty
-        let trustLine = viewModel.creatorCard?.bio?.trimmedNilIfEmpty
-            ?? details.influencer?.bio?.trimmedNilIfEmpty
-        let canOpenProfile = viewModel.creatorCard != nil
-
-        return FFCard {
-            VStack(alignment: .leading, spacing: FFSpacing.sm) {
-                Text("Атлет программы")
-                    .font(FFTypography.caption.weight(.semibold))
-                    .foregroundStyle(FFColors.textSecondary)
-
-                Button {
-                    if canOpenProfile {
-                        viewModel.openCreatorProfile()
-                    }
-                } label: {
-                    HStack(spacing: FFSpacing.sm) {
-                        authorAvatar(details: details)
-
-                        VStack(alignment: .leading, spacing: FFSpacing.xxs) {
-                            Text(creatorName)
-                                .font(FFTypography.body.weight(.semibold))
-                                .foregroundStyle(FFColors.textPrimary)
-                                .lineLimit(1)
-
-                            if let creatorTag {
-                                Text(creatorTag)
-                                    .font(FFTypography.caption.weight(.semibold))
-                                    .foregroundStyle(FFColors.accent)
-                                    .padding(.horizontal, FFSpacing.xs)
-                                    .padding(.vertical, FFSpacing.xxs)
-                                    .background(FFColors.accent.opacity(0.14))
-                                    .clipShape(Capsule())
-                            }
-
-                            if let trustLine {
-                                Text(trustLine)
-                                    .font(FFTypography.caption)
-                                    .foregroundStyle(FFColors.textSecondary)
-                                    .lineLimit(1)
-                            }
-                        }
-
-                        Spacer(minLength: FFSpacing.sm)
-
-                        if canOpenProfile {
-                            Image(systemName: "chevron.right")
-                                .font(.system(size: 14, weight: .semibold))
-                                .foregroundStyle(FFColors.textSecondary)
-                        }
-                    }
-                }
-                .buttonStyle(.plain)
-                .disabled(!canOpenProfile)
-
-                if let infoMessage = viewModel.creatorInfoMessage {
-                    Text(infoMessage)
-                        .font(FFTypography.caption)
-                        .foregroundStyle(FFColors.textSecondary)
-                }
-            }
-        }
-    }
-
-    private func authorAvatar(details: ProgramDetails) -> some View {
-        Group {
-            if let creatorURL = resolvedCreatorAvatarURL(details: details) {
-                FFRemoteImage(url: creatorURL) {
-                    avatarPlaceholder
-                }
-            } else {
-                avatarPlaceholder
-            }
-        }
-        .frame(width: 52, height: 52)
-        .clipShape(Circle())
-    }
-
-    private var avatarPlaceholder: some View {
-        Circle()
-            .fill(FFColors.gray700)
-            .overlay {
-                Image(systemName: "person.fill")
-                    .font(.system(size: 20, weight: .semibold))
-                    .foregroundStyle(FFColors.gray300)
-            }
-    }
-
-    private func decisionGuideCard(details: ProgramDetails) -> some View {
-        let rows = overviewRows(details: details)
-
-        return FFCard {
-            VStack(alignment: .leading, spacing: FFSpacing.sm) {
-                Text("Что важно понять перед стартом")
-                    .font(FFTypography.h2)
-                    .foregroundStyle(FFColors.textPrimary)
-
-                ForEach(Array(rows.enumerated()), id: \.offset) { index, row in
-                    VStack(alignment: .leading, spacing: FFSpacing.xxs) {
-                        Label(row.title, systemImage: row.systemImage)
+                if displayMode == .discovery {
+                    if let authorLine = discoveryAuthorLine(details: details) {
+                        Text(authorLine)
                             .font(FFTypography.caption.weight(.semibold))
                             .foregroundStyle(FFColors.textSecondary)
-                        Text(row.value)
-                            .font(FFTypography.body)
-                            .foregroundStyle(FFColors.textPrimary)
-                            .multilineTextAlignment(.leading)
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading)
 
-                    if index < rows.count - 1 {
-                        Divider()
+                    if let descriptionLine = programDescriptionLine(details: details) {
+                        Text(descriptionLine)
+                            .font(FFTypography.body)
+                            .foregroundStyle(FFColors.textSecondary)
+                            .lineLimit(4)
                     }
+
+                    let facts = quickFactItems(details: details)
+                    if !facts.isEmpty {
+                        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: FFSpacing.sm), count: 2), spacing: FFSpacing.sm) {
+                            ForEach(Array(facts.enumerated()), id: \.offset) { _, item in
+                                FFCard {
+                                    VStack(alignment: .leading, spacing: FFSpacing.xxs) {
+                                        Text(item.title)
+                                            .font(FFTypography.caption)
+                                            .foregroundStyle(FFColors.textSecondary)
+                                        Text(item.value)
+                                            .font(FFTypography.body.weight(.semibold))
+                                            .foregroundStyle(FFColors.textPrimary)
+                                            .fixedSize(horizontal: false, vertical: true)
+                                    }
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    VStack(alignment: .leading, spacing: FFSpacing.xxs) {
+                        Text(programStatusTitle)
+                            .font(FFTypography.body.weight(.semibold))
+                            .foregroundStyle(FFColors.textPrimary)
+
+                        if let statusLine = programStatusLine(details: details) {
+                            Text(statusLine)
+                                .font(FFTypography.body)
+                                .foregroundStyle(FFColors.textSecondary)
+                                .lineLimit(2)
+                        }
+
+                        if let referenceLine = programReferenceLine(details: details) {
+                            Text(referenceLine)
+                                .font(FFTypography.caption)
+                                .foregroundStyle(FFColors.textSecondary)
+                                .lineLimit(2)
+                        }
+
+                        if let descriptionLine = programDescriptionLine(details: details) {
+                            Text(descriptionLine)
+                                .font(FFTypography.body)
+                                .foregroundStyle(FFColors.textSecondary)
+                                .lineLimit(3)
+                        }
+                    }
+                }
+
+                if displayMode == .active, let progressText = progressSummary {
+                    VStack(alignment: .leading, spacing: FFSpacing.xs) {
+                        Text(progressText)
+                            .font(FFTypography.caption)
+                            .foregroundStyle(FFColors.textSecondary)
+
+                        GeometryReader { proxy in
+                            ZStack(alignment: .leading) {
+                                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                    .fill(FFColors.gray700.opacity(0.9))
+
+                                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                    .fill(FFColors.accent)
+                                    .frame(width: max(8, proxy.size.width * progressValue))
+                            }
+                        }
+                        .frame(height: 8)
+                    }
+                }
+
+                if displayMode == .active, !viewModel.upcomingWorkouts.isEmpty {
+                    VStack(alignment: .leading, spacing: FFSpacing.sm) {
+                        Text("Ближайшие")
+                            .font(FFTypography.body.weight(.semibold))
+                            .foregroundStyle(FFColors.textPrimary)
+
+                        ForEach(viewModel.upcomingWorkouts) { workout in
+                            HStack(alignment: .firstTextBaseline, spacing: FFSpacing.sm) {
+                                Text(workout.dateText)
+                                    .font(FFTypography.caption.weight(.semibold))
+                                    .foregroundStyle(FFColors.textSecondary)
+                                    .frame(width: 88, alignment: .leading)
+
+                                Text(workout.title)
+                                    .font(FFTypography.body)
+                                    .foregroundStyle(FFColors.textPrimary)
+                                    .lineLimit(1)
+
+                                Spacer(minLength: FFSpacing.xs)
+                            }
+                        }
+                    }
+                }
+
+                if displayMode == .discovery {
+                    discoveryActionBlock(details: details)
+                } else if viewModel.shouldShowPrimaryProgramAction {
+                    FFButton(
+                        title: viewModel.primaryProgramActionTitle,
+                        variant: viewModel.isPrimaryProgramActionEnabled ? .primary : .disabled,
+                        action: {
+                            if viewModel.isProgramAlreadyActive, !viewModel.isProgramScheduled {
+                                isPlanningSetupPresented = true
+                            } else {
+                                Task { await viewModel.handlePrimaryProgramAction() }
+                            }
+                        }
+                    )
+                }
+
+                if displayMode == .active, viewModel.canAdjustSchedule, viewModel.isProgramScheduled {
+                    FFButton(
+                        title: viewModel.scheduleActionTitle,
+                        variant: .secondary,
+                        action: {
+                            isPlanningSetupPresented = true
+                        }
+                    )
                 }
             }
         }
     }
 
-    @ViewBuilder
-    private func progressCard(details: ProgramDetails) -> some View {
-        let hasProgressContext = viewModel.isProgramAlreadyActive
-            || viewModel.completedWorkoutsCount > 0
-            || viewModel.totalWorkoutsCount > 0
-            || viewModel.nextWorkoutInstanceTitle?.trimmedNilIfEmpty != nil
-            || viewModel.lastCompletionTitle?.trimmedNilIfEmpty != nil
-
-        if hasProgressContext {
-            FFCard {
-                VStack(alignment: .leading, spacing: FFSpacing.sm) {
-                    Text("Статус программы")
-                        .font(FFTypography.h2)
-                        .foregroundStyle(FFColors.textPrimary)
-
-                    if viewModel.isProgramAlreadyActive {
-                        HStack(spacing: FFSpacing.xs) {
-                            Image(systemName: viewModel.hasResumableWorkout ? "play.circle.fill" : "checkmark.circle.fill")
-                                .font(.system(size: 16, weight: .semibold))
-                                .foregroundStyle(FFColors.accent)
-                            Text(viewModel.hasResumableWorkout ? "Есть тренировка для продолжения" : "Программа активна")
-                                .font(FFTypography.body.weight(.semibold))
-                                .foregroundStyle(FFColors.textPrimary)
-                        }
-                    } else if details.currentPublishedVersion?.id != nil {
-                        Text("Программа ещё не подключена.")
-                            .font(FFTypography.body.weight(.semibold))
-                            .foregroundStyle(FFColors.textPrimary)
-                    }
-
-                    if viewModel.totalWorkoutsCount > 0 {
-                        Text("\(viewModel.completedWorkoutsCount) из \(viewModel.totalWorkoutsCount) тренировок уже пройдено.")
-                            .font(FFTypography.body)
-                            .foregroundStyle(FFColors.textSecondary)
-                    }
-
-                    if let nextTitle = viewModel.nextWorkoutInstanceTitle?.trimmedNilIfEmpty {
-                        detailLine(title: "Следующий шаг", value: nextTitle)
-                    }
-
-                    if let lastCompletion = viewModel.lastCompletionTitle?.trimmedNilIfEmpty {
-                        detailLine(title: "Последнее выполнение", value: lastCompletion)
-                    }
-                }
+    private func discoverySections(details: ProgramDetails) -> some View {
+        VStack(spacing: FFSpacing.md) {
+            discoveryValueCard(details: details)
+            discoveryFormatCard(details: details)
+            if discoveryHasCoachInfo(details: details) {
+                discoveryCoachCard(details: details)
             }
         }
     }
 
     private func workouts(details: ProgramDetails) -> some View {
-        FFCard {
+        let sortedWorkouts = (details.workouts ?? []).sorted(by: { $0.dayOrder < $1.dayOrder })
+
+        return FFCard {
             VStack(alignment: .leading, spacing: FFSpacing.sm) {
-                Text("Что внутри программы")
+                Text("Тренировки")
                     .font(FFTypography.h2)
                     .foregroundStyle(FFColors.textPrimary)
 
-                if let workouts = details.workouts, !workouts.isEmpty {
-                    if viewModel.canAccessProgramWorkouts {
-                        FFButton(
-                            title: "Открыть все тренировки",
-                            variant: .secondary,
-                            action: { viewModel.openWorkouts() },
-                        )
-                    } else {
-                        Text("После записи откроем ближайшую тренировку и полный список занятий.")
-                            .font(FFTypography.body)
-                            .foregroundStyle(FFColors.textSecondary)
-                    }
+                Text(viewModel.structureHint)
+                    .font(FFTypography.body)
+                    .foregroundStyle(FFColors.textSecondary)
 
-                    ForEach(workouts.sorted(by: { $0.dayOrder < $1.dayOrder })) { workout in
-                        VStack(alignment: .leading, spacing: FFSpacing.xs) {
-                            HStack(alignment: .top, spacing: FFSpacing.sm) {
-                                Text("День \(workout.dayOrder)")
-                                    .font(FFTypography.caption.weight(.semibold))
-                                    .foregroundStyle(FFColors.accent)
-                                    .padding(.horizontal, FFSpacing.xs)
-                                    .padding(.vertical, FFSpacing.xxs)
-                                    .background(FFColors.accent.opacity(0.14))
-                                    .clipShape(Capsule())
+                if !sortedWorkouts.isEmpty {
+                    ForEach(sortedWorkouts) { workout in
+                        Button {
+                            handleWorkoutSelection(workout)
+                        } label: {
+                            VStack(alignment: .leading, spacing: FFSpacing.xs) {
+                                HStack(alignment: .top, spacing: FFSpacing.sm) {
+                                    Text("День \(workout.dayOrder)")
+                                        .font(FFTypography.caption.weight(.semibold))
+                                        .foregroundStyle(FFColors.textSecondary)
 
-                                VStack(alignment: .leading, spacing: FFSpacing.xxs) {
-                                    Text(workout.title?.trimmedNilIfEmpty ?? "Тренировка")
-                                        .font(FFTypography.body.weight(.semibold))
-                                        .foregroundStyle(FFColors.textPrimary)
+                                    VStack(alignment: .leading, spacing: FFSpacing.xxs) {
+                                        Text(workout.title?.trimmedNilIfEmpty ?? "Тренировка")
+                                            .font(FFTypography.body.weight(.semibold))
+                                            .foregroundStyle(FFColors.textPrimary)
 
-                                    let metadata = workoutMetadata(workout)
-                                    if !metadata.isEmpty {
-                                        Text(metadata.joined(separator: " • "))
-                                            .font(FFTypography.caption)
+                                        let metadata = workoutMetadata(workout)
+                                        if !metadata.isEmpty {
+                                            Text(metadata.joined(separator: " • "))
+                                                .font(FFTypography.caption)
+                                                .foregroundStyle(FFColors.textSecondary)
+                                        }
+
+                                        if let scheduleLine = workoutScheduleLine(for: workout) {
+                                            Text(scheduleLine)
+                                                .font(FFTypography.caption.weight(.semibold))
+                                                .foregroundStyle(FFColors.accent)
+                                        }
+                                    }
+
+                                    Spacer(minLength: FFSpacing.xs)
+
+                                    if viewModel.canInteractWithWorkoutStructureItem(workout.id) {
+                                        Image(systemName: "chevron.right")
+                                            .font(.system(size: 12, weight: .semibold))
                                             .foregroundStyle(FFColors.textSecondary)
                                     }
                                 }
 
-                                Spacer(minLength: FFSpacing.xs)
+                                if let note = workout.coachNote?.trimmedNilIfEmpty {
+                                    Text(note)
+                                        .font(FFTypography.caption)
+                                        .foregroundStyle(FFColors.textSecondary)
+                                }
                             }
-
-                            if let workoutTitle = viewModel.upcomingWorkoutTitle,
-                               workoutTitle == (workout.title ?? "Тренировка")
-                            {
-                                Text(viewModel.hasResumableWorkout ? "Текущая тренировка" : "Ближайшая тренировка")
-                                    .font(FFTypography.caption.weight(.semibold))
-                                    .foregroundStyle(FFColors.accent)
-                            }
-                            if let note = workout.coachNote?.trimmedNilIfEmpty {
-                                Text(note)
-                                    .font(FFTypography.caption)
-                                    .foregroundStyle(FFColors.textSecondary)
-                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .contentShape(Rectangle())
                         }
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(FFSpacing.sm)
-                        .background(FFColors.surface)
-                        .clipShape(RoundedRectangle(cornerRadius: FFTheme.Radius.control))
-                        .overlay {
-                            RoundedRectangle(cornerRadius: FFTheme.Radius.control)
-                                .stroke(FFColors.gray700, lineWidth: 1)
+                        .buttonStyle(.plain)
+                        .disabled(!viewModel.canInteractWithWorkoutStructureItem(workout.id))
+
+                        if workout.id != sortedWorkouts.last?.id {
+                            Divider()
                         }
                     }
                 } else {
@@ -1584,37 +2268,415 @@ struct ProgramDetailsScreen: View {
     }
 
     @ViewBuilder
-    private func stickyPrimaryAction(details: ProgramDetails) -> some View {
-        if details.currentPublishedVersion?.id != nil {
-            VStack(spacing: FFSpacing.xs) {
-                Divider()
-                if let hint = viewModel.primaryProgramActionHint {
-                    Text(hint)
-                        .font(FFTypography.caption)
-                        .foregroundStyle(FFColors.textSecondary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+    private func discoveryActionBlock(details _: ProgramDetails) -> some View {
+        if viewModel.isProgramAlreadyActive {
+            FFButton(
+                title: "Программа уже получена",
+                variant: .disabled,
+                action: {}
+            )
+        } else {
+            FFButton(
+                title: "Получить программу",
+                variant: viewModel.isPrimaryProgramActionEnabled ? .primary : .disabled,
+                action: {
+                    Task { await viewModel.handlePrimaryProgramAction() }
                 }
-                FFButton(
-                    title: viewModel.primaryProgramActionTitle,
-                    variant: viewModel.isPrimaryProgramActionEnabled ? .primary : .disabled,
-                    action: { Task { await viewModel.handlePrimaryProgramAction() } },
-                )
-                .accessibilityLabel(viewModel.primaryProgramActionTitle)
-                if viewModel.isProgramAlreadyActive, !(details.workouts ?? []).isEmpty {
-                    FFButton(
-                        title: "Распланировать в календарь",
-                        variant: .secondary,
-                        action: { viewModel.openPlanningFlow() },
-                    )
+            )
+        }
+    }
+
+    private func discoveryValueCard(details: ProgramDetails) -> some View {
+        FFCard {
+            VStack(alignment: .leading, spacing: FFSpacing.sm) {
+                Text("Для кого")
+                    .font(FFTypography.h2)
+                    .foregroundStyle(FFColors.textPrimary)
+
+                Text(audienceSummary(details: details))
+                    .font(FFTypography.body)
+                    .foregroundStyle(FFColors.textSecondary)
+
+                let goals = discoveryGoals(details: details)
+                if !goals.isEmpty {
+                    VStack(alignment: .leading, spacing: FFSpacing.xs) {
+                        ForEach(goals, id: \.self) { goal in
+                            HStack(alignment: .top, spacing: FFSpacing.xs) {
+                                Circle()
+                                    .fill(FFColors.accent)
+                                    .frame(width: 6, height: 6)
+                                    .padding(.top, 7)
+
+                                Text(goal)
+                                    .font(FFTypography.body)
+                                    .foregroundStyle(FFColors.textPrimary)
+                            }
+                        }
+                    }
                 }
             }
-            .padding(.horizontal, FFSpacing.md)
-            .padding(.top, FFSpacing.xs)
-            .padding(.bottom, FFSpacing.xs)
-            .background(FFColors.background.opacity(0.96))
-        } else {
-            EmptyView()
         }
+    }
+
+    private func discoveryFormatCard(details: ProgramDetails) -> some View {
+        FFCard {
+            VStack(alignment: .leading, spacing: FFSpacing.sm) {
+                Text("Как устроена программа")
+                    .font(FFTypography.h2)
+                    .foregroundStyle(FFColors.textPrimary)
+
+                let rows = discoveryFormatRows(details: details)
+                ForEach(Array(rows.enumerated()), id: \.offset) { index, row in
+                    VStack(alignment: .leading, spacing: FFSpacing.xxs) {
+                        Text(row.title)
+                            .font(FFTypography.caption)
+                            .foregroundStyle(FFColors.textSecondary)
+                        Text(row.value)
+                            .font(FFTypography.body.weight(.semibold))
+                            .foregroundStyle(FFColors.textPrimary)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                    if index < rows.count - 1 {
+                        Divider()
+                    }
+                }
+            }
+        }
+    }
+
+    private func discoveryCoachCard(details: ProgramDetails) -> some View {
+        FFCard {
+            VStack(alignment: .leading, spacing: FFSpacing.sm) {
+                Text("Автор программы")
+                    .font(FFTypography.h2)
+                    .foregroundStyle(FFColors.textPrimary)
+
+                Button {
+                    viewModel.openCreatorProfile()
+                } label: {
+                    HStack(spacing: FFSpacing.sm) {
+                        if let avatarURL = viewModel.creatorCard?.avatar ?? details.influencer?.avatar.flatMap({ URL(string: $0.url) }) {
+                            FFRemoteImage(url: avatarURL) {
+                                Circle()
+                                    .fill(FFColors.gray700)
+                            }
+                            .frame(width: 56, height: 56)
+                            .clipShape(Circle())
+                        } else {
+                            Circle()
+                                .fill(FFColors.gray700)
+                                .frame(width: 56, height: 56)
+                                .overlay {
+                                    Image(systemName: "person.crop.circle.fill")
+                                        .font(.system(size: 28))
+                                        .foregroundStyle(FFColors.textSecondary)
+                                }
+                        }
+
+                        VStack(alignment: .leading, spacing: FFSpacing.xxs) {
+                            Text(discoveryCoachName(details: details))
+                                .font(FFTypography.body.weight(.semibold))
+                                .foregroundStyle(FFColors.textPrimary)
+
+                            if let bio = discoveryCoachBio(details: details) {
+                                Text(bio)
+                                    .font(FFTypography.body)
+                                    .foregroundStyle(FFColors.textSecondary)
+                                    .lineLimit(3)
+                            }
+                        }
+
+                        Spacer(minLength: FFSpacing.xs)
+
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(FFColors.textSecondary)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+        }
+    }
+
+    private func overviewCard(details: ProgramDetails) -> some View {
+        FFCard {
+            VStack(alignment: .leading, spacing: FFSpacing.sm) {
+                Text("О программе")
+                    .font(FFTypography.h2)
+                    .foregroundStyle(FFColors.textPrimary)
+
+                ForEach(Array(overviewRows(details: details).enumerated()), id: \.offset) { index, row in
+                    HStack(alignment: .top, spacing: FFSpacing.sm) {
+                        Image(systemName: row.systemImage)
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundStyle(FFColors.textSecondary)
+                            .frame(width: 18, height: 18)
+
+                        VStack(alignment: .leading, spacing: FFSpacing.xxs) {
+                            Text(row.title)
+                                .font(FFTypography.caption)
+                                .foregroundStyle(FFColors.textSecondary)
+                            Text(row.value)
+                                .font(FFTypography.body)
+                                .foregroundStyle(FFColors.textPrimary)
+                        }
+
+                        Spacer(minLength: FFSpacing.xs)
+                    }
+
+                    if index < overviewRows(details: details).count - 1 {
+                        Divider()
+                    }
+                }
+            }
+        }
+    }
+
+    private var programStatusTitle: String {
+        if viewModel.hasResumableWorkout {
+            return "Тренировка в процессе"
+        }
+        if viewModel.isProgramAlreadyActive, !viewModel.isProgramScheduled {
+            return "Программа не распланирована"
+        }
+        if viewModel.isProgramAlreadyActive, viewModel.hasTodayWorkout {
+            return "Тренировка сегодня"
+        }
+        if viewModel.isProgramAlreadyActive {
+            return "Следующая тренировка"
+        }
+        return "Программа ещё не начата"
+    }
+
+    private func programStatusLine(details: ProgramDetails) -> String? {
+        if let hint = viewModel.primaryProgramActionHint?.trimmedNilIfEmpty {
+            return hint
+        }
+        if let summary = programSummaryLine(
+            workoutsCount: details.workouts?.count ?? 0,
+            frequencyPerWeek: details.currentPublishedVersion?.frequencyPerWeek
+        ) {
+            return summary
+        }
+        return details.description?.trimmedNilIfEmpty
+    }
+
+    private var progressSummary: String? {
+        guard viewModel.totalWorkoutsCount > 0 else { return nil }
+        return "\(viewModel.completedWorkoutsCount) из \(viewModel.totalWorkoutsCount) тренировок"
+    }
+
+    private var progressValue: Double {
+        guard viewModel.totalWorkoutsCount > 0 else { return 0 }
+        return min(max(Double(viewModel.completedWorkoutsCount) / Double(viewModel.totalWorkoutsCount), 0), 1)
+    }
+
+    private func programSummaryLine(workoutsCount: Int, frequencyPerWeek: Int?) -> String? {
+        var chunks: [String] = []
+
+        if let frequencyPerWeek, frequencyPerWeek > 0 {
+            chunks.append("\(frequencyPerWeek) \(pluralizedWorkoutsPerWeek(frequencyPerWeek))")
+            let weeks = Int(ceil(Double(max(1, workoutsCount)) / Double(frequencyPerWeek)))
+            if weeks > 0 {
+                chunks.insert("\(weeks) \(pluralizedWeeks(weeks))", at: 0)
+            }
+        } else if workoutsCount > 0 {
+            chunks.append("\(workoutsCount) \(pluralizedWorkouts(workoutsCount))")
+        }
+
+        return chunks.isEmpty ? nil : chunks.joined(separator: " • ")
+    }
+
+    private func programReferenceLine(details: ProgramDetails) -> String? {
+        var parts: [String] = []
+
+        if let summary = programSummaryLine(
+            workoutsCount: details.workouts?.count ?? 0,
+            frequencyPerWeek: details.currentPublishedVersion?.frequencyPerWeek
+        ) {
+            parts.append(summary)
+        }
+
+        if let level = localizedLevel(details.currentPublishedVersion?.level) {
+            parts.append(level)
+        }
+
+        if let equipment = resolvedEquipment(details: details), !equipment.isEmpty {
+            parts.append(equipment.prefix(2).joined(separator: ", "))
+        }
+
+        return parts.isEmpty ? nil : parts.joined(separator: " • ")
+    }
+
+    private func programDescriptionLine(details: ProgramDetails) -> String? {
+        guard let description = details.description?.trimmedNilIfEmpty else { return nil }
+        if description == programStatusLine(details: details) {
+            return nil
+        }
+        return description
+    }
+
+    private func discoveryAuthorLine(details: ProgramDetails) -> String? {
+        let authorName = viewModel.creatorCard?.displayName.trimmedNilIfEmpty ?? details.influencer?.displayName.trimmedNilIfEmpty
+        let summary = programReferenceLine(details: details)
+
+        if let authorName, let summary, !summary.isEmpty {
+            return "Автор: \(authorName) • \(summary)"
+        }
+        if let authorName {
+            return "Автор: \(authorName)"
+        }
+        if let summary, !summary.isEmpty {
+            return summary
+        }
+        return nil
+    }
+
+    private func discoveryPreviewLine(details: ProgramDetails) -> String? {
+        if let summary = programSummaryLine(
+            workoutsCount: details.workouts?.count ?? 0,
+            frequencyPerWeek: details.currentPublishedVersion?.frequencyPerWeek
+        ) {
+            return summary
+        }
+        if let duration = estimatedProgramDurationMinutes(details: details) {
+            return "Средняя тренировка занимает около \(duration) мин."
+        }
+        return nil
+    }
+
+    private func discoveryGoals(details: ProgramDetails) -> [String] {
+        let goals = details.goals?
+            .compactMap(\.trimmedNilIfEmpty)
+            .prefix(3)
+            .map { $0 } ?? []
+
+        if !goals.isEmpty {
+            return goals
+        }
+
+        if let description = details.description?.trimmedNilIfEmpty {
+            return [description]
+        }
+
+        return []
+    }
+
+    private func discoveryFormatRows(details: ProgramDetails) -> [(title: String, value: String)] {
+        var rows: [(String, String)] = []
+
+        if let summary = programSummaryLine(
+            workoutsCount: details.workouts?.count ?? 0,
+            frequencyPerWeek: details.currentPublishedVersion?.frequencyPerWeek
+        ) {
+            rows.append(("Ритм", summary))
+        }
+
+        if let duration = estimatedProgramDurationMinutes(details: details) {
+            rows.append(("Длительность сессии", "Около \(duration) мин"))
+        }
+
+        if let level = localizedLevel(details.currentPublishedVersion?.level) {
+            rows.append(("Уровень", level))
+        }
+
+        let equipment = equipmentFullSummary(details: details)
+        if equipment != "Требования к оборудованию пока не указаны." {
+            rows.append(("Оборудование", equipment))
+        }
+
+        return Array(rows.prefix(4))
+    }
+
+    private func discoveryHasCoachInfo(details: ProgramDetails) -> Bool {
+        discoveryCoachName(details: details).isEmpty == false
+    }
+
+    private func discoveryCoachName(details: ProgramDetails) -> String {
+        viewModel.creatorCard?.displayName.trimmedNilIfEmpty
+            ?? details.influencer?.displayName.trimmedNilIfEmpty
+            ?? "Атлет Fitfluence"
+    }
+
+    private func discoveryCoachBio(details: ProgramDetails) -> String? {
+        viewModel.creatorCard?.bio?.trimmedNilIfEmpty
+            ?? details.influencer?.bio?.trimmedNilIfEmpty
+    }
+
+    private func workoutScheduleLine(for workout: WorkoutTemplate) -> String? {
+        if let reference = viewModel.scheduleReference(for: workout.id) {
+            switch reference.status {
+            case .inProgress:
+                if Calendar.current.isDateInToday(reference.day) {
+                    return "Сегодня"
+                }
+                return reference.dateText
+            case .planned:
+                if Calendar.current.isDateInToday(reference.day) {
+                    return "Сегодня"
+                }
+                return reference.dateText
+            case .completed:
+                return reference.dateText
+            case .missed, .skipped:
+                return reference.dateText
+            }
+        }
+
+        if viewModel.nextTemplateWorkoutId == workout.id, viewModel.hasResumableWorkout {
+            return "В процессе"
+        }
+
+        return nil
+    }
+
+    private func handleWorkoutSelection(_ workout: WorkoutTemplate) {
+        if displayMode == .discovery {
+            let reference = viewModel.scheduleReference(for: workout.id)
+            viewModel.previewWorkoutFromStructure(
+                workout.id,
+                plannedDay: reference?.day,
+                plannedDateText: reference?.dateText,
+                displayMode: .discovery
+            )
+            return
+        }
+
+        if viewModel.isProgramAlreadyActive, !viewModel.isProgramScheduled {
+            isPlanningSetupPresented = true
+            return
+        }
+
+        if viewModel.shouldLaunchWorkoutDirectly(for: workout.id) {
+            viewModel.launchNextWorkoutIfPossible()
+            return
+        }
+
+        if let reference = viewModel.scheduleReference(for: workout.id) {
+            viewModel.previewWorkoutFromStructure(
+                workout.id,
+                plannedDay: reference.day,
+                plannedDateText: reference.dateText,
+                displayMode: .active
+            )
+            return
+        }
+
+        if viewModel.isProgramAlreadyActive {
+            viewModel.previewWorkoutFromStructure(
+                workout.id,
+                plannedDay: viewModel.firstScheduledDay,
+                plannedDateText: nil,
+                displayMode: .active
+            )
+        }
+    }
+
+    private func openProgramSchedule(focusedDay: Date?) {
+        PlanNavigationCoordinator.shared.request(day: focusedDay)
+        onOpenProgramPlan?()
     }
 
     private func quickFactItems(details: ProgramDetails) -> [(title: String, value: String)] {
@@ -1625,10 +2687,17 @@ struct ProgramDetailsScreen: View {
         }
 
         items.append(("Частота", shortFrequencySummary(details: details)))
-        items.append(("Формат", shortFormatSummary(details: details)))
-        items.append(("Оборудование", equipmentHeroSummary(details: details)))
 
-        return items
+        if let duration = estimatedProgramDurationMinutes(details: details) {
+            items.append(("Сессия", "~\(duration) мин"))
+        }
+
+        let equipment = equipmentHeroSummary(details: details)
+        if equipment != "Не указано" {
+            items.append(("Оборудование", equipment))
+        }
+
+        return Array(items.prefix(3))
     }
 
     private func overviewRows(details: ProgramDetails) -> [(title: String, value: String, systemImage: String)] {
@@ -1703,7 +2772,7 @@ struct ProgramDetailsScreen: View {
         if workoutsCount > 0 {
             parts.append("Структурированный план из \(workoutsCount) \(pluralizedWorkouts(workoutsCount)).")
         } else {
-            parts.append("Структура тренировок пока не раскрыта в карточке программы.")
+            parts.append("Список тренировок пока не раскрыт в карточке программы.")
         }
 
         if let duration = estimatedProgramDurationMinutes(details: details) {
@@ -1733,6 +2802,9 @@ struct ProgramDetailsScreen: View {
     private func postEnrollmentSummary(details: ProgramDetails) -> String {
         if viewModel.hasResumableWorkout {
             return "Программа уже активна. Основная кнопка вернёт к текущей тренировке, а дополнительная поможет разложить оставшиеся дни по плану."
+        }
+        if viewModel.isProgramAlreadyActive, !viewModel.isProgramScheduled {
+            return "Программа подключена, но тренировки ещё не разложены по дням. Сначала сохраните расписание, затем откроем доступные сессии."
         }
         if viewModel.isProgramAlreadyActive {
             return "Программа уже активна. Основная кнопка откроет ближайшую тренировку, затем при желании можно сохранить весь цикл в календарь."
@@ -1891,6 +2963,17 @@ struct ProgramDetailsScreen: View {
         pluralizedWorkouts(value)
     }
 
+    private func pluralizedWorkoutsPerWeek(_ value: Int) -> String {
+        switch value {
+        case 1:
+            return "тренировка в неделю"
+        case 2 ... 4:
+            return "тренировки в неделю"
+        default:
+            return "тренировок в неделю"
+        }
+    }
+
     private func pluralizedExercises(_ value: Int) -> String {
         let remainder10 = value % 10
         let remainder100 = value % 100
@@ -1901,16 +2984,6 @@ struct ProgramDetailsScreen: View {
             return "упражнения"
         }
         return "упражнений"
-    }
-
-    private func resolvedCreatorAvatarURL(details: ProgramDetails) -> URL? {
-        if let avatar = viewModel.creatorCard?.avatar {
-            return resolveURL(avatar.absoluteString)
-        }
-        if let influencerAvatar = details.influencer?.avatar?.url {
-            return resolveURL(influencerAvatar)
-        }
-        return nil
     }
 
     private func resolveURL(_ pathOrURL: String) -> URL? {
@@ -2063,7 +3136,7 @@ struct ProgramOnboardingView: View {
                     )
                 }
                 FFButton(
-                    title: "Открыть план программы",
+                    title: "Открыть календарный план",
                     variant: .secondary,
                     action: onOpenProgramPlan,
                 )
@@ -2101,15 +3174,15 @@ struct ProgramOnboardingView: View {
 
     private var nextStepSummaryText: String {
         if route.isPendingEnrollment {
-            return "Запись сохранена локально. Как только сеть появится, программа синхронизируется. Уже сейчас можно посмотреть структуру программы и, если доступна первая тренировка, начать её без лишних шагов."
+            return "Запись сохранена локально. Как только сеть появится, программа синхронизируется. Следующий обязательный шаг после подключения: выбрать дни и сохранить расписание."
         }
         if route.canStartFirstWorkout {
             return "Самый прямой путь: сразу запустить первую тренировку. Если хотите сначала разложить весь цикл по календарю, это остаётся вторым шагом."
         }
         if route.canPlanProgram {
-            return "Первая тренировка пока не готова к мгновенному старту, поэтому следующий лучший шаг — сразу сохранить программу в план."
+            return "Сначала сохраните расписание. После этого тренировки будут открываться в понятном порядке из плана, а не из общего списка."
         }
-        return "Откройте план программы, чтобы посмотреть ближайшие тренировки и выбрать следующий шаг."
+        return "Откройте календарный план, чтобы посмотреть ближайшие тренировки и выбрать следующий шаг."
     }
 
     private var recommendedFrequency: Int {
@@ -2119,6 +3192,9 @@ struct ProgramOnboardingView: View {
 
 private struct ProgramPlanningSetupView: View {
     let route: ProgramDetailsViewModel.ProgramOnboardingRoute
+    let title: String
+    let description: String
+    let buttonTitle: String
     let onClose: () -> Void
     let onApply: (Date, Set<ProgramScheduleWeekday>) -> Void
 
@@ -2127,19 +3203,27 @@ private struct ProgramPlanningSetupView: View {
 
     init(
         route: ProgramDetailsViewModel.ProgramOnboardingRoute,
+        title: String = "Настроим расписание",
+        description: String = "Выберите дни недели. Мы равномерно разложим все тренировки программы по календарю.",
+        buttonTitle: String = "Сохранить в план",
+        initialSelectedDays: Set<ProgramScheduleWeekday> = [],
+        initialStartDate: Date? = nil,
         onClose: @escaping () -> Void,
         onApply: @escaping (Date, Set<ProgramScheduleWeekday>) -> Void,
     ) {
         self.route = route
+        self.title = title
+        self.description = description
+        self.buttonTitle = buttonTitle
         self.onClose = onClose
         self.onApply = onApply
-        let recommendedDays = Set(
+        let recommendedDays = initialSelectedDays.isEmpty ? Set(
             ProgramScheduleWeekday.recommended(
                 for: route.frequencyPerWeek ?? max(1, min(route.plannableWorkouts.count, 3))
             )
-        )
+        ) : initialSelectedDays
         _selectedDays = State(initialValue: recommendedDays)
-        _startDate = State(initialValue: Self.initialStartDate(for: recommendedDays))
+        _startDate = State(initialValue: initialStartDate ?? Self.initialStartDate(for: recommendedDays))
     }
 
     var body: some View {
@@ -2150,10 +3234,10 @@ private struct ProgramPlanningSetupView: View {
                     VStack(spacing: FFSpacing.md) {
                         FFCard {
                             VStack(alignment: .leading, spacing: FFSpacing.xs) {
-                                Text("Настроим расписание")
+                                Text(title)
                                     .font(FFTypography.h2)
                                     .foregroundStyle(FFColors.textPrimary)
-                                Text("Выберите дни недели. Мы равномерно разложим все тренировки программы по календарю.")
+                                Text(description)
                                     .font(FFTypography.body)
                                     .foregroundStyle(FFColors.textSecondary)
                             }
@@ -2196,6 +3280,12 @@ private struct ProgramPlanningSetupView: View {
                                 Text("Предпросмотр")
                                     .font(FFTypography.body.weight(.semibold))
                                     .foregroundStyle(FFColors.textPrimary)
+                                if let validationErrorText {
+                                    Text(validationErrorText)
+                                        .font(FFTypography.caption)
+                                        .foregroundStyle(FFColors.danger)
+                                }
+
                                 ForEach(Array(previewRows.enumerated()), id: \.offset) { _, row in
                                     VStack(alignment: .leading, spacing: FFSpacing.xxs) {
                                         Text(row.dateText)
@@ -2212,9 +3302,10 @@ private struct ProgramPlanningSetupView: View {
                         }
 
                         FFButton(
-                            title: "Сохранить в план",
-                            variant: selectedDays.isEmpty ? .disabled : .primary,
+                            title: buttonTitle,
+                            variant: validationResult == nil ? .disabled : .primary,
                             action: {
+                                guard validationResult != nil else { return }
                                 onApply(startDate, selectedDays)
                             },
                         )
@@ -2249,21 +3340,16 @@ private struct ProgramPlanningSetupView: View {
         } label: {
             Text(day.shortTitle)
                 .font(FFTypography.body.weight(.semibold))
-                .foregroundStyle(isSelected ? FFColors.background : FFColors.textPrimary)
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, FFSpacing.sm)
-                .background(isSelected ? FFColors.accent : FFColors.surface)
-                .clipShape(RoundedRectangle(cornerRadius: FFTheme.Radius.control))
-                .overlay {
-                    RoundedRectangle(cornerRadius: FFTheme.Radius.control)
-                        .stroke(isSelected ? FFColors.accent : FFColors.gray700, lineWidth: 1)
-                }
+                .ffSelectableSurface(isSelected: isSelected, emphasis: .accent)
         }
         .buttonStyle(.plain)
     }
 
     private var previewRows: [(dateText: String, title: String)] {
-        let dates = scheduledDates.prefix(min(route.plannableWorkouts.count, 4))
+        guard let validationResult else { return [] }
+        let dates = validationResult.dates.prefix(min(route.plannableWorkouts.count, 4))
         return Array(zip(dates, route.plannableWorkouts.prefix(4))).map { date, workout in
             (
                 date.formatted(date: .abbreviated, time: .omitted),
@@ -2272,20 +3358,22 @@ private struct ProgramPlanningSetupView: View {
         }
     }
 
-    private var scheduledDates: [Date] {
-        guard !selectedDays.isEmpty else { return [] }
-        var result: [Date] = []
-        var cursor = max(Calendar.current.startOfDay(for: startDate), Calendar.current.startOfDay(for: Date()))
-        while result.count < route.plannableWorkouts.count, result.count < 12 {
-            if let weekday = ProgramScheduleWeekday.from(date: cursor, calendar: Calendar.current),
-               selectedDays.contains(weekday)
-            {
-                result.append(cursor)
-            }
-            guard let next = Calendar.current.date(byAdding: .day, value: 1, to: cursor) else { break }
-            cursor = next
+    private var validationResult: ProgramDetailsViewModel.ScheduleValidationResult? {
+        ProgramDetailsViewModel.validateSchedule(
+            startDate: startDate,
+            weekdays: selectedDays,
+            plannableWorkouts: route.plannableWorkouts,
+            fixedAnchors: route.fixedAnchors,
+        )
+    }
+
+    private var validationErrorText: String? {
+        guard !selectedDays.isEmpty else { return nil }
+        guard !route.plannableWorkouts.isEmpty else {
+            return "Оставшихся тренировок для перепланирования нет."
         }
-        return result
+        guard validationResult == nil else { return nil }
+        return "Выбранные дни не помещаются между уже зафиксированными тренировками программы."
     }
 
     private var daySelectionHint: String {
@@ -2318,81 +3406,133 @@ private struct ProgramPlanningSetupView: View {
 
 struct WorkoutIntroView: View {
     let workout: WorkoutDetailsModel
-    let onStartWorkout: () -> Void
-    @State private var isExercisesPresented = false
+    var primaryActionTitle: String = "Начать тренировку"
+    var dateBadgeText: String? = nil
+    var helperText: String? = nil
+    var showsPrimaryAction = true
+    let onPrimaryAction: () -> Void
+
+    @State private var selectedExercise: WorkoutExercise?
 
     var body: some View {
         ScrollView {
             VStack(spacing: FFSpacing.md) {
                 FFCard {
                     VStack(alignment: .leading, spacing: FFSpacing.xs) {
-                        Text("Вводная тренировки")
+                        Text(workout.title)
                             .font(FFTypography.h1)
                             .foregroundStyle(FFColors.textPrimary)
-                        Text(workout.title)
-                            .font(FFTypography.body.weight(.semibold))
-                            .foregroundStyle(FFColors.textPrimary)
+
+                        if let dateBadgeText = dateBadgeText?.trimmedNilIfEmpty {
+                            Text(dateBadgeText)
+                                .font(FFTypography.caption.weight(.semibold))
+                                .foregroundStyle(FFColors.textPrimary)
+                                .padding(.horizontal, FFSpacing.sm)
+                                .padding(.vertical, FFSpacing.xs)
+                                .background(FFColors.surface)
+                                .clipShape(Capsule())
+                                .overlay {
+                                    Capsule()
+                                        .stroke(FFColors.gray700, lineWidth: 1)
+                                }
+                        }
+
+                        if let helperText = helperText?.trimmedNilIfEmpty {
+                            Text(helperText)
+                                .font(FFTypography.body)
+                                .foregroundStyle(FFColors.textSecondary)
+                        }
                     }
                 }
 
                 FFCard {
-                    VStack(alignment: .leading, spacing: FFSpacing.xs) {
-                        detailRow(title: "Упражнений", value: "\(workout.exercises.count)")
-                        detailRow(
-                            title: "Оценка длительности",
-                            value: "~\(estimatedDurationMinutes(workout: workout)) мин",
-                        )
+                    VStack(alignment: .leading, spacing: FFSpacing.sm) {
+                        Text("Упражнения")
+                            .font(FFTypography.body.weight(.semibold))
+                            .foregroundStyle(FFColors.textPrimary)
+
+                        ForEach(Array(workout.exercises.enumerated()), id: \.offset) { index, exercise in
+                            Button {
+                                selectedExercise = exercise
+                            } label: {
+                                HStack(alignment: .top, spacing: FFSpacing.sm) {
+                                    VStack(alignment: .leading, spacing: FFSpacing.xxs) {
+                                        Text("\(index + 1). \(exercise.name)")
+                                            .font(FFTypography.body.weight(.semibold))
+                                            .foregroundStyle(FFColors.textPrimary)
+
+                                        Text(exerciseSummary(exercise))
+                                            .font(FFTypography.caption)
+                                            .foregroundStyle(FFColors.textSecondary)
+
+                                        if let notes = exercise.notes?.trimmedNilIfEmpty {
+                                            Text(notes)
+                                                .font(FFTypography.caption)
+                                                .foregroundStyle(FFColors.textSecondary)
+                                        }
+                                    }
+
+                                    Spacer(minLength: FFSpacing.xs)
+
+                                    Image(systemName: "chevron.right")
+                                        .font(.system(size: 12, weight: .semibold))
+                                        .foregroundStyle(FFColors.textSecondary.opacity(0.8))
+                                }
+                            }
+                            .buttonStyle(.plain)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+
+                            if index < workout.exercises.count - 1 {
+                                Divider()
+                            }
+                        }
                     }
                 }
 
-                FFButton(title: "Начать тренировку", variant: .primary, action: onStartWorkout)
-                FFButton(title: "Показать упражнения", variant: .secondary) {
-                    isExercisesPresented = true
+                if showsPrimaryAction {
+                    FFButton(title: primaryActionTitle, variant: .primary, action: onPrimaryAction)
                 }
             }
             .padding(.horizontal, FFSpacing.md)
             .padding(.vertical, FFSpacing.md)
         }
         .background(FFColors.background)
-        .sheet(isPresented: $isExercisesPresented) {
-            NavigationStack {
-                List {
-                    ForEach(Array(workout.exercises.enumerated()), id: \.offset) { index, exercise in
-                        VStack(alignment: .leading, spacing: FFSpacing.xxs) {
-                            Text("\(index + 1). \(exercise.name)")
-                                .font(FFTypography.body.weight(.semibold))
-                                .foregroundStyle(FFColors.textPrimary)
-                            Text("\(exercise.sets) подходов")
-                                .font(FFTypography.caption)
-                                .foregroundStyle(FFColors.textSecondary)
-                        }
-                        .padding(.vertical, FFSpacing.xxs)
-                    }
-                }
-                .navigationTitle("Упражнения")
-            }
+        .sheet(item: $selectedExercise) { exercise in
+            WorkoutExerciseDetailsSheet(exercise: exercise)
         }
     }
 
-    private func detailRow(title: String, value: String) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: FFSpacing.xs) {
-            Text(title)
-                .font(FFTypography.caption)
-                .foregroundStyle(FFColors.textSecondary)
-            Spacer(minLength: FFSpacing.xs)
-            Text(value)
-                .font(FFTypography.body.weight(.semibold))
-                .foregroundStyle(FFColors.textPrimary)
+    private func exerciseSummary(_ exercise: WorkoutExercise) -> String {
+        var parts: [String] = ["\(exercise.sets) подходов"]
+
+        if let repsRange = repsRangeText(for: exercise) {
+            parts.append(repsRange)
         }
+
+        if let restSeconds = exercise.restSeconds {
+            parts.append("отдых \(restSeconds) сек")
+        }
+
+        if let targetRpe = exercise.targetRpe {
+            parts.append("RPE \(targetRpe)")
+        }
+
+        return parts.joined(separator: " • ")
     }
 
-    private func estimatedDurationMinutes(workout: WorkoutDetailsModel) -> Int {
-        let totalSets = workout.exercises.reduce(0) { $0 + max(1, $1.sets) }
-        let totalRest = workout.exercises.reduce(0) { partial, exercise in
-            partial + (exercise.restSeconds ?? 45) * max(0, exercise.sets - 1)
+    private func repsRangeText(for exercise: WorkoutExercise) -> String? {
+        switch (exercise.repsMin, exercise.repsMax) {
+        case let (min?, max?) where min == max:
+            return "\(min) повторений"
+        case let (min?, max?):
+            return "\(min)-\(max) повторений"
+        case let (min?, nil):
+            return "от \(min) повторений"
+        case let (nil, max?):
+            return "до \(max) повторений"
+        case (nil, nil):
+            return nil
         }
-        let totalSeconds = totalSets * 90 + totalRest
-        return max(10, totalSeconds / 60)
     }
 }
 

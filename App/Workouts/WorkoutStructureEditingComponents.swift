@@ -185,67 +185,77 @@ struct WorkoutExerciseQueueView: View {
     let onReorder: (String, String) -> Void
 
     var body: some View {
-        VStack(spacing: FFSpacing.lg) {
-            ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
-                HStack(spacing: FFSpacing.md) {
-                    Button {
-                        onSelect(item.id)
-                    } label: {
-                        HStack(spacing: FFSpacing.md) {
-                            thumbnail(for: item)
-
-                            VStack(alignment: .leading, spacing: 4) {
-                                if item.isCurrent {
-                                    Text("ТЕКУЩЕЕ УПРАЖНЕНИЕ")
-                                        .font(FFTypography.caption.weight(.bold))
-                                        .foregroundStyle(FFColors.primary)
-                                }
-
-                                Text(item.title)
-                                    .font(.system(size: 18, weight: item.isCurrent ? .bold : .semibold, design: .rounded))
-                                    .foregroundStyle(FFColors.textPrimary)
-                                    .lineLimit(2)
-
-                                Text(subtitlesByID[item.id] ?? itemSubtitle(item))
-                                    .font(FFTypography.body)
-                                    .foregroundStyle(FFColors.textSecondary)
-                                    .lineLimit(1)
-                            }
-
-                            Spacer(minLength: FFSpacing.sm)
-                        }
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.vertical, FFSpacing.xxs)
-                    }
-                    .buttonStyle(.plain)
-
-                    Menu {
-                        Button("Заменить упражнение", systemImage: "arrow.triangle.2.circlepath") {
-                            onReplace(item.id)
-                        }
-                    } label: {
-                        Image(systemName: "ellipsis")
-                            .font(.system(size: 18, weight: .bold))
-                            .foregroundStyle(FFColors.textSecondary)
-                            .frame(width: 36, height: 36)
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-
-                    Image(systemName: "line.3.horizontal")
-                        .font(.system(size: 18, weight: .semibold))
-                        .foregroundStyle(FFColors.textSecondary)
-                        .frame(width: 36, height: 36)
-                        .contentShape(Rectangle())
-                        .draggable(item.id)
-                }
-                .dropDestination(for: String.self) { items, _ in
-                    guard let draggedId = items.first else { return false }
-                    onReorder(draggedId, item.id)
-                    return true
-                }
-            }
+        FFVerticalReorderStack(items: items, spacing: FFSpacing.lg, onReorder: onReorder) { item, isDragging in
+            queueRow(
+                item: item,
+                index: items.firstIndex(where: { $0.id == item.id }) ?? 0,
+                isDragging: isDragging
+            )
         }
+    }
+
+    private func queueRow(
+        item: WorkoutPlayerViewModel.ExerciseProgressItem,
+        index: Int,
+        isDragging: Bool = false,
+    ) -> some View {
+        HStack(spacing: FFSpacing.md) {
+            Button {
+                onSelect(item.id)
+            } label: {
+                HStack(spacing: FFSpacing.md) {
+                    thumbnail(for: item)
+
+                    VStack(alignment: .leading, spacing: 4) {
+                        if item.isCurrent {
+                            Text("ТЕКУЩЕЕ УПРАЖНЕНИЕ")
+                                .font(FFTypography.caption.weight(.bold))
+                                .foregroundStyle(FFColors.primary)
+                        }
+
+                        Text(item.title)
+                            .font(.system(size: 18, weight: item.isCurrent ? .bold : .semibold, design: .rounded))
+                            .foregroundStyle(FFColors.textPrimary)
+                            .lineLimit(2)
+
+                        Text(subtitlesByID[item.id] ?? itemSubtitle(item))
+                            .font(FFTypography.body)
+                            .foregroundStyle(FFColors.textSecondary)
+                            .lineLimit(1)
+                    }
+
+                    Spacer(minLength: FFSpacing.sm)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.vertical, FFSpacing.xxs)
+            }
+            .buttonStyle(.plain)
+
+            Menu {
+                Button("Заменить упражнение", systemImage: "arrow.triangle.2.circlepath") {
+                    onReplace(item.id)
+                }
+            } label: {
+                Image(systemName: "ellipsis")
+                    .font(.system(size: 18, weight: .bold))
+                    .foregroundStyle(FFColors.textSecondary)
+                    .frame(width: 36, height: 36)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            Image(systemName: "arrow.up.arrow.down")
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(FFColors.textSecondary)
+                .frame(width: 36, height: 36)
+                .background(FFColors.background.opacity(0.75))
+                .clipShape(RoundedRectangle(cornerRadius: 10))
+                .contentShape(Rectangle())
+        }
+        .padding(.horizontal, FFSpacing.xs)
+        .padding(.vertical, FFSpacing.xxs)
+        .background(isDragging ? FFColors.surface.opacity(0.55) : Color.clear)
+        .clipShape(RoundedRectangle(cornerRadius: 18))
     }
 
     @ViewBuilder
@@ -279,16 +289,6 @@ struct WorkoutExerciseQueueView: View {
         .clipShape(RoundedRectangle(cornerRadius: 14))
     }
 
-    private func itemBadgeTitle(_ item: WorkoutPlayerViewModel.ExerciseProgressItem, index: Int) -> String {
-        if item.isSkipped {
-            return "S"
-        }
-        if item.completedSets >= item.totalSets, item.totalSets > 0 {
-            return "✓"
-        }
-        return "\(index + 1)"
-    }
-
     private func itemSubtitle(_ item: WorkoutPlayerViewModel.ExerciseProgressItem) -> String {
         if item.isSkipped {
             return "Пропущено"
@@ -300,6 +300,7 @@ struct WorkoutExerciseQueueView: View {
 struct WorkoutPrimaryActionStrip: View {
     let secondaryTitle: String
     let primaryTitle: String
+    let isSecondaryEnabled: Bool
     let isPrimaryEnabled: Bool
     let onSecondary: () -> Void
     let onPrimary: () -> Void
@@ -311,6 +312,8 @@ struct WorkoutPrimaryActionStrip: View {
                 isPrimary: false,
                 action: onSecondary,
             )
+            .opacity(isSecondaryEnabled ? 1 : 0.55)
+            .disabled(!isSecondaryEnabled)
 
             actionButton(
                 title: primaryTitle,
@@ -330,17 +333,14 @@ struct WorkoutPrimaryActionStrip: View {
         Button(action: action) {
             Text(title)
                 .font(FFTypography.body.weight(.bold))
-                .foregroundStyle(isPrimary ? Color.black : FFColors.textPrimary)
                 .frame(maxWidth: .infinity, minHeight: 56)
                 .padding(.horizontal, FFSpacing.sm)
-                .background(isPrimary ? FFColors.primary : FFColors.surface)
-                .clipShape(RoundedRectangle(cornerRadius: 18))
-                .overlay {
-                    if !isPrimary {
-                        RoundedRectangle(cornerRadius: 18)
-                            .stroke(FFColors.gray700.opacity(0.55), lineWidth: 1)
-                    }
-                }
+                .ffSelectableSurface(
+                    isSelected: isPrimary,
+                    emphasis: .primary,
+                    unselectedBorder: FFColors.gray700.opacity(0.55),
+                    cornerRadius: 18,
+                )
         }
         .buttonStyle(.plain)
     }
@@ -450,28 +450,14 @@ struct WorkoutFlowNavigationView: View {
         isEnabled: Bool,
         action: @escaping () -> Void,
     ) -> some View {
-        Button(action: action) {
-            VStack(alignment: .leading, spacing: FFSpacing.xxs) {
-                Label(title, systemImage: systemImage)
-                    .font(FFTypography.caption.weight(.semibold))
-                    .lineLimit(1)
-                Text(subtitle)
-                    .font(FFTypography.caption)
-                    .lineLimit(2)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            .foregroundStyle(isEnabled ? FFColors.textPrimary : FFColors.textSecondary)
-            .frame(maxWidth: .infinity, minHeight: 56, alignment: .leading)
-            .padding(.horizontal, FFSpacing.sm)
-            .background(isEnabled ? FFColors.surface : FFColors.background.opacity(0.4))
-            .clipShape(RoundedRectangle(cornerRadius: FFTheme.Radius.control))
-            .overlay {
-                RoundedRectangle(cornerRadius: FFTheme.Radius.control)
-                    .stroke(FFColors.gray700, lineWidth: 1)
-            }
-        }
-        .buttonStyle(.plain)
-        .disabled(!isEnabled)
+        FFCompactActionButton(
+            title: title,
+            subtitle: subtitle,
+            systemImage: systemImage,
+            alignment: .leading,
+            isEnabled: isEnabled,
+            action: action,
+        )
     }
 
     private func itemSubtitle(_ item: WorkoutPlayerViewModel.ExerciseProgressItem) -> String {

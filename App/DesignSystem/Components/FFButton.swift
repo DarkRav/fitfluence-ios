@@ -43,11 +43,11 @@ struct FFButton: View {
     private var foregroundColor: Color {
         switch effectiveVariant {
         case .primary:
-            FFColors.surface
+            FFColors.textOnEmphasis
         case .secondary:
             FFColors.textPrimary
         case .destructive:
-            FFColors.surface
+            FFColors.textOnEmphasis
         case .disabled:
             FFColors.gray500
         }
@@ -79,11 +79,11 @@ private struct FFButtonStyle: ButtonStyle {
     private var foregroundColor: Color {
         switch variant {
         case .primary:
-            FFColors.surface
+            FFColors.textOnEmphasis
         case .secondary:
             FFColors.textPrimary
         case .destructive:
-            FFColors.surface
+            FFColors.textOnEmphasis
         case .disabled:
             FFColors.gray500
         }

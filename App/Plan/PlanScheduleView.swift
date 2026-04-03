@@ -44,6 +44,11 @@ final class PlanScheduleViewModel {
         static let empty = WeekCounts(planned: 0, completed: 0, missed: 0)
     }
 
+    struct ProgramWorkoutDateWindow: Equatable {
+        let earliest: Date
+        let latest: Date?
+    }
+
     private let userSub: String
     private let trainingStore: TrainingStore
     private let athleteTrainingClient: AthleteTrainingClientProtocol?
@@ -201,24 +206,7 @@ final class PlanScheduleViewModel {
 
     func dayItems(for day: Date) -> [DayScheduleItem] {
         let plans = plansForDay(in: contextPlans, day: day)
-        let items = plans.map { plan in
-            let kind: SourceKind = plan.source == .program ? .program : .manual
-            return DayScheduleItem(
-                id: "\(plan.day.timeIntervalSince1970)::\(plan.id)",
-                planId: plan.id,
-                day: plan.day,
-                title: plan.title,
-                sourceTitle: sourceTitle(for: plan, kind: kind),
-                programTitle: plan.programTitle,
-                source: plan.source,
-                sourceKind: kind,
-                status: plan.status,
-                programId: plan.programId,
-                workoutId: plan.workoutId,
-                workoutDetails: plan.workoutDetails,
-                scheduledTimeText: scheduledTimeText(for: plan.day),
-            )
-        }
+        let items = plans.map(makeDayScheduleItem(from:))
         return items.sorted { lhs, rhs in
             if lhs.day != rhs.day {
                 return lhs.day < rhs.day
@@ -235,6 +223,35 @@ final class PlanScheduleViewModel {
         formatter.locale = Locale(identifier: "ru_RU")
         formatter.dateFormat = "HH:mm"
         return formatter.string(from: date)
+    }
+
+    private func makeDayScheduleItem(from plan: TrainingDayPlan) -> DayScheduleItem {
+        let kind: SourceKind = plan.source == .program ? .program : .manual
+        let resolvedStatus = normalizedDisplayStatus(plan.status, day: plan.day)
+        return DayScheduleItem(
+            id: "\(plan.day.timeIntervalSince1970)::\(plan.id)",
+            planId: plan.id,
+            day: plan.day,
+            title: plan.title,
+            sourceTitle: sourceTitle(for: plan, kind: kind),
+            programTitle: plan.programTitle,
+            source: plan.source,
+            sourceKind: kind,
+            status: resolvedStatus,
+            programId: plan.programId,
+            workoutId: plan.workoutId,
+            workoutDetails: plan.workoutDetails,
+            scheduledTimeText: scheduledTimeText(for: plan.day),
+        )
+    }
+
+    private func normalizedDisplayStatus(_ status: TrainingDayStatus, day: Date) -> TrainingDayStatus {
+        let normalizedDay = calendar.startOfDay(for: day)
+        let today = calendar.startOfDay(for: Date())
+        if normalizedDay >= today, status.isMissedLike {
+            return .planned
+        }
+        return status
     }
 
     var upcomingDays: [UpcomingDayItem] {
@@ -438,6 +455,7 @@ final class PlanScheduleViewModel {
             {
                 score += 20
             }
+            score += completedRecordRichnessScore(record)
 
             guard score > bestScore else { continue }
             bestScore = score
@@ -451,6 +469,28 @@ final class PlanScheduleViewModel {
         return bestScore > 0 ? bestMatch : nil
     }
 
+    private func completedRecordRichnessScore(_ record: CompletedWorkoutRecord) -> Int {
+        var score = 0
+
+        if record.workoutDetails != nil {
+            score += 80
+        }
+
+        if record.totalSets > 0 || record.completedSets > 0 {
+            score += 30
+        }
+
+        if record.volume > 0 {
+            score += 10
+        }
+
+        if record.overallRPE != nil {
+            score += 5
+        }
+
+        return score
+    }
+
     func conflictCount(on day: Date, excluding item: DayScheduleItem?) -> Int {
         let normalized = calendar.startOfDay(for: day)
         return dayItems(for: normalized).count { candidate in
@@ -459,11 +499,83 @@ final class PlanScheduleViewModel {
         }
     }
 
+    func allowedDateWindow(
+        forProgramWorkout programId: String,
+        workoutId: String?,
+        dayOrder: Int,
+        excluding item: DayScheduleItem?,
+    ) -> ProgramWorkoutDateWindow? {
+        guard dayOrder > 0 else { return nil }
+
+        let relevantPlans = contextPlans.filter { plan in
+            guard plan.source == .program, plan.programId == programId else { return false }
+            if let item, plan.id == item.planId {
+                return false
+            }
+            if let workoutId, let planWorkoutId = plan.workoutId, planWorkoutId == workoutId {
+                return false
+            }
+            return true
+        }
+
+        let orderedPlans = relevantPlans.compactMap { plan -> (dayOrder: Int, day: Date)? in
+            guard let order = plan.workoutDetails?.dayOrder, order > 0 else { return nil }
+            return (order, calendar.startOfDay(for: plan.day))
+        }
+
+        let previousDay = orderedPlans
+            .filter { $0.dayOrder < dayOrder }
+            .map(\.day)
+            .max()
+
+        let nextDay = orderedPlans
+            .filter { $0.dayOrder > dayOrder }
+            .map(\.day)
+            .min()
+
+        let today = calendar.startOfDay(for: Date())
+        let earliest = max(today, previousDay.flatMap { calendar.date(byAdding: .day, value: 1, to: $0) } ?? today)
+        let latest = nextDay.flatMap { calendar.date(byAdding: .day, value: -1, to: $0) }
+        return ProgramWorkoutDateWindow(earliest: earliest, latest: latest)
+    }
+
     func markSkipped(_ item: DayScheduleItem) async {
         await updateStatus(item, to: .skipped)
     }
 
     func cancelInProgress(_ item: DayScheduleItem) async {
+        await clearLocalWorkoutSession(for: item)
+
+        if item.source != .template,
+           let workoutInstanceId = item.workoutId?.trimmedNilIfEmpty,
+           UUID(uuidString: workoutInstanceId) != nil
+        {
+            if let suppression = suppressionSignature(day: item.day, workoutId: item.workoutId, planId: item.planId) {
+                suppressedPlanSignatures.insert(suppression)
+            }
+
+            let updated = TrainingDayPlan(
+                id: item.planId,
+                userSub: userSub,
+                day: item.day,
+                status: .skipped,
+                programId: item.programId,
+                programTitle: item.programTitle,
+                workoutId: item.workoutId,
+                title: item.title,
+                source: item.source,
+                workoutDetails: item.workoutDetails,
+            )
+            await trainingStore.schedule(updated)
+            _ = await SyncCoordinator.shared.enqueueAbandonWorkout(
+                namespace: userSub,
+                workoutInstanceId: workoutInstanceId,
+                abandonedAt: Date(),
+            )
+            await reload()
+            return
+        }
+
         await updateStatus(item, to: .skipped)
     }
 
@@ -482,22 +594,11 @@ final class PlanScheduleViewModel {
     }
 
     func replanMissed(_ item: DayScheduleItem, on targetDay: Date) async {
-        if isRemoteCustomWorkout(item),
-           let workoutId = item.workoutId?.trimmedNilIfEmpty,
-           let athleteTrainingClient
-        {
-            let result = await athleteTrainingClient.updateCustomWorkout(
-                workoutInstanceId: workoutId,
-                request: AthleteUpdateCustomWorkoutRequest(
-                    title: nil,
-                    scheduledDate: scheduledDayString(targetDay),
-                    notes: item.workoutDetails?.coachNote?.trimmedNilIfEmpty,
-                ),
-            )
-            if case .success = result {
-                await reload()
-                return
-            }
+        guard canSchedule(on: targetDay) else { return }
+
+        if let existingReplacement = existingReplannedCopy(for: item) {
+            await movePlan(existingReplacement, to: targetDay)
+            return
         }
 
         await schedulePlan(
@@ -510,6 +611,21 @@ final class PlanScheduleViewModel {
             status: .planned,
             workoutDetails: item.workoutDetails,
         )
+    }
+
+    private func existingReplannedCopy(for item: DayScheduleItem) -> DayScheduleItem? {
+        contextPlans
+            .filter { candidate in
+                guard candidate.id != item.planId else { return false }
+                guard candidate.status == .planned || candidate.status == .inProgress else { return false }
+                guard candidate.source == item.source else { return false }
+                guard candidate.programId?.trimmedNilIfEmpty == item.programId?.trimmedNilIfEmpty else { return false }
+                guard candidate.workoutId?.trimmedNilIfEmpty == item.workoutId?.trimmedNilIfEmpty else { return false }
+                return true
+            }
+            .sorted { $0.day < $1.day }
+            .map(makeDayScheduleItem(from:))
+            .first
     }
 
     func movePlan(_ item: DayScheduleItem, to targetDay: Date) async {
@@ -553,6 +669,25 @@ final class PlanScheduleViewModel {
         selectedDay = calendar.startOfDay(for: targetDay)
         selectedMonth = calendar.dateInterval(of: .month, for: targetDay)?.start ?? selectedDay
         await reload()
+    }
+
+    func scheduleProgramWorkout(
+        programId: String,
+        workoutId: String,
+        title: String,
+        workoutDetails: WorkoutDetailsModel,
+        on targetDay: Date,
+    ) async {
+        await schedulePlan(
+            day: targetDay,
+            title: title,
+            source: .program,
+            programId: programId,
+            programTitle: nil,
+            workoutId: workoutId,
+            status: .planned,
+            workoutDetails: workoutDetails,
+        )
     }
 
     func deletePlan(_ item: DayScheduleItem) async {
@@ -620,6 +755,23 @@ final class PlanScheduleViewModel {
         )
         await trainingStore.schedule(updated)
         await reload()
+    }
+
+    private func clearLocalWorkoutSession(for item: DayScheduleItem) async {
+        guard let workoutId = item.workoutId?.trimmedNilIfEmpty else { return }
+        await LocalWorkoutProgressStore().remove(
+            userSub: userSub,
+            programId: item.programId?.trimmedNilIfEmpty ?? "",
+            workoutId: workoutId,
+        )
+        await cacheStore.remove(
+            workoutCacheKey(programId: item.programId, source: item.source, workoutId: item.workoutId),
+            namespace: userSub,
+        )
+        await cacheStore.remove(
+            "workout.execution.context:\(item.programId?.trimmedNilIfEmpty ?? ""):\(workoutId)",
+            namespace: userSub,
+        )
     }
 
     private func normalizedScheduledDate(_ date: Date) -> Date {
@@ -971,7 +1123,15 @@ final class PlanScheduleViewModel {
                 workoutId: workout.id,
                 title: workout.title?.trimmedNilIfEmpty ?? "Тренировка",
                 source: mapSource(workout.source),
-                workoutDetails: nil,
+                workoutDetails: WorkoutDetailsModel(
+                    id: workout.workoutTemplateId?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+                        ? workout.workoutTemplateId!.trimmingCharacters(in: .whitespacesAndNewlines)
+                        : workout.id,
+                    title: workout.title?.trimmedNilIfEmpty ?? "Тренировка",
+                    dayOrder: 0,
+                    coachNote: nil,
+                    exercises: []
+                ),
             )
         }
     }
@@ -1320,10 +1480,6 @@ struct PlanScheduleScreen: View {
             VStack(spacing: FFSpacing.md) {
                 calendarCard
                 dayScheduleCard
-                weekSummaryCard
-                if !viewModel.upcomingDays.isEmpty {
-                    upcomingCard
-                }
             }
             .padding(.horizontal, FFSpacing.md)
             .padding(.vertical, FFSpacing.md)
@@ -1555,7 +1711,7 @@ struct PlanScheduleScreen: View {
                     .foregroundStyle(viewModel.isInCurrentMonth(day) ? FFColors.textPrimary : FFColors.gray500)
                 Circle()
                     .fill(calendarStatusColor(status))
-                    .frame(width: 6, height: 6)
+                    .frame(width: 8, height: 8)
                     .opacity(status == nil ? 0 : 1)
             }
             .frame(maxWidth: .infinity, minHeight: 44)
@@ -1590,13 +1746,13 @@ struct PlanScheduleScreen: View {
     private func calendarStatusColor(_ status: TrainingDayStatus?) -> Color {
         switch status {
         case .planned:
-            FFColors.gray500
+            planStatusColor(.planned)
         case .inProgress:
-            FFColors.primary
+            planStatusColor(.inProgress)
         case .completed:
-            FFColors.accent
+            planStatusColor(.completed)
         case .missed, .skipped:
-            FFColors.danger
+            planStatusColor(.skipped)
         case nil:
             .clear
         }
@@ -1617,9 +1773,7 @@ struct PlanScheduleScreen: View {
                                 .font(FFTypography.body.weight(.semibold))
                                 .foregroundStyle(FFColors.textPrimary)
                             if viewModel.canSchedule(on: viewModel.selectedDay) {
-                                FFButton(title: "+ Запланировать тренировку", variant: .secondary) {
-                                    openScheduleDialog(for: viewModel.selectedDay)
-                                }
+                                scheduleSelectedDayButton
                             } else {
                                 Text("Нельзя планировать на прошедшую дату")
                                     .font(FFTypography.caption)
@@ -1631,8 +1785,17 @@ struct PlanScheduleScreen: View {
                     ForEach(items) { item in
                         workoutDayCard(item)
                     }
+                    if viewModel.canSchedule(on: viewModel.selectedDay) {
+                        scheduleSelectedDayButton
+                    }
                 }
             }
+        }
+    }
+
+    private var scheduleSelectedDayButton: some View {
+        FFButton(title: "+ Запланировать тренировку", variant: .secondary) {
+            openScheduleDialog(for: viewModel.selectedDay)
         }
     }
 
@@ -1681,7 +1844,7 @@ struct PlanScheduleScreen: View {
         .foregroundStyle(pillColor(item.status))
         .padding(.horizontal, FFSpacing.xs)
         .padding(.vertical, FFSpacing.xxs)
-        .background(pillColor(item.status).opacity(0.16))
+        .background(pillColor(item.status).opacity(0.22))
         .clipShape(Capsule())
     }
 
@@ -2078,29 +2241,49 @@ struct PlanScheduleScreen: View {
     private func pillColor(_ status: TrainingDayStatus) -> Color {
         switch status {
         case .planned:
-            FFColors.gray500
+            planStatusColor(.planned)
         case .inProgress:
-            FFColors.primary
+            planStatusColor(.inProgress)
         case .completed:
-            FFColors.accent
+            planStatusColor(.completed)
         case .missed, .skipped:
-            FFColors.danger
+            planStatusColor(.skipped)
         }
     }
 
     private func upcomingStatusColor(_ status: TrainingDayStatus?) -> Color {
         switch status {
         case .planned:
-            FFColors.gray500
+            planStatusColor(.planned)
         case .inProgress:
-            FFColors.primary
+            planStatusColor(.inProgress)
         case .completed:
-            FFColors.accent
+            planStatusColor(.completed)
         case .missed, .skipped:
-            FFColors.danger
+            planStatusColor(.skipped)
         case nil:
             FFColors.gray700
         }
+    }
+
+    private func planStatusColor(_ status: PlanStatusPalette) -> Color {
+        switch status {
+        case .planned:
+            Color(red: 0.18, green: 0.45, blue: 0.86)
+        case .inProgress:
+            Color(red: 0.84, green: 0.47, blue: 0.12)
+        case .completed:
+            Color(red: 0.18, green: 0.62, blue: 0.35)
+        case .skipped:
+            Color(red: 0.79, green: 0.22, blue: 0.22)
+        }
+    }
+
+    private enum PlanStatusPalette {
+        case planned
+        case inProgress
+        case completed
+        case skipped
     }
 
     private func toggleUpcomingDay(_ day: Date) {
@@ -2491,15 +2674,9 @@ private struct PlanScheduleConfigurationSheet: View {
         } label: {
             Text(option.label)
                 .font(FFTypography.caption.weight(.semibold))
-                .foregroundStyle(isSelected ? FFColors.background : FFColors.textPrimary)
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, FFSpacing.sm)
-                .background(isSelected ? FFColors.accent : FFColors.surface)
-                .clipShape(RoundedRectangle(cornerRadius: FFTheme.Radius.control))
-                .overlay {
-                    RoundedRectangle(cornerRadius: FFTheme.Radius.control)
-                        .stroke(isSelected ? FFColors.accent : FFColors.gray700, lineWidth: 1)
-                }
+                .ffSelectableSurface(isSelected: isSelected, emphasis: .accent)
         }
         .buttonStyle(.plain)
     }

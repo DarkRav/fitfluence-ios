@@ -87,23 +87,6 @@ final class TemplateLibraryViewModel {
         }
     }
 
-    func savePreset(_ template: WorkoutTemplateDraft) async {
-        let userTemplate = WorkoutTemplateDraft(
-            id: "new-\(UUID().uuidString)",
-            userSub: userSub,
-            name: template.name,
-            exercises: template.exercises,
-            updatedAt: Date(),
-        )
-        errorMessage = nil
-        do {
-            _ = try await templateRepository.saveTemplate(userTemplate)
-            await reload()
-        } catch {
-            errorMessage = error.userFacingTemplateLibraryMessage
-        }
-    }
-
     func updateTemplate(id: String, name: String, exercises: [TemplateExerciseDraft]) async {
         let updated = WorkoutTemplateDraft(
             id: id,
@@ -179,22 +162,9 @@ private extension Error {
 
 private struct TemplateDetailsRoute: Identifiable {
     let template: WorkoutTemplateDraft
-    let isMine: Bool
 
     var id: String {
-        "\(template.id)::\(isMine)"
-    }
-}
-
-private struct TemplateBuilderRoute: Identifiable {
-    let template: WorkoutTemplateDraft?
-    let isMine: Bool
-
-    var id: String {
-        if let template {
-            return "\(template.id)::\(isMine)"
-        }
-        return "new"
+        template.id
     }
 }
 
@@ -234,20 +204,11 @@ private struct EditableTemplateExercise: Identifiable, Equatable {
 }
 
 struct TemplateLibraryView: View {
-    private enum SectionMode: String, CaseIterable, Identifiable {
-        case mine = "Мои"
-        case ready = "Готовые"
-
-        var id: String {
-            rawValue
-        }
-    }
-
     @Environment(\.dismiss) private var dismiss
     @State var viewModel: TemplateLibraryViewModel
-    @State private var sectionMode: SectionMode = .mine
     @State private var detailsRoute: TemplateDetailsRoute?
-    @State private var templateBuilderRoute: TemplateBuilderRoute?
+    @State private var templateBuilderTemplate: WorkoutTemplateDraft?
+    @State private var isTemplateBuilderPresented = false
     private let exerciseCatalogRepository: any ExerciseCatalogRepository
     private let exercisePickerSuggestionsProvider: any ExercisePickerSuggestionsProviding
     let onStartTemplate: (WorkoutDetailsModel) -> Void
@@ -285,14 +246,8 @@ struct TemplateLibraryView: View {
                         }
                     }
 
-                    sectionModeControl
-
-                    if sectionMode == .mine {
-                        createTemplateBuilderSection
-                        myTemplatesSection
-                    } else {
-                        readyTemplatesSection
-                    }
+                    createTemplateBuilderSection
+                    myTemplatesSection
                 }
                 .padding(.horizontal, FFSpacing.md)
                 .padding(.vertical, FFSpacing.md)
@@ -310,21 +265,17 @@ struct TemplateLibraryView: View {
             }
         }
         .tint(FFColors.accent)
-        .fullScreenCover(item: $templateBuilderRoute) { route in
+        .fullScreenCover(isPresented: $isTemplateBuilderPresented) {
             NavigationStack {
                 QuickWorkoutBuilderView(
-                    template: route.template,
+                    template: templateBuilderTemplate,
                     userSub: viewModel.currentUserSub,
-                    submitTitle: route.template == nil ? "Сохранить шаблон" : "Сохранить изменения",
+                    submitTitle: templateBuilderTemplate == nil ? "Сохранить шаблон" : "Сохранить изменения",
                     exerciseCatalogRepository: exerciseCatalogRepository,
                     exercisePickerSuggestionsProvider: exercisePickerSuggestionsProvider,
                 ) { template in
                     Task {
-                        if route.isMine {
-                            await viewModel.saveTemplate(template)
-                        } else {
-                            await viewModel.savePreset(template)
-                        }
+                        await viewModel.saveTemplate(template)
                     }
                 }
             }
@@ -332,11 +283,11 @@ struct TemplateLibraryView: View {
         .navigationDestination(item: $detailsRoute) { route in
             TemplateDetailsView(
                 template: route.template,
-                isMine: route.isMine,
-                onEdit: route.isMine ? { template in
+                onEdit: { template in
                     detailsRoute = nil
-                    templateBuilderRoute = TemplateBuilderRoute(template: template, isMine: true)
-                } : nil,
+                    templateBuilderTemplate = template
+                    isTemplateBuilderPresented = true
+                },
                 onStart: { editedTemplate in
                     onStartTemplate(viewModel.workout(for: editedTemplate))
                     dismiss()
@@ -347,9 +298,6 @@ struct TemplateLibraryView: View {
                         name: editedTemplate.name,
                         exercises: editedTemplate.exercises,
                     )
-                },
-                onSaveAsMine: { editedTemplate in
-                    await viewModel.savePreset(editedTemplate)
                 },
             )
         }
@@ -366,7 +314,7 @@ struct TemplateLibraryView: View {
         ) {
             VStack(alignment: .leading, spacing: FFSpacing.sm) {
                 if viewModel.templates.isEmpty {
-                    Text("У вас пока нет шаблонов. Начните с нового сценария в конструкторе ниже.")
+                    Text("У вас пока нет шаблонов. Создайте первый шаблон в конструкторе.")
                         .font(FFTypography.body)
                         .foregroundStyle(FFColors.textSecondary)
                 } else {
@@ -374,7 +322,7 @@ struct TemplateLibraryView: View {
                         VStack(alignment: .leading, spacing: FFSpacing.xs) {
                             HStack(spacing: FFSpacing.sm) {
                                 Button {
-                                    detailsRoute = TemplateDetailsRoute(template: template, isMine: true)
+                                    detailsRoute = TemplateDetailsRoute(template: template)
                                 } label: {
                                     VStack(alignment: .leading, spacing: FFSpacing.xxs) {
                                         Text(template.name)
@@ -391,7 +339,7 @@ struct TemplateLibraryView: View {
 
                                 Menu {
                                     Button("Открыть") {
-                                        detailsRoute = TemplateDetailsRoute(template: template, isMine: true)
+                                        detailsRoute = TemplateDetailsRoute(template: template)
                                     }
                                     Button("Удалить", role: .destructive) {
                                         Task { await viewModel.deleteTemplate(template.id) }
@@ -407,7 +355,7 @@ struct TemplateLibraryView: View {
                             }
                             .contextMenu {
                                 Button("Открыть") {
-                                    detailsRoute = TemplateDetailsRoute(template: template, isMine: true)
+                                    detailsRoute = TemplateDetailsRoute(template: template)
                                 }
                                 Button("Удалить", role: .destructive) {
                                     Task { await viewModel.deleteTemplate(template.id) }
@@ -435,18 +383,9 @@ struct TemplateLibraryView: View {
             helper: "Соберите и сохраните для повторного старта."
         ) {
             FFButton(title: "Открыть конструктор шаблона", variant: .primary) {
-                templateBuilderRoute = TemplateBuilderRoute(template: nil, isMine: true)
+                templateBuilderTemplate = nil
+                isTemplateBuilderPresented = true
             }
-        }
-    }
-
-    private var readyTemplatesSection: some View {
-        TrainingBuilderSectionCard(
-            eyebrow: "Curated",
-            title: "Готовые пресеты",
-            helper: "Раздел curated templates пока ограничен backend."
-        ) {
-            EmptyView()
         }
     }
 
@@ -454,24 +393,9 @@ struct TemplateLibraryView: View {
         TrainingBuilderHeroCard(
             eyebrow: "Шаблоны",
             title: "Шаблоны для быстрого старта",
-            subtitle: "Готовые структуры, которые можно запустить или быстро поправить.",
+            subtitle: "Сохраняйте свои тренировочные шаблоны, чтобы быстро запускать и редактировать их.",
             badges: templateLibraryBadges
         )
-    }
-
-    private var sectionModeControl: some View {
-        HStack(spacing: FFSpacing.xs) {
-            ForEach(SectionMode.allCases) { mode in
-                TrainingBuilderChoiceTile(
-                    title: mode.rawValue,
-                    subtitle: mode == .mine ? "Ваши структуры и быстрый запуск" : "Готовая библиотека",
-                    isSelected: sectionMode == mode
-                ) {
-                    sectionMode = mode
-                }
-            }
-        }
-        .padding(.horizontal, FFSpacing.xs)
     }
 
     private var templateLibraryBadges: [String] {
@@ -479,7 +403,7 @@ struct TemplateLibraryView: View {
         if !viewModel.templates.isEmpty {
             badges.append("\(viewModel.templates.count) шаблонов")
         }
-        badges.append(sectionMode == .mine ? "Ваши структуры" : "Curated library")
+        badges.append("Быстрый запуск")
         return badges
     }
 
@@ -496,7 +420,7 @@ struct TemplateLibraryView: View {
                         .foregroundStyle(FFColors.textSecondary)
                 }
                 Spacer()
-                reorderHandle(id: normalized.id)
+                reorderBadge
                 Button(role: .destructive) {
                     viewModel.removeSelectedExercise(id: normalized.id)
                 } label: {
@@ -558,8 +482,7 @@ struct TemplateLibraryView: View {
 
         var items = viewModel.selectedExercises
         let item = items.remove(at: from)
-        let destination = from < to ? to - 1 : to
-        items.insert(item, at: destination)
+        items.insert(item, at: to)
         viewModel.selectedExercises = items
         return true
     }
@@ -607,23 +530,11 @@ struct TemplateLibraryView: View {
     private func smallIconButton(systemName: String, tint: Color = FFColors.textSecondary, action: @escaping () -> Void)
         -> some View
     {
-        Button(action: action) {
-            Image(systemName: systemName)
-                .font(.system(size: 14, weight: .semibold))
-                .frame(width: 32, height: 32)
-                .foregroundStyle(tint)
-                .background(FFColors.surface)
-                .clipShape(RoundedRectangle(cornerRadius: FFTheme.Radius.control))
-                .overlay {
-                    RoundedRectangle(cornerRadius: FFTheme.Radius.control)
-                        .stroke(FFColors.gray700, lineWidth: 1)
-                }
-        }
-        .buttonStyle(.plain)
+        FFIconButton(systemName: systemName, tint: tint, action: action)
     }
 
-    private func reorderHandle(id: String) -> some View {
-        Image(systemName: "line.3.horizontal")
+    private var reorderBadge: some View {
+        Image(systemName: "arrow.up.arrow.down")
             .font(.system(size: 16, weight: .semibold))
             .foregroundStyle(FFColors.textSecondary)
             .frame(width: 32, height: 32)
@@ -633,8 +544,7 @@ struct TemplateLibraryView: View {
                 RoundedRectangle(cornerRadius: FFTheme.Radius.control)
                     .stroke(FFColors.gray700, lineWidth: 1)
             }
-            .draggable(id)
-            .accessibilityLabel("Перетащите, чтобы изменить порядок упражнения")
+            .accessibilityHidden(true)
     }
 
     private func normalize(_ exercise: TemplateExerciseDraft) -> EditableTemplateExercise {
@@ -657,11 +567,9 @@ private struct TemplateDetailsView: View {
     @Environment(\.dismiss) private var dismiss
 
     let template: WorkoutTemplateDraft
-    let isMine: Bool
-    let onEdit: ((WorkoutTemplateDraft) -> Void)?
+    let onEdit: (WorkoutTemplateDraft) -> Void
     let onStart: (WorkoutTemplateDraft) -> Void
     let onSaveMine: (WorkoutTemplateDraft) async -> Void
-    let onSaveAsMine: (WorkoutTemplateDraft) async -> Void
 
     @State private var name: String
     @State private var exercises: [EditableTemplateExercise]
@@ -669,18 +577,14 @@ private struct TemplateDetailsView: View {
 
     init(
         template: WorkoutTemplateDraft,
-        isMine: Bool,
-        onEdit: ((WorkoutTemplateDraft) -> Void)? = nil,
+        onEdit: @escaping (WorkoutTemplateDraft) -> Void,
         onStart: @escaping (WorkoutTemplateDraft) -> Void,
         onSaveMine: @escaping (WorkoutTemplateDraft) async -> Void,
-        onSaveAsMine: @escaping (WorkoutTemplateDraft) async -> Void,
     ) {
         self.template = template
-        self.isMine = isMine
         self.onEdit = onEdit
         self.onStart = onStart
         self.onSaveMine = onSaveMine
-        self.onSaveAsMine = onSaveAsMine
         _name = State(initialValue: template.name)
         _exercises = State(initialValue: template.exercises.map(EditableTemplateExercise.init))
     }
@@ -696,8 +600,7 @@ private struct TemplateDetailsView: View {
                             label: "Название шаблона",
                             placeholder: "Введите название",
                             text: $name,
-                            helperText: isMine ? "Изменения сохранятся в вашем шаблоне" : "Можно сохранить копию в " +
-                                "Мои",
+                            helperText: "Изменения сохранятся в вашем шаблоне",
                         )
                     }
 
@@ -712,12 +615,14 @@ private struct TemplateDetailsView: View {
                                     .font(FFTypography.body)
                                     .foregroundStyle(FFColors.textSecondary)
                             } else {
-                                ForEach(Array(exercises.enumerated()), id: \.element.id) { index, exercise in
-                                    exerciseRow(index: index, exercise: exercise)
-                                        .dropDestination(for: String.self) { items, _ in
-                                            guard let draggedId = items.first else { return false }
-                                            return reorderExercises(draggedId: draggedId, targetId: exercise.id)
-                                        }
+                                FFVerticalReorderStack(items: exercises, spacing: 0, onReorder: { draggedId, targetId in
+                                    _ = reorderExercises(draggedId: draggedId, targetId: targetId)
+                                }) { exercise, isDragging in
+                                    exerciseRow(
+                                        index: exercises.firstIndex(where: { $0.id == exercise.id }) ?? 0,
+                                        exercise: exercise,
+                                        isReordering: isDragging
+                                    )
                                 }
                             }
                         }
@@ -732,25 +637,14 @@ private struct TemplateDetailsView: View {
                         onStart(currentTemplate)
                     }
 
-                    if isMine {
-                        FFButton(title: isSaving ? "Сохраняем..." : "Сохранить изменения", variant: .secondary) {
-                            Task {
-                                isSaving = true
-                                await onSaveMine(currentTemplate)
-                                isSaving = false
-                            }
+                    FFButton(title: isSaving ? "Сохраняем..." : "Сохранить изменения", variant: .secondary) {
+                        Task {
+                            isSaving = true
+                            await onSaveMine(currentTemplate)
+                            isSaving = false
                         }
-                        .disabled(isSaving)
-                    } else {
-                        FFButton(title: isSaving ? "Сохраняем..." : "Сохранить в мои", variant: .secondary) {
-                            Task {
-                                isSaving = true
-                                await onSaveAsMine(currentTemplate)
-                                isSaving = false
-                            }
-                        }
-                        .disabled(isSaving)
                     }
+                    .disabled(isSaving)
                 }
                 .padding(.horizontal, FFSpacing.md)
                 .padding(.top, FFSpacing.xs)
@@ -770,13 +664,11 @@ private struct TemplateDetailsView: View {
                 }
                 .foregroundStyle(FFColors.textSecondary)
             }
-            if let onEdit {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("Конструктор") {
-                        onEdit(currentTemplate)
-                    }
-                    .foregroundStyle(FFColors.accent)
+            ToolbarItem(placement: .topBarTrailing) {
+                Button("Конструктор") {
+                    onEdit(currentTemplate)
                 }
+                .foregroundStyle(FFColors.accent)
             }
         }
     }
@@ -791,14 +683,14 @@ private struct TemplateDetailsView: View {
         )
     }
 
-    private func exerciseRow(index: Int, exercise: EditableTemplateExercise) -> some View {
+    private func exerciseRow(index: Int, exercise: EditableTemplateExercise, isReordering: Bool = false) -> some View {
         VStack(alignment: .leading, spacing: FFSpacing.xs) {
             HStack {
                 Text("\(index + 1). \(exercise.name)")
                     .font(FFTypography.body.weight(.semibold))
                     .foregroundStyle(FFColors.textPrimary)
                 Spacer()
-                detailsReorderHandle(id: exercise.id)
+                detailsReorderBadge
             }
 
             detailsControlRow(title: "Подходы", value: exercise.sets) {
@@ -832,6 +724,8 @@ private struct TemplateDetailsView: View {
             }
         }
         .padding(.vertical, FFSpacing.xs)
+        .background(isReordering ? FFColors.surface.opacity(0.45) : Color.clear)
+        .clipShape(RoundedRectangle(cornerRadius: FFTheme.Radius.control))
         .overlay(alignment: .bottom) {
             Rectangle().fill(FFColors.gray700.opacity(0.5)).frame(height: 1)
         }
@@ -859,23 +753,11 @@ private struct TemplateDetailsView: View {
     }
 
     private func detailsIconButton(systemName: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: systemName)
-                .font(.system(size: 14, weight: .semibold))
-                .frame(width: 32, height: 32)
-                .foregroundStyle(FFColors.textSecondary)
-                .background(FFColors.surface)
-                .clipShape(RoundedRectangle(cornerRadius: FFTheme.Radius.control))
-                .overlay {
-                    RoundedRectangle(cornerRadius: FFTheme.Radius.control)
-                        .stroke(FFColors.gray700, lineWidth: 1)
-                }
-        }
-        .buttonStyle(.plain)
+        FFIconButton(systemName: systemName, action: action)
     }
 
-    private func detailsReorderHandle(id: String) -> some View {
-        Image(systemName: "line.3.horizontal")
+    private var detailsReorderBadge: some View {
+        Image(systemName: "arrow.up.arrow.down")
             .font(.system(size: 16, weight: .semibold))
             .frame(width: 32, height: 32)
             .foregroundStyle(FFColors.textSecondary)
@@ -885,8 +767,7 @@ private struct TemplateDetailsView: View {
                 RoundedRectangle(cornerRadius: FFTheme.Radius.control)
                     .stroke(FFColors.gray700, lineWidth: 1)
             }
-            .draggable(id)
-            .accessibilityLabel("Перетащите, чтобы изменить порядок упражнения")
+            .accessibilityHidden(true)
     }
 
     private func updateExercise(_ id: String, mutate: (inout EditableTemplateExercise) -> Void) {
@@ -903,8 +784,7 @@ private struct TemplateDetailsView: View {
         else { return false }
 
         let item = exercises.remove(at: from)
-        let destination = from < to ? to - 1 : to
-        exercises.insert(item, at: destination)
+        exercises.insert(item, at: to)
         return true
     }
 }

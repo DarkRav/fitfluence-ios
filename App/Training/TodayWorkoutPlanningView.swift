@@ -541,7 +541,7 @@ struct TodayWorkoutPlanningView: View {
 
     private var bottomHelperText: String {
         if viewModel.request.canBuild {
-            return "Откроем тренировку с готовой заготовкой."
+            return "Откроем конструктор с вашей тренировкой."
         }
         return "Сначала выберите мышцы и время."
     }

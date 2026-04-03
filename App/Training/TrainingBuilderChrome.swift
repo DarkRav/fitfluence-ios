@@ -88,16 +88,10 @@ struct TrainingBuilderChoiceTile: View {
                         .lineLimit(2)
                 }
             }
-            .foregroundStyle(isSelected ? FFColors.background : FFColors.textPrimary)
             .padding(.horizontal, FFSpacing.sm)
             .padding(.vertical, FFSpacing.xs)
             .frame(maxWidth: .infinity, minHeight: 56, alignment: alignment)
-            .background(isSelected ? FFColors.primary : FFColors.surface)
-            .clipShape(RoundedRectangle(cornerRadius: FFTheme.Radius.control))
-            .overlay {
-                RoundedRectangle(cornerRadius: FFTheme.Radius.control)
-                    .stroke(isSelected ? FFColors.primary : FFColors.gray700, lineWidth: 1)
-            }
+            .ffSelectableSurface(isSelected: isSelected, emphasis: .primary)
         }
         .buttonStyle(.plain)
     }
@@ -110,17 +104,15 @@ struct TrainingBuilderBadge: View {
     var body: some View {
         Text(title)
             .font(FFTypography.caption.weight(.semibold))
-            .foregroundStyle(isAccent ? FFColors.background : FFColors.textSecondary)
             .padding(.horizontal, FFSpacing.sm)
             .padding(.vertical, FFSpacing.xs)
-            .background(isAccent ? FFColors.accent : FFColors.surface)
-            .clipShape(Capsule())
-            .overlay {
-                if !isAccent {
-                    Capsule()
-                        .stroke(FFColors.gray700.opacity(0.8), lineWidth: 1)
-                }
-            }
+            .ffSelectableSurface(
+                isSelected: isAccent,
+                emphasis: .accent,
+                unselectedForeground: FFColors.textSecondary,
+                unselectedBorder: FFColors.gray700.opacity(0.8),
+                cornerRadius: 999,
+            )
     }
 }
 

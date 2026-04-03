@@ -354,7 +354,12 @@ final class WorkoutHomeViewModel {
     }
 
     private func apply(summary: AthleteHomeSummaryResponse) async {
-        if let activeWorkout = summary.activeWorkout {
+        if let activeWorkout = summary.activeWorkout,
+           !(await syncCoordinator.hasPendingAbandon(
+               namespace: userSub,
+               workoutInstanceId: activeWorkout.workoutInstanceId
+           ))
+        {
             serverInProgressWorkout = remoteWorkoutTarget(from: activeWorkout)
         } else {
             serverInProgressWorkout = nil
@@ -380,13 +385,27 @@ final class WorkoutHomeViewModel {
 
         let remoteRecent = summary.recentActivity.recentWorkouts.compactMap(makeCompletedWorkoutRecord)
         if !remoteRecent.isEmpty {
+            for record in remoteRecent {
+                await trainingStore.appendHistory(record)
+            }
             recentWorkouts = remoteRecent
             lastCompleted = remoteRecent.first
         }
 
-        remoteTodayCandidates = summary.todayWorkout
-            .flatMap { makeRemoteTodayWorkout(from: $0, programTitle: summary.activeProgram?.title) }
-            .map { [$0] } ?? []
+        if let todayWorkout = summary.todayWorkout {
+            let pendingAbandon = await syncCoordinator.hasPendingAbandon(
+                namespace: userSub,
+                workoutInstanceId: todayWorkout.workoutInstanceId
+            )
+            if pendingAbandon, mapStatus(todayWorkout.status) == .inProgress {
+                remoteTodayCandidates = []
+            } else {
+                remoteTodayCandidates = makeRemoteTodayWorkout(from: todayWorkout, programTitle: summary.activeProgram?.title)
+                    .map { [$0] } ?? []
+            }
+        } else {
+            remoteTodayCandidates = []
+        }
 
         await updateRemoteResumeCandidate()
         rebuildTodayWorkout()
@@ -880,6 +899,7 @@ final class WorkoutHomeViewModel {
             completedSets: 0,
             totalSets: 0,
             volume: 0,
+            workoutDetails: nil,
             notes: nil,
             overallRPE: nil,
         )

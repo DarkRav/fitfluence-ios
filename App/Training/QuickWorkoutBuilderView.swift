@@ -188,6 +188,7 @@ struct QuickWorkoutBuilderView: View {
 
     @State private var viewModel: QuickWorkoutBuilderViewModel
     @State private var isExercisePickerPresented = false
+    @State private var expandedExerciseID: String?
 
     private let initialWorkout: WorkoutDetailsModel?
     private let initialTemplate: WorkoutTemplateDraft?
@@ -361,6 +362,11 @@ struct QuickWorkoutBuilderView: View {
                 }
             }
         }
+        .onChange(of: viewModel.draft.exercises.map(\.id)) { _, exerciseIDs in
+            if let expandedExerciseID, !exerciseIDs.contains(expandedExerciseID) {
+                self.expandedExerciseID = nil
+            }
+        }
     }
 
     private var headerCard: some View {
@@ -384,12 +390,25 @@ struct QuickWorkoutBuilderView: View {
                 if viewModel.draft.exercises.isEmpty {
                     emptyStateCard
                 } else {
-                    ForEach(Array(viewModel.draft.exercises.enumerated()), id: \.element.id) { index, exercise in
+                    FFVerticalReorderStack(
+                        items: viewModel.draft.exercises,
+                        spacing: FFSpacing.sm,
+                        onReorder: { draggedId, targetId in
+                        _ = viewModel.reorderExercises(draggedId: draggedId, targetId: targetId)
+                    }) { exercise, isDragging in
                         QuickWorkoutExerciseCard(
-                            index: index,
+                            index: viewModel.draft.exercises.firstIndex(where: { $0.id == exercise.id }) ?? 0,
                             exercise: exercise,
+                            isExpanded: expandedExerciseID == exercise.id,
+                            isReordering: isDragging,
                             notes: notesBinding(for: exercise.id),
+                            onToggleExpanded: {
+                                toggleExerciseExpansion(id: exercise.id)
+                            },
                             onRemove: {
+                                if expandedExerciseID == exercise.id {
+                                    expandedExerciseID = nil
+                                }
                                 viewModel.removeExercise(id: exercise.id)
                             },
                             onSetsDecrement: {
@@ -456,10 +475,6 @@ struct QuickWorkoutBuilderView: View {
                                 }
                             },
                         )
-                        .dropDestination(for: String.self) { items, _ in
-                            guard let draggedId = items.first else { return false }
-                            return viewModel.reorderExercises(draggedId: draggedId, targetId: exercise.id)
-                        }
                     }
                 }
 
@@ -606,6 +621,14 @@ struct QuickWorkoutBuilderView: View {
         UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
     }
 
+    private func toggleExerciseExpansion(id: String) {
+        if expandedExerciseID == id {
+            expandedExerciseID = nil
+        } else {
+            expandedExerciseID = id
+        }
+    }
+
     private var headerSubtitle: String? {
         switch viewModel.mode {
         case .plannedQuickWorkout:
@@ -694,7 +717,10 @@ struct QuickWorkoutBuilderView: View {
 private struct QuickWorkoutExerciseCard: View {
     let index: Int
     let exercise: WorkoutCompositionExerciseDraft
+    let isExpanded: Bool
+    let isReordering: Bool
     let notes: Binding<String>
+    let onToggleExpanded: () -> Void
     let onRemove: () -> Void
     let onSetsDecrement: () -> Void
     let onSetsIncrement: () -> Void
@@ -710,109 +736,130 @@ private struct QuickWorkoutExerciseCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: FFSpacing.sm) {
             HStack(alignment: .top, spacing: FFSpacing.sm) {
-                VStack(alignment: .leading, spacing: FFSpacing.xxs) {
-                    HStack(spacing: FFSpacing.xs) {
-                        Text("Упр. \(index + 1)")
-                            .font(FFTypography.caption.weight(.semibold))
-                            .foregroundStyle(FFColors.background)
-                            .padding(.horizontal, FFSpacing.sm)
-                            .padding(.vertical, 6)
-                            .background(FFColors.accent)
-                            .clipShape(Capsule())
-                        Text(exercise.name)
-                            .font(FFTypography.body.weight(.semibold))
-                            .foregroundStyle(FFColors.textPrimary)
-                    }
-                    if !exercise.catalogTags.isEmpty {
-                        exerciseTagRow(tags: exercise.catalogTags)
-                    }
-                    Text(exercise.summaryText)
-                        .font(FFTypography.caption)
-                        .foregroundStyle(FFColors.textSecondary)
-                    if let notesPreview = exercise.notesPreview {
-                        Text(notesPreview)
+                Button(action: onToggleExpanded) {
+                    VStack(alignment: .leading, spacing: FFSpacing.xxs) {
+                        HStack(spacing: FFSpacing.xs) {
+                            Text("Упр. \(index + 1)")
+                                .font(FFTypography.caption.weight(.semibold))
+                                .foregroundStyle(FFColors.background)
+                                .padding(.horizontal, FFSpacing.sm)
+                                .padding(.vertical, 6)
+                                .background(FFColors.accent)
+                                .clipShape(Capsule())
+                            Text(exercise.name)
+                                .font(FFTypography.body.weight(.semibold))
+                                .foregroundStyle(FFColors.textPrimary)
+                                .multilineTextAlignment(.leading)
+                        }
+                        if !exercise.catalogTags.isEmpty {
+                            exerciseTagRow(tags: exercise.catalogTags)
+                        }
+                        Text(exercise.summaryText)
                             .font(FFTypography.caption)
                             .foregroundStyle(FFColors.textSecondary)
-                            .lineLimit(2)
+                            .multilineTextAlignment(.leading)
+                        if let notesPreview = exercise.notesPreview {
+                            Text(notesPreview)
+                                .font(FFTypography.caption)
+                                .foregroundStyle(FFColors.textSecondary)
+                                .lineLimit(isExpanded ? 2 : 1)
+                                .multilineTextAlignment(.leading)
+                        }
                     }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
                 }
+                .buttonStyle(.plain)
                 Spacer()
                 HStack(spacing: FFSpacing.xxs) {
-                    reorderHandle(id: exercise.id)
+                    reorderBadge
                     iconButton(systemName: "trash", tint: FFColors.danger, action: onRemove)
                 }
             }
 
-            LazyVGrid(
-                columns: [
-                    GridItem(.flexible(), spacing: FFSpacing.xs),
-                    GridItem(.flexible(), spacing: FFSpacing.xs),
-                ],
-                spacing: FFSpacing.xs
-            ) {
-                metricTile(
-                    title: "Подходы",
-                    value: "\(exercise.sets)",
-                    accent: FFColors.primary,
-                    onDecrement: onSetsDecrement,
-                    onIncrement: onSetsIncrement,
-                )
-                metricTile(
-                    title: "Повторы мин",
-                    value: exercise.repsMin.map(String.init) ?? "—",
-                    accent: FFColors.accent,
-                    onDecrement: onRepsMinDecrement,
-                    onIncrement: onRepsMinIncrement,
-                )
-                metricTile(
-                    title: "Повторы макс",
-                    value: exercise.repsMax.map(String.init) ?? "—",
-                    accent: FFColors.accent,
-                    onDecrement: onRepsMaxDecrement,
-                    onIncrement: onRepsMaxIncrement,
-                )
-                metricTile(
-                    title: "Отдых",
-                    value: exercise.restSeconds.map { "\($0)с" } ?? "—",
-                    accent: FFColors.primary,
-                    onDecrement: onRestDecrement,
-                    onIncrement: onRestIncrement,
-                )
-                metricTile(
-                    title: "RPE",
-                    value: exercise.targetRpe.map(String.init) ?? "—",
-                    accent: FFColors.accent,
-                    onDecrement: onRpeDecrement,
-                    onIncrement: onRpeIncrement,
-                )
-            }
+            if isExpanded {
+                LazyVGrid(
+                    columns: [
+                        GridItem(.flexible(), spacing: FFSpacing.xs),
+                        GridItem(.flexible(), spacing: FFSpacing.xs),
+                    ],
+                    spacing: FFSpacing.xs
+                ) {
+                    metricTile(
+                        title: "Подходы",
+                        value: "\(exercise.sets)",
+                        accent: FFColors.primary,
+                        onDecrement: onSetsDecrement,
+                        onIncrement: onSetsIncrement,
+                    )
+                    metricTile(
+                        title: "Повторы мин",
+                        value: exercise.repsMin.map(String.init) ?? "—",
+                        accent: FFColors.accent,
+                        onDecrement: onRepsMinDecrement,
+                        onIncrement: onRepsMinIncrement,
+                    )
+                    metricTile(
+                        title: "Повторы макс",
+                        value: exercise.repsMax.map(String.init) ?? "—",
+                        accent: FFColors.accent,
+                        onDecrement: onRepsMaxDecrement,
+                        onIncrement: onRepsMaxIncrement,
+                    )
+                    metricTile(
+                        title: "Отдых",
+                        value: exercise.restSeconds.map { "\($0)с" } ?? "—",
+                        accent: FFColors.primary,
+                        onDecrement: onRestDecrement,
+                        onIncrement: onRestIncrement,
+                    )
+                    metricTile(
+                        title: "RPE",
+                        value: exercise.targetRpe.map(String.init) ?? "—",
+                        accent: FFColors.accent,
+                        onDecrement: onRpeDecrement,
+                        onIncrement: onRpeIncrement,
+                    )
+                }
 
-            VStack(alignment: .leading, spacing: FFSpacing.xs) {
-                Text("Заметки")
-                    .font(FFTypography.caption)
-                    .foregroundStyle(FFColors.textSecondary)
-                TextField(
-                    "",
-                    text: notes,
-                    prompt: Text("Техника, пауза, темп, акценты")
-                        .foregroundStyle(FFColors.gray500),
-                    axis: .vertical,
-                )
-                .textInputAutocapitalization(.sentences)
-                .autocorrectionDisabled(false)
-                .lineLimit(1 ... 3)
-                .font(FFTypography.body)
-                .foregroundStyle(FFColors.textPrimary)
-                .tint(FFColors.textPrimary)
-                .padding(.horizontal, FFSpacing.md)
-                .padding(.vertical, FFSpacing.sm)
-                .background(FFColors.surface)
-                .clipShape(RoundedRectangle(cornerRadius: FFTheme.Radius.control))
-                .overlay {
-                    RoundedRectangle(cornerRadius: FFTheme.Radius.control)
-                        .stroke(FFColors.gray300, lineWidth: 1)
+                VStack(alignment: .leading, spacing: FFSpacing.xs) {
+                    Text("Заметки")
+                        .font(FFTypography.caption)
+                        .foregroundStyle(FFColors.textSecondary)
+                    TextField(
+                        "",
+                        text: notes,
+                        prompt: Text("Техника, пауза, темп, акценты")
+                            .foregroundStyle(FFColors.gray500),
+                        axis: .vertical,
+                    )
+                    .textInputAutocapitalization(.sentences)
+                    .autocorrectionDisabled(false)
+                    .lineLimit(1 ... 3)
+                    .font(FFTypography.body)
+                    .foregroundStyle(FFColors.textPrimary)
+                    .tint(FFColors.textPrimary)
+                    .padding(.horizontal, FFSpacing.md)
+                    .padding(.vertical, FFSpacing.sm)
+                    .background(FFColors.surface)
+                    .clipShape(RoundedRectangle(cornerRadius: FFTheme.Radius.control))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: FFTheme.Radius.control)
+                            .stroke(FFColors.gray300, lineWidth: 1)
+                    }
                 }
             }
+
+            Button(action: onToggleExpanded) {
+                Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(FFColors.textSecondary)
+                    .frame(maxWidth: .infinity)
+                    .padding(.top, isExpanded ? 2 : 0)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(isExpanded ? "Свернуть упражнение" : "Развернуть упражнение")
         }
         .padding(FFSpacing.md)
         .background(
@@ -828,7 +875,7 @@ private struct QuickWorkoutExerciseCard: View {
         .clipShape(RoundedRectangle(cornerRadius: FFTheme.Radius.card))
         .overlay {
             RoundedRectangle(cornerRadius: FFTheme.Radius.card)
-                .stroke(FFColors.gray700.opacity(0.9), lineWidth: 1)
+                .stroke(isReordering ? FFColors.primary.opacity(0.7) : FFColors.gray700.opacity(0.9), lineWidth: 1)
         }
     }
 
@@ -883,9 +930,9 @@ private struct QuickWorkoutExerciseCard: View {
         }
     }
 
-    private func reorderHandle(id: String) -> some View {
-        Image(systemName: "line.3.horizontal")
-            .font(.system(size: 16, weight: .semibold))
+    private var reorderBadge: some View {
+        Image(systemName: "arrow.up.arrow.down")
+            .font(.system(size: 14, weight: .semibold))
             .foregroundStyle(FFColors.textSecondary)
             .frame(width: 32, height: 32)
             .background(FFColors.background)
@@ -894,8 +941,7 @@ private struct QuickWorkoutExerciseCard: View {
                 RoundedRectangle(cornerRadius: FFTheme.Radius.control)
                     .stroke(FFColors.gray700, lineWidth: 1)
             }
-            .draggable(id)
-            .accessibilityLabel("Перетащите, чтобы изменить порядок упражнения")
+            .accessibilityHidden(true)
     }
 
     private func iconButton(
@@ -903,19 +949,7 @@ private struct QuickWorkoutExerciseCard: View {
         tint: Color = FFColors.textSecondary,
         action: @escaping () -> Void,
     ) -> some View {
-        Button(action: action) {
-            Image(systemName: systemName)
-                .font(.system(size: 14, weight: .semibold))
-                .frame(width: 32, height: 32)
-                .foregroundStyle(tint)
-                .background(FFColors.background)
-                .clipShape(RoundedRectangle(cornerRadius: FFTheme.Radius.control))
-                .overlay {
-                    RoundedRectangle(cornerRadius: FFTheme.Radius.control)
-                        .stroke(FFColors.gray700, lineWidth: 1)
-                }
-        }
-        .buttonStyle(.plain)
+        FFIconButton(systemName: systemName, tint: tint, style: .outlined, action: action)
     }
 
     private func compactIconButton(
@@ -923,15 +957,15 @@ private struct QuickWorkoutExerciseCard: View {
         tint: Color,
         action: @escaping () -> Void,
     ) -> some View {
-        Button(action: action) {
-            Image(systemName: systemName)
-                .font(.system(size: 12, weight: .bold))
-                .frame(width: 28, height: 28)
-                .foregroundStyle(tint)
-                .background(tint.opacity(0.12))
-                .clipShape(RoundedRectangle(cornerRadius: 10))
-        }
-        .buttonStyle(.plain)
+        FFIconButton(
+            systemName: systemName,
+            tint: tint,
+            size: 28,
+            cornerRadius: 10,
+            font: .system(size: 12, weight: .bold),
+            style: .tonal(tint),
+            action: action,
+        )
     }
 }
 

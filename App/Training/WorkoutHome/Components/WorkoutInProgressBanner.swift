@@ -7,12 +7,12 @@ struct WorkoutInProgressBanner: View {
     let onContinue: () -> Void
 
     var body: some View {
-        HStack(alignment: .center, spacing: FFSpacing.sm) {
-            HStack(alignment: .top, spacing: FFSpacing.xs) {
+        FFCard(padding: FFSpacing.sm) {
+            HStack(alignment: .top, spacing: FFSpacing.sm) {
                 Image(systemName: iconSystemName)
-                    .font(.system(size: 21, weight: .semibold))
+                    .font(.system(size: 18, weight: .semibold))
                     .foregroundStyle(FFColors.accent)
-                    .frame(width: 22, height: 22, alignment: .center)
+                    .frame(width: 24, height: 24, alignment: .center)
 
                 VStack(alignment: .leading, spacing: FFSpacing.xxs) {
                     Text("Тренировка в процессе")
@@ -21,9 +21,9 @@ struct WorkoutInProgressBanner: View {
 
                     if let workoutName = normalized(workoutName) {
                         Text(workoutName)
-                            .font(FFTypography.body.weight(.semibold))
+                            .font(FFTypography.body)
                             .foregroundStyle(FFColors.textPrimary)
-                            .lineLimit(1)
+                            .lineLimit(2)
                     }
 
                     if let detailsText = normalized(detailsText) {
@@ -33,21 +33,12 @@ struct WorkoutInProgressBanner: View {
                             .lineLimit(1)
                     }
                 }
+
+                Spacer(minLength: FFSpacing.sm)
+
+                FFButton(title: "Продолжить", variant: .secondary, action: onContinue)
+                    .frame(maxWidth: 156)
             }
-
-            Spacer(minLength: FFSpacing.sm)
-
-            FFButton(title: "Продолжить", variant: .secondary, action: onContinue)
-                .frame(maxWidth: 164)
-        }
-        .frame(minHeight: 110)
-        .padding(.horizontal, FFSpacing.sm)
-        .padding(.vertical, FFSpacing.xs)
-        .background(FFColors.surface)
-        .clipShape(RoundedRectangle(cornerRadius: FFTheme.Radius.control))
-        .overlay {
-            RoundedRectangle(cornerRadius: FFTheme.Radius.control)
-                .stroke(FFColors.gray700, lineWidth: 1)
         }
     }
 

@@ -4,6 +4,7 @@ struct FFErrorState: View {
     var title: String = "Что-то пошло не так"
     var message: String = "Попробуйте обновить экран"
     var retryTitle: String = "Повторить"
+    var fillsAvailableHeight = false
     var onRetry: () -> Void = {}
 
     var body: some View {
@@ -24,7 +25,9 @@ struct FFErrorState: View {
             }
             .frame(maxWidth: .infinity)
             .frame(minHeight: 180)
+            .frame(maxHeight: fillsAvailableHeight ? .infinity : nil)
             .padding(.vertical, FFSpacing.md)
         }
+        .frame(maxHeight: fillsAvailableHeight ? .infinity : nil)
     }
 }

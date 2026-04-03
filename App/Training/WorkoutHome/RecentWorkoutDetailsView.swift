@@ -222,11 +222,30 @@ struct RecentWorkoutDetailsView: View {
 
     private func loadSnapshot() async {
         isLoadingDetails = true
-        snapshot = await progressStore.load(
+        let loadedSnapshot = await progressStore.load(
             userSub: record.userSub,
             programId: record.programId,
             workoutId: record.workoutId,
         )
+        if let loadedSnapshot {
+            snapshot = loadedSnapshot
+        } else if let workoutDetails = record.workoutDetails {
+            snapshot = WorkoutProgressSnapshot(
+                userSub: record.userSub,
+                programId: record.programId,
+                workoutId: record.workoutId,
+                currentExerciseIndex: nil,
+                startedAt: record.startedAt,
+                source: record.source,
+                workoutDetails: workoutDetails,
+                hasLocalOnlyStructuralChanges: false,
+                isFinished: true,
+                lastUpdated: record.finishedAt,
+                exercises: [:]
+            )
+        } else {
+            snapshot = nil
+        }
         isLoadingDetails = false
     }
 
@@ -242,7 +261,7 @@ struct RecentWorkoutDetailsView: View {
     }
 
     private var canRepeatWorkout: Bool {
-        record.source != .program
+        record.source != .program && (record.workoutDetails != nil || snapshot?.workoutDetails != nil)
     }
 }
 
@@ -275,6 +294,7 @@ private struct SetLine: Identifiable {
                 completedSets: 14,
                 totalSets: 16,
                 volume: 1_560,
+                workoutDetails: nil,
                 notes: "Отличное самочувствие",
                 overallRPE: 7,
             ),

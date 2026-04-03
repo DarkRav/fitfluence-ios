@@ -41,6 +41,7 @@ final class HomeViewModel {
     private let userSub: String
     private let isOnline: Bool
     private let calendar: Calendar
+    private let syncCoordinator: SyncCoordinator
 
     var isLoading = false
     var activeSession: ActiveWorkoutSession?
@@ -63,6 +64,7 @@ final class HomeViewModel {
         programsClient: ProgramsClientProtocol? = nil,
         athleteTrainingClient: AthleteTrainingClientProtocol? = nil,
         calendar: Calendar = .current,
+        syncCoordinator: SyncCoordinator = .shared,
     ) {
         self.userSub = userSub
         self.sessionManager = sessionManager
@@ -73,6 +75,7 @@ final class HomeViewModel {
         self.athleteTrainingClient = athleteTrainingClient
         self.isOnline = isOnline
         self.calendar = calendar
+        self.syncCoordinator = syncCoordinator
     }
 
     var primaryTitle: String {
@@ -189,7 +192,12 @@ final class HomeViewModel {
         let result = await athleteTrainingClient.homeSummary()
         guard case let .success(summary) = result else { return }
 
-        if let remoteActive = summary.activeWorkout {
+        if let remoteActive = summary.activeWorkout,
+           !(await syncCoordinator.hasPendingAbandon(
+               namespace: userSub,
+               workoutInstanceId: remoteActive.workoutInstanceId
+           ))
+        {
             let remoteSession = ActiveWorkoutSession(
                 userSub: userSub,
                 programId: remoteActive.programId?.trimmedNilIfEmpty ?? remoteActive.source.rawValue,
@@ -214,16 +222,22 @@ final class HomeViewModel {
 
         if let todayWorkout = summary.todayWorkout {
             let mappedStatus = mapStatus(todayWorkout.status)
-            plannedWorkoutToday = HomePlannedWorkoutSnapshot(
-                title: todayWorkout.title.trimmedNilIfEmpty ?? "Тренировка",
-                status: mappedStatus,
-                statusText: statusText(for: mappedStatus),
-                subtitle: subtitle(for: todayWorkout),
-                source: mapSource(todayWorkout.source),
-                programId: todayWorkout.programId?.trimmedNilIfEmpty,
-                workoutId: todayWorkout.workoutInstanceId,
+            let isPendingAbandon = await syncCoordinator.hasPendingAbandon(
+                namespace: userSub,
+                workoutInstanceId: todayWorkout.workoutInstanceId
             )
-            await loadWorkoutSnapshotFromInstance(workoutInstanceId: todayWorkout.workoutInstanceId)
+            if !(isPendingAbandon && mappedStatus == .inProgress) {
+                plannedWorkoutToday = HomePlannedWorkoutSnapshot(
+                    title: todayWorkout.title.trimmedNilIfEmpty ?? "Тренировка",
+                    status: mappedStatus,
+                    statusText: statusText(for: mappedStatus),
+                    subtitle: subtitle(for: todayWorkout),
+                    source: mapSource(todayWorkout.source),
+                    programId: todayWorkout.programId?.trimmedNilIfEmpty,
+                    workoutId: todayWorkout.workoutInstanceId,
+                )
+                await loadWorkoutSnapshotFromInstance(workoutInstanceId: todayWorkout.workoutInstanceId)
+            }
         }
     }
 

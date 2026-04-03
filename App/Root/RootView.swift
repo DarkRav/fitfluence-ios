@@ -557,6 +557,8 @@ func resolveRepeatWorkoutTarget(
     let storedWorkout: WorkoutDetailsModel?
     if let preferredWorkout {
         storedWorkout = preferredWorkout
+    } else if let recordWorkout = record.workoutDetails {
+        storedWorkout = recordWorkout
     } else {
         storedWorkout = await progressStore.load(
             userSub: record.userSub,
@@ -576,7 +578,13 @@ func resolveRepeatWorkoutTarget(
         return .quickBuilder
     case .template:
         if let storedWorkout {
-            return .preset(PresetWorkoutRoute(programId: nil, workout: storedWorkout, source: .template))
+            return .preset(
+                PresetWorkoutRoute(
+                    programId: nil,
+                    workout: makeRepeatableWorkoutCopy(from: storedWorkout, prefix: "template-repeat"),
+                    source: .template,
+                )
+            )
         }
         switch templateFallback {
         case .quickBuilder:
@@ -586,10 +594,26 @@ func resolveRepeatWorkoutTarget(
         }
     case .freestyle:
         if let storedWorkout {
-            return .preset(PresetWorkoutRoute(programId: nil, workout: storedWorkout, source: .freestyle))
+            return .preset(
+                PresetWorkoutRoute(
+                    programId: nil,
+                    workout: makeRepeatableWorkoutCopy(from: storedWorkout, prefix: "quick-repeat"),
+                    source: .freestyle,
+                )
+            )
         }
         return .quickBuilder
     }
+}
+
+private func makeRepeatableWorkoutCopy(from workout: WorkoutDetailsModel, prefix: String) -> WorkoutDetailsModel {
+    WorkoutDetailsModel(
+        id: "\(prefix)-\(UUID().uuidString)",
+        title: workout.title,
+        dayOrder: workout.dayOrder,
+        coachNote: workout.coachNote,
+        exercises: workout.exercises,
+    )
 }
 
 private struct PlanTabContent: View {
@@ -753,10 +777,10 @@ private struct CatalogTabContent: View {
     let onOpenWorkoutHubTab: () -> Void
 
     @State private var viewModel: CatalogViewModel
+    @State private var myProgramsViewModel: MyProgramsViewModel
     @State private var athletesShowcaseViewModel: AthletesShowcaseViewModel
     @State private var athletesSearchViewModel: AthleteSearchViewModel
     @State private var followingViewModel: FollowingAthletesViewModel
-    @State private var workoutHomeViewModel: WorkoutHomeViewModel
 
     init(
         store: StoreOf<RootFeature>,
@@ -782,6 +806,14 @@ private struct CatalogTabContent: View {
                 onUnauthorized: unauthorizedHandler,
             ),
         )
+        _myProgramsViewModel = State(
+            initialValue: MyProgramsViewModel(
+                userSub: userSub,
+                athleteTrainingClient: apiClient as? AthleteTrainingClientProtocol,
+                programsClient: apiClient as? ProgramsClientProtocol,
+                onUnauthorized: unauthorizedHandler,
+            ),
+        )
         _athletesShowcaseViewModel = State(
             initialValue: AthletesShowcaseViewModel(
                 userSub: userSub,
@@ -803,12 +835,6 @@ private struct CatalogTabContent: View {
                 onUnauthorized: unauthorizedHandler,
             ),
         )
-        _workoutHomeViewModel = State(
-            initialValue: WorkoutHomeViewModel(
-                userSub: userSub,
-                athleteTrainingClient: apiClient as? AthleteTrainingClientProtocol,
-            ),
-        )
     }
 
     var body: some View {
@@ -818,14 +844,20 @@ private struct CatalogTabContent: View {
         ) { viewStore in
             CatalogScreen(
                 programsViewModel: viewModel,
+                myProgramsViewModel: myProgramsViewModel,
                 athletesShowcaseViewModel: athletesShowcaseViewModel,
                 athletesSearchViewModel: athletesSearchViewModel,
                 followingViewModel: followingViewModel,
-                programsHeaderContent: activeProgramCard,
                 userSub: userSub,
                 environment: environment,
-                onProgramTap: { programID in
-                    store.send(.openProgram(programId: programID, userSub: userSub))
+                onProgramTap: { programID, displayMode in
+                    store.send(.openProgram(programId: programID, userSub: userSub, displayMode: displayMode))
+                },
+                onOpenPlan: {
+                    onOpenPlanTab()
+                },
+                onOpenWorkoutHub: {
+                    onOpenWorkoutHubTab()
                 },
                 onUnauthorized: {
                     store.send(.logoutTapped)
@@ -854,6 +886,7 @@ private struct CatalogTabContent: View {
                         ),
                         apiClient: apiClient,
                         environment: environment,
+                        displayMode: selectedProgram.displayMode,
                         onOpenProgramPlan: {
                             store.send(.programDetailsDismissed)
                             onOpenPlanTab()
@@ -862,61 +895,15 @@ private struct CatalogTabContent: View {
                             store.send(.programDetailsDismissed)
                             onOpenWorkoutHubTab()
                         },
-                        onOpenProgram: { programID in
-                            store.send(.openProgram(programId: programID, userSub: userSub))
+                        onOpenProgram: { programID, displayMode in
+                            store.send(.openProgram(programId: programID, userSub: userSub, displayMode: displayMode))
                         },
                     )
                     .navigationTitle("Программа")
                     .navigationBarBackButtonHidden(false)
                 }
             }
-            .task(id: userSub) {
-                await workoutHomeViewModel.onAppear()
-            }
         }
-    }
-
-    private var activeProgramCard: AnyView? {
-        guard let progress = workoutHomeViewModel.programProgress,
-              workoutHomeViewModel.hasActiveProgram
-        else {
-            return nil
-        }
-
-        return AnyView(
-            ProgramProgressCard(
-                sectionTitle: "Моя программа",
-                programTitle: progress.title,
-                detailsLine: progress.detailsLine,
-                progressText: progress.progressText,
-                progressValue: progress.progressValue,
-                isCompleted: progress.isCompleted,
-                actionTitle: programCardActionTitle,
-                isActionEnabled: true,
-                onAction: handleProgramCardAction,
-                onOpenHistory: {
-                    store.send(.openProgram(programId: progress.programId, userSub: userSub))
-                },
-            ),
-        )
-    }
-
-    private var programCardActionTitle: String {
-        if workoutHomeViewModel.hasResumeWorkout || workoutHomeViewModel.hasTodayWorkout {
-            return "К тренировке"
-        }
-        return "Открыть программу"
-    }
-
-    private func handleProgramCardAction() {
-        guard let progress = workoutHomeViewModel.programProgress else { return }
-
-        if workoutHomeViewModel.hasResumeWorkout || workoutHomeViewModel.hasTodayWorkout {
-            onOpenWorkoutHubTab()
-            return
-        }
-
-        store.send(.openProgram(programId: progress.programId, userSub: userSub))
     }
 }
 
@@ -975,7 +962,11 @@ struct WorkoutLaunchView: View {
     let apiClient: APIClientProtocol?
     var presetWorkout: WorkoutDetailsModel?
     var source: WorkoutSource = .program
+    var displayMode: ProgramDetailsDisplayMode = .active
     var isFirstWorkoutInProgramFlow = false
+    var allowsImmediateStart = true
+    var plannedDay: Date? = nil
+    var plannedDateText: String? = nil
     var onBackToWorkoutHub: (() -> Void)? = nil
     var onOpenPlan: (() -> Void)? = nil
 
@@ -993,6 +984,8 @@ struct WorkoutLaunchView: View {
     @State private var nextWorkoutRoute: NextWorkoutRoute?
     @State private var conflictingSessionRoute: ActiveWorkoutSession?
     @State private var resolvedSource: WorkoutSource?
+    @State private var isWorkoutDatePlanningPresented = false
+    @State private var plannedDateOverride: PlannedDateOverride?
     @Environment(\.dismiss) private var dismiss
 
     private struct NextWorkoutRoute: Identifiable, Hashable {
@@ -1004,16 +997,22 @@ struct WorkoutLaunchView: View {
         }
     }
 
+    private struct PlannedDateOverride {
+        let day: Date
+        let dateText: String
+    }
+
     var body: some View {
         Group {
             if isLoading {
                 FFScreenSpinner()
+            } else if !allowsImmediateStart, let details {
+                workoutPreviewState(details: details)
             } else if routeState == .requiresStart, let details {
                 plannedWorkoutState(details: details)
             } else if routeState == .completed, let summary = readOnlySummary {
                 WorkoutSummaryView(
                     summary: summary,
-                    syncNamespace: userSub,
                     onStartNextWorkout: summary.nextWorkout == nil ? nil : {
                         Task { await startNextWorkout(from: summary) }
                     },
@@ -1021,7 +1020,10 @@ struct WorkoutLaunchView: View {
                         dismiss()
                         onBackToWorkoutHub?()
                     },
-                    onOpenPlan: onOpenPlan,
+                    onOpenPlan: {
+                        dismiss()
+                        onOpenPlan?()
+                    },
                 )
             } else if routeState == .abandoned {
                 abandonedWorkoutState
@@ -1079,6 +1081,24 @@ struct WorkoutLaunchView: View {
             }
         }
         .background(FFColors.background)
+        .sheet(isPresented: $isWorkoutDatePlanningPresented) {
+            if let details {
+                WorkoutDatePlanningSheet(
+                    userSub: userSub,
+                    programId: programId,
+                    workoutId: workoutId,
+                    workout: details,
+                    plannedDay: effectivePlannedDay,
+                    onClose: {
+                        isWorkoutDatePlanningPresented = false
+                    },
+                    onSaved: { day, dateText in
+                        plannedDateOverride = PlannedDateOverride(day: day, dateText: dateText)
+                        isWorkoutDatePlanningPresented = false
+                    }
+                )
+            }
+        }
         .navigationTitle("Тренировка")
         .navigationBarTitleDisplayMode(.inline)
         .task {
@@ -1137,7 +1157,6 @@ struct WorkoutLaunchView: View {
         .sheet(item: $workoutSummary) { summary in
             WorkoutSummaryView(
                 summary: summary,
-                syncNamespace: userSub,
                 onStartNextWorkout: {
                     Task { await startNextWorkout(from: summary) }
                 },
@@ -1146,7 +1165,11 @@ struct WorkoutLaunchView: View {
                     dismiss()
                     onBackToWorkoutHub?()
                 },
-                onOpenPlan: onOpenPlan,
+                onOpenPlan: {
+                    workoutSummary = nil
+                    dismiss()
+                    onOpenPlan?()
+                },
             )
         }
         .navigationDestination(item: $nextWorkoutRoute) { route in
@@ -1452,21 +1475,31 @@ struct WorkoutLaunchView: View {
             ],
         )
 
-        guard currentSource != .template, UUID(uuidString: workoutId) != nil else {
-            dismiss()
-            return
-        }
-
         isAbandoningOnExit = true
         defer { isAbandoningOnExit = false }
 
-        _ = await SyncCoordinator.shared.enqueueAbandonWorkout(
-            namespace: userSub,
-            workoutInstanceId: workoutId,
-            abandonedAt: Date(),
-        )
+        let progressStore = LocalWorkoutProgressStore()
+        let cacheStore = CompositeCacheStore()
+        let cacheKey = "workout.details:\(programId):\(workoutId)"
+        let contextCacheKey = "workout.execution.context:\(programId):\(workoutId)"
 
+        await progressStore.remove(
+            userSub: userSub,
+            programId: programId,
+            workoutId: workoutId,
+        )
+        await cacheStore.remove(cacheKey, namespace: userSub)
+        await cacheStore.remove(contextCacheKey, namespace: userSub)
         RestTimerModel.shared.clearIfMatches(workoutId: workoutId)
+
+        if currentSource != .template, UUID(uuidString: workoutId) != nil {
+            _ = await SyncCoordinator.shared.enqueueAbandonWorkout(
+                namespace: userSub,
+                workoutInstanceId: workoutId,
+                abandonedAt: Date(),
+            )
+        }
+
         dismiss()
         onBackToWorkoutHub?()
     }
@@ -1696,53 +1729,240 @@ struct WorkoutLaunchView: View {
 
     @ViewBuilder
     private func plannedWorkoutState(details: WorkoutDetailsModel) -> some View {
-        VStack(spacing: FFSpacing.md) {
-            FFCard {
-                VStack(alignment: .leading, spacing: FFSpacing.xs) {
-                    Text("Тренировка запланирована")
-                        .font(FFTypography.h1)
-                        .foregroundStyle(FFColors.textPrimary)
-                    Text(details.title)
-                        .font(FFTypography.body.weight(.semibold))
-                        .foregroundStyle(FFColors.textPrimary)
-                    Text("Нажмите «Начать», чтобы перевести тренировку в статус «В процессе».")
-                        .font(FFTypography.caption)
-                        .foregroundStyle(FFColors.textSecondary)
-                }
-            }
-
-            FFButton(title: "Начать", variant: .primary) {
+        WorkoutIntroView(
+            workout: details,
+            primaryActionTitle: "Начать",
+            dateBadgeText: effectivePlannedDateText,
+            onPrimaryAction: {
                 Task { await startPlannedWorkout() }
-            }
-        }
-        .padding(.horizontal, FFSpacing.md)
-        .padding(.vertical, FFSpacing.md)
+            },
+        )
     }
 
-    private var abandonedWorkoutState: some View {
-        VStack(spacing: FFSpacing.md) {
-            FFCard {
-                VStack(alignment: .leading, spacing: FFSpacing.xs) {
-                    Text("Тренировка прервана")
-                        .font(FFTypography.h1)
-                        .foregroundStyle(FFColors.textPrimary)
-                    Text("Эта сессия помечена как прерванная.")
-                        .font(FFTypography.body)
-                        .foregroundStyle(FFColors.textSecondary)
-                }
-            }
+    @ViewBuilder
+    private func workoutPreviewState(details: WorkoutDetailsModel) -> some View {
+        WorkoutIntroView(
+            workout: details,
+            primaryActionTitle: effectivePlannedDay != nil ? "Изменить дату" : "Назначить дату",
+            dateBadgeText: effectivePlannedDateText,
+            showsPrimaryAction: displayMode == .active,
+            onPrimaryAction: {
+                isWorkoutDatePlanningPresented = true
+            },
+        )
+    }
 
-            FFButton(title: "Открыть план", variant: .secondary) {
-                dismiss()
-                if let onOpenPlan {
-                    onOpenPlan()
-                } else {
-                    onBackToWorkoutHub?()
+    private var effectivePlannedDay: Date? {
+        plannedDateOverride?.day ?? plannedDay
+    }
+
+    private var effectivePlannedDateText: String? {
+        plannedDateOverride?.dateText ?? plannedDateText
+    }
+
+    @ViewBuilder
+    private var abandonedWorkoutState: some View {
+        if let details {
+            WorkoutIntroView(
+                workout: details,
+                primaryActionTitle: effectivePlannedDay != nil ? "Изменить дату" : "Назначить дату",
+                dateBadgeText: effectivePlannedDateText,
+                helperText: "Тренировка была прервана. Назначьте новую дату, чтобы вернуться к ней позже.",
+                onPrimaryAction: {
+                    isWorkoutDatePlanningPresented = true
+                },
+            )
+        } else {
+            FFEmptyState(title: "Тренировка прервана", message: "Назначьте новую дату, чтобы вернуться к ней позже.")
+                .padding(.horizontal, FFSpacing.md)
+        }
+    }
+}
+
+private struct WorkoutDatePlanningSheet: View {
+    let userSub: String
+    let programId: String
+    let workoutId: String
+    let workout: WorkoutDetailsModel
+    let plannedDay: Date?
+    let onClose: () -> Void
+    let onSaved: (Date, String) -> Void
+
+    @State private var viewModel: PlanScheduleViewModel
+    @State private var targetDay: Date
+    @State private var isConflictAlertPresented = false
+
+    init(
+        userSub: String,
+        programId: String,
+        workoutId: String,
+        workout: WorkoutDetailsModel,
+        plannedDay: Date?,
+        onClose: @escaping () -> Void,
+        onSaved: @escaping (Date, String) -> Void,
+    ) {
+        self.userSub = userSub
+        self.programId = programId
+        self.workoutId = workoutId
+        self.workout = workout
+        self.plannedDay = plannedDay
+        self.onClose = onClose
+        self.onSaved = onSaved
+
+        let today = Calendar.current.startOfDay(for: Date())
+        let initialDay = max(plannedDay ?? today, today)
+        _viewModel = State(initialValue: PlanScheduleViewModel(userSub: userSub))
+        _targetDay = State(initialValue: initialDay)
+    }
+
+    var body: some View {
+        NavigationStack {
+            ZStack {
+                FFColors.background.ignoresSafeArea()
+
+                VStack(spacing: FFSpacing.md) {
+                    FFCard {
+                        VStack(alignment: .leading, spacing: FFSpacing.xs) {
+                            Text(workout.title)
+                                .font(FFTypography.body.weight(.semibold))
+                                .foregroundStyle(FFColors.textPrimary)
+                            Text(plannedItem == nil ? "Выберите дату для этой тренировки." : "Выберите новую дату для этой тренировки.")
+                                .font(FFTypography.body)
+                                .foregroundStyle(FFColors.textSecondary)
+                        }
+                    }
+
+                    FFCard {
+                        VStack(alignment: .leading, spacing: FFSpacing.sm) {
+                            DatePicker(
+                                plannedItem == nil ? "Дата тренировки" : "Новая дата",
+                                selection: $targetDay,
+                                in: minimumSelectableDay...,
+                                displayedComponents: .date
+                            )
+                            .datePickerStyle(.graphical)
+                            .tint(FFColors.accent)
+
+                            if let orderingErrorText {
+                                Text(orderingErrorText)
+                                    .font(FFTypography.caption)
+                                    .foregroundStyle(FFColors.danger)
+                            }
+
+                            let conflicts = viewModel.conflictCount(on: targetDay, excluding: plannedItem)
+                            if conflicts > 0, orderingErrorText == nil {
+                                Text("На выбранную дату уже есть \(conflicts) тренировок.")
+                                    .font(FFTypography.caption)
+                                    .foregroundStyle(FFColors.danger)
+                            }
+                        }
+                    }
+
+                    HStack(spacing: FFSpacing.sm) {
+                        FFButton(title: "Отмена", variant: .secondary, action: onClose)
+                        FFButton(
+                            title: plannedItem == nil ? "Сохранить дату" : "Перенести",
+                            variant: orderingErrorText == nil ? .primary : .disabled
+                        ) {
+                            guard orderingErrorText == nil else { return }
+                            let conflicts = viewModel.conflictCount(on: targetDay, excluding: plannedItem)
+                            if conflicts > 0 {
+                                isConflictAlertPresented = true
+                            } else {
+                                applyDateChange()
+                            }
+                        }
+                    }
                 }
+                .padding(.horizontal, FFSpacing.md)
+                .padding(.vertical, FFSpacing.md)
+            }
+            .navigationTitle(plannedItem == nil ? "Назначить дату" : "Изменить дату")
+            .navigationBarTitleDisplayMode(.inline)
+            .task {
+                await viewModel.onAppear()
+            }
+            .alert("Конфликт по дате", isPresented: $isConflictAlertPresented) {
+                Button("Отмена", role: .cancel) {}
+                Button("Продолжить") {
+                    applyDateChange()
+                }
+            } message: {
+                let conflicts = viewModel.conflictCount(on: targetDay, excluding: plannedItem)
+                Text("На выбранную дату уже есть \(conflicts) тренировок. Продолжить?")
             }
         }
-        .padding(.horizontal, FFSpacing.md)
-        .padding(.vertical, FFSpacing.md)
+    }
+
+    private var plannedItem: PlanScheduleViewModel.DayScheduleItem? {
+        guard let plannedDay else { return nil }
+        return viewModel.dayItems(for: plannedDay).first {
+            guard $0.programId == programId else { return false }
+            if $0.workoutId == workoutId {
+                return true
+            }
+            return $0.workoutDetails?.id == workoutId
+        }
+    }
+
+    private var minimumSelectableDay: Date {
+        dateWindow?.earliest ?? Calendar.current.startOfDay(for: Date())
+    }
+
+    private var dateWindow: PlanScheduleViewModel.ProgramWorkoutDateWindow? {
+        viewModel.allowedDateWindow(
+            forProgramWorkout: programId,
+            workoutId: workoutId,
+            dayOrder: workout.dayOrder,
+            excluding: plannedItem,
+        )
+    }
+
+    private var orderingErrorText: String? {
+        let normalizedTarget = Calendar.current.startOfDay(for: targetDay)
+        guard let window = dateWindow else { return nil }
+
+        if normalizedTarget < window.earliest {
+            return "Эта тренировка должна идти после предыдущей по программе."
+        }
+
+        if let latest = window.latest, normalizedTarget > latest {
+            return "Эта тренировка должна идти раньше следующей по программе."
+        }
+
+        if let latest = window.latest, window.earliest > latest {
+            return "Сначала измените соседние тренировки в программе, затем вернитесь к этой."
+        }
+
+        return nil
+    }
+
+    private func applyDateChange() {
+        Task {
+            if let plannedItem {
+                if plannedItem.status.isMissedLike {
+                    await viewModel.replanMissed(plannedItem, on: targetDay)
+                } else {
+                    await viewModel.movePlan(plannedItem, to: targetDay)
+                }
+            } else {
+                await viewModel.scheduleProgramWorkout(
+                    programId: programId,
+                    workoutId: workoutId,
+                    title: workout.title,
+                    workoutDetails: workout,
+                    on: targetDay,
+                )
+            }
+
+            let dateText = targetDay.formatted(
+                Date.FormatStyle()
+                    .weekday(.wide)
+                    .day(.defaultDigits)
+                    .month(.wide)
+            )
+            onSaved(targetDay, dateText)
+        }
     }
 }
 
@@ -1754,50 +1974,19 @@ extension WorkoutPlayerViewModel.CompletionSummary: Identifiable {
 
 struct WorkoutSummaryView: View {
     let summary: WorkoutSummaryState
-    var syncNamespace: String? = nil
     var onStartNextWorkout: (() -> Void)? = nil
     var onBackToWorkoutHub: (() -> Void)? = nil
     var onOpenPlan: (() -> Void)? = nil
 
-    @State private var syncStatus: SyncStatusKind = .savedLocally
-    @State private var pendingSyncCount = 0
-
     var body: some View {
         ScrollView {
             VStack(spacing: FFSpacing.md) {
-                if let syncNamespace {
-                    FFCard {
-                        HStack(spacing: FFSpacing.xs) {
-                            SyncStatusIndicator(status: syncStatus, compact: true)
-                            if pendingSyncCount > 0 {
-                                Text("\(pendingSyncCount)")
-                                    .font(FFTypography.caption.weight(.semibold))
-                                    .foregroundStyle(FFColors.primary)
-                                    .padding(.horizontal, FFSpacing.xs)
-                                    .padding(.vertical, FFSpacing.xxs)
-                                    .background(FFColors.primary.opacity(0.14))
-                                    .clipShape(Capsule())
-                            }
-                            Spacer(minLength: FFSpacing.xs)
-                            if syncStatus == .delayed {
-                                Button("Повторить") {
-                                    Task { await retrySync(syncNamespace: syncNamespace) }
-                                }
-                                .font(FFTypography.caption.weight(.semibold))
-                                .foregroundStyle(FFColors.accent)
-                            }
-                        }
-                    }
-                }
-
                 FFCard {
                     VStack(alignment: .leading, spacing: FFSpacing.xs) {
-                        Text("Итоги тренировки")
-                            .font(FFTypography.h1)
-                        .foregroundStyle(FFColors.textPrimary)
                         Text(summary.workoutTitle)
-                            .font(FFTypography.body.weight(.semibold))
+                            .font(FFTypography.h1)
                             .foregroundStyle(FFColors.textPrimary)
+                            .lineLimit(3)
                     }
                 }
 
@@ -1844,56 +2033,21 @@ struct WorkoutSummaryView: View {
                     }
                 }
 
-                if summary.comparison == nil, summary.personalRecordHighlights.isEmpty {
-                    FFCard {
-                        Text("Тренировка сохранена. Продолжайте тренироваться — и здесь появится больше статистики.")
-                            .font(FFTypography.body)
-                            .foregroundStyle(FFColors.textSecondary)
+                if let onOpenPlan {
+                    FFButton(title: "Перейти в план", variant: .secondary) {
+                        onOpenPlan()
                     }
-                }
-
-                FFCard {
-                    VStack(alignment: .leading, spacing: FFSpacing.sm) {
-                        Text("Что дальше")
-                            .font(FFTypography.h2)
-                            .foregroundStyle(FFColors.textPrimary)
-
-                        if let nextWorkout = summary.nextWorkout {
-                            Text(nextWorkout.title)
-                                .font(FFTypography.body)
-                                .foregroundStyle(FFColors.textSecondary)
-                        } else {
-                            Text("Вы можете вернуться в раздел тренировок и выбрать следующую сессию.")
-                                .font(FFTypography.body)
-                                .foregroundStyle(FFColors.textSecondary)
-                        }
-
-                        if summary.nextWorkout != nil ? onStartNextWorkout != nil : onBackToWorkoutHub != nil {
-                            FFButton(title: summary.nextWorkout == nil ? "Вернуться к тренировкам" : "Начать следующую тренировку", variant: .primary) {
-                                if summary.nextWorkout != nil {
-                                    ClientAnalytics.track(
-                                        .summaryNextWorkoutTapped,
-                                        properties: ["workout_id": summary.id],
-                                    )
-                                    onStartNextWorkout?()
-                                } else {
-                                    onBackToWorkoutHub?()
-                                }
-                            }
-                        }
-
-                        if let onOpenPlan {
-                            Button("Посмотреть план") {
-                                onOpenPlan()
-                            }
-                            .font(FFTypography.caption.weight(.semibold))
-                            .foregroundStyle(FFColors.accent)
-                            .buttonStyle(.plain)
-                        }
-
-                        Text(syncStatusMessage)
-                            .font(FFTypography.caption)
-                            .foregroundStyle(FFColors.textSecondary)
+                } else if let onStartNextWorkout {
+                    FFButton(title: "Начать следующую тренировку", variant: .secondary) {
+                        ClientAnalytics.track(
+                            .summaryNextWorkoutTapped,
+                            properties: ["workout_id": summary.id],
+                        )
+                        onStartNextWorkout()
+                    }
+                } else if let onBackToWorkoutHub {
+                    FFButton(title: "Вернуться к тренировкам", variant: .secondary) {
+                        onBackToWorkoutHub()
                     }
                 }
             }
@@ -1906,10 +2060,6 @@ struct WorkoutSummaryView: View {
                 .workoutSummaryScreenOpened,
                 properties: ["workout_id": summary.id],
             )
-        }
-        .task(id: syncNamespace) {
-            guard let syncNamespace else { return }
-            await refreshSync(syncNamespace: syncNamespace)
         }
     }
 
@@ -1950,10 +2100,6 @@ struct WorkoutSummaryView: View {
         return "\(total) сек"
     }
 
-    private var syncStatusMessage: String {
-        syncStatus.title
-    }
-
     private func volumeComparisonText(comparison: WorkoutSummaryState.ComparisonDelta) -> String {
         guard let volumeDelta = comparison.volumeDelta else { return "—" }
         let previousVolume = summary.volume - volumeDelta
@@ -1962,21 +2108,6 @@ struct WorkoutSummaryView: View {
             return "\(percent > 0 ? "+" : "")\(percent)%"
         }
         return signed(Int(volumeDelta))
-    }
-
-    private func retrySync(syncNamespace: String) async {
-        await SyncCoordinator.shared.retryNow(namespace: syncNamespace)
-        await refreshSync(syncNamespace: syncNamespace)
-    }
-
-    private func refreshSync(syncNamespace: String) async {
-        let diagnostics = await SyncCoordinator.shared.diagnostics(namespace: syncNamespace)
-        pendingSyncCount = diagnostics.pendingCount
-        if diagnostics.pendingCount > 0 {
-            syncStatus = diagnostics.hasDelayedRetries ? .delayed : .savedLocally
-            return
-        }
-        syncStatus = await SyncCoordinator.shared.resolveSyncIndicator(namespace: syncNamespace)
     }
 }
 
@@ -2109,7 +2240,10 @@ private struct TrainingTabContent: View {
                 workoutId: session.workoutId,
                 apiClient: apiClient,
                 source: session.source,
-                onOpenPlan: onOpenPlan,
+                onOpenPlan: {
+                    sessionRoute = nil
+                    onOpenPlan()
+                },
             )
             .navigationBarBackButtonHidden(false)
             .onAppear {
@@ -2125,7 +2259,10 @@ private struct TrainingTabContent: View {
                 programId: route.programId,
                 workoutId: route.workoutId,
                 apiClient: apiClient,
-                onOpenPlan: onOpenPlan,
+                onOpenPlan: {
+                    programWorkoutRoute = nil
+                    onOpenPlan()
+                },
             )
             .navigationBarBackButtonHidden(false)
             .onAppear {
@@ -2143,7 +2280,10 @@ private struct TrainingTabContent: View {
                 apiClient: apiClient,
                 presetWorkout: route.workout,
                 source: route.source,
-                onOpenPlan: onOpenPlan,
+                onOpenPlan: {
+                    presetWorkoutRoute = nil
+                    onOpenPlan()
+                },
             )
             .navigationBarBackButtonHidden(false)
             .onAppear {

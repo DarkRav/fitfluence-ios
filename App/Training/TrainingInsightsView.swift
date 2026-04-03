@@ -1505,11 +1505,15 @@ private struct ProgressAnalyticsView: View {
                             }
                             .buttonStyle(.plain)
                             .font(FFTypography.caption.weight(.semibold))
-                            .foregroundStyle(selectedPeriod == period ? FFColors.background : FFColors.textSecondary)
                             .padding(.horizontal, FFSpacing.xs)
                             .padding(.vertical, FFSpacing.xxs)
-                            .background(selectedPeriod == period ? FFColors.accent : FFColors.gray700)
-                            .clipShape(Capsule())
+                            .ffSelectableSurface(
+                                isSelected: selectedPeriod == period,
+                                emphasis: .accent,
+                                unselectedBackground: FFColors.gray700,
+                                unselectedForeground: FFColors.textSecondary,
+                                cornerRadius: 999,
+                            )
                         }
                     }
                 }
@@ -1580,11 +1584,15 @@ private struct ProgressAnalyticsView: View {
                         }
                         .buttonStyle(.plain)
                         .font(FFTypography.caption.weight(.semibold))
-                        .foregroundStyle(selectedChartMode == mode ? FFColors.background : FFColors.textSecondary)
                         .padding(.horizontal, FFSpacing.xs)
                         .padding(.vertical, FFSpacing.xxs)
-                        .background(selectedChartMode == mode ? FFColors.accent : FFColors.gray700)
-                        .clipShape(Capsule())
+                        .ffSelectableSurface(
+                            isSelected: selectedChartMode == mode,
+                            emphasis: .accent,
+                            unselectedBackground: FFColors.gray700,
+                            unselectedForeground: FFColors.textSecondary,
+                            cornerRadius: 999,
+                        )
                     }
                 }
 

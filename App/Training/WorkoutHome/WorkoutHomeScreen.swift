@@ -48,7 +48,7 @@ struct WorkoutHomeScreen: View {
                 }
 
                 if viewModel.hasResumeWorkout,
-                   (viewModel.syncIndicator != .synced || viewModel.isShowingCachedData)
+                   viewModel.syncIndicator == .delayed
                 {
                     syncStatusCard
                 }
@@ -101,10 +101,18 @@ struct WorkoutHomeScreen: View {
 
     private var syncStatusCard: some View {
         WorkoutCardContainer(cornerRadius: 18, padding: 12) {
-            SyncStatusIndicator(
-                status: viewModel.syncIndicator,
-                showsCacheTag: viewModel.isShowingCachedData,
-            )
+            HStack(spacing: 8) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(FFColors.danger)
+
+                Text("Есть проблема с синхронизацией. Данные тренировки уже сохранены.")
+                    .font(FFTypography.caption)
+                    .foregroundStyle(FFColors.textSecondary)
+                    .lineLimit(2)
+
+                Spacer(minLength: 4)
+            }
         }
     }
 

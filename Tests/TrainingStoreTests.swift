@@ -22,6 +22,7 @@ final class TrainingStoreTests: XCTestCase {
             completedSets: 10,
             totalSets: 12,
             volume: 1240,
+            workoutDetails: nil,
             notes: nil,
             overallRPE: 8,
         )
@@ -676,9 +677,11 @@ final class TrainingStoreTests: XCTestCase {
 
         let saved = try await repository.saveTemplate(template)
 
+        let createCallCount = await apiClient.createCallCount
+        let updateCallCount = await apiClient.updateCallCount
         XCTAssertEqual(saved.id, "server-template-1")
-        XCTAssertEqual(await apiClient.createCallCount, 1)
-        XCTAssertEqual(await apiClient.updateCallCount, 0)
+        XCTAssertEqual(createCallCount, 1)
+        XCTAssertEqual(updateCallCount, 0)
     }
 
     func testBackendWorkoutTemplateRepositoryUpdatesTemplateWhenIdExistsInCache() async throws {
@@ -724,10 +727,113 @@ final class TrainingStoreTests: XCTestCase {
             )
         )
 
+        let createCallCount = await apiClient.createCallCount
+        let updateCallCount = await apiClient.updateCallCount
+        let lastUpdatedTemplateId = await apiClient.lastUpdatedTemplateId
         XCTAssertEqual(saved.name, "Upper A+")
-        XCTAssertEqual(await apiClient.createCallCount, 0)
-        XCTAssertEqual(await apiClient.updateCallCount, 1)
-        XCTAssertEqual(await apiClient.lastUpdatedTemplateId, cachedTemplate.id)
+        XCTAssertEqual(createCallCount, 0)
+        XCTAssertEqual(updateCallCount, 1)
+        XCTAssertEqual(lastUpdatedTemplateId, cachedTemplate.id)
+    }
+
+    @MainActor
+    func testPlanViewModelPrefersRichCompletedRecordForManualWorkout() async throws {
+        let suite = "fitfluence.tests.training.plan.completed-rich-record.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        let calendar = Calendar.current
+        let day = calendar.startOfDay(for: Date())
+        let store = LocalTrainingStore(defaults: defaults, calendar: calendar)
+
+        let workoutDetails = WorkoutDetailsModel(
+            id: "manual-1",
+            title: "Быстрая тренировка",
+            dayOrder: 0,
+            coachNote: nil,
+            exercises: [
+                WorkoutExercise(
+                    id: "ex-1",
+                    name: "Жим лёжа",
+                    sets: 3,
+                    repsMin: 8,
+                    repsMax: 10,
+                    targetRpe: nil,
+                    restSeconds: 90,
+                    notes: nil,
+                    orderIndex: 0
+                ),
+            ]
+        )
+
+        let plan = TrainingDayPlan(
+            id: "plan-completed",
+            userSub: "u1",
+            day: day,
+            status: .completed,
+            programId: "freestyle",
+            programTitle: nil,
+            workoutId: "manual-1",
+            title: "Быстрая тренировка",
+            source: .freestyle,
+            workoutDetails: nil
+        )
+        await store.schedule(plan)
+
+        let remoteLikeRecord = CompletedWorkoutRecord(
+            id: "remote-summary",
+            userSub: "u1",
+            programId: "freestyle",
+            workoutId: "instance-1",
+            workoutTitle: "Быстрая тренировка",
+            source: .freestyle,
+            startedAt: day.addingTimeInterval(3600),
+            finishedAt: day.addingTimeInterval(5400),
+            durationSeconds: 1800,
+            completedSets: 0,
+            totalSets: 0,
+            volume: 0,
+            workoutDetails: nil,
+            notes: nil,
+            overallRPE: nil
+        )
+        let localRichRecord = CompletedWorkoutRecord(
+            id: "local-finish",
+            userSub: "u1",
+            programId: "freestyle",
+            workoutId: "manual-1",
+            workoutTitle: "Быстрая тренировка",
+            source: .freestyle,
+            startedAt: day.addingTimeInterval(3600),
+            finishedAt: day.addingTimeInterval(5400),
+            durationSeconds: 1800,
+            completedSets: 6,
+            totalSets: 6,
+            volume: 1200,
+            workoutDetails: workoutDetails,
+            notes: nil,
+            overallRPE: 8
+        )
+
+        await store.appendHistory(remoteLikeRecord)
+        await store.appendHistory(localRichRecord)
+
+        let viewModel = PlanScheduleViewModel(
+            userSub: "u1",
+            trainingStore: store,
+            athleteTrainingClient: nil,
+            cacheStore: MemoryCacheStore(),
+            networkMonitor: StaticNetworkMonitor(currentStatus: false),
+            calendar: calendar
+        )
+
+        await viewModel.onAppear()
+        let item = try XCTUnwrap(viewModel.dayItems(for: day).first(where: { $0.planId == "plan-completed" }))
+        let resolved = await viewModel.completedRecord(for: item)
+
+        XCTAssertEqual(resolved?.id, "local-finish")
+        XCTAssertEqual(resolved?.workoutDetails?.id, "manual-1")
+        XCTAssertEqual(resolved?.completedSets, 6)
     }
 
     private func monthKey(for date: Date, calendar: Calendar) -> String {

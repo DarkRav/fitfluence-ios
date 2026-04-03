@@ -378,7 +378,8 @@ final class CatalogAndProgramDetailsFeatureTests: XCTestCase {
         await viewModel.onAppear()
         await viewModel.handlePrimaryProgramAction()
 
-        XCTAssertEqual(viewModel.primaryProgramActionTitle, "Открыть тренировку программы")
+        XCTAssertEqual(viewModel.primaryProgramActionTitle, "Распланировать программу")
+        XCTAssertFalse(viewModel.canAccessProgramWorkouts)
         XCTAssertEqual(viewModel.enrollmentConfirmation?.firstWorkoutTitle, "День 1")
         XCTAssertFalse(viewModel.enrollmentConfirmation?.canStartFirstWorkout ?? true)
         XCTAssertNil(viewModel.enrollmentConfirmation?.firstWorkoutInstanceId)
@@ -817,7 +818,7 @@ private actor MockProgramDetailsAthleteTrainingClient: AthleteTrainingClientProt
                     workoutInstanceId: $0,
                     workoutTemplateId: nil,
                     title: progress.currentWorkoutTitle,
-                    scheduledDate: nil,
+                    scheduledDate: progress.currentWorkoutStatus == .inProgress ? "2026-03-18" : nil,
                     status: progress.currentWorkoutStatus,
                 )
             }
@@ -826,7 +827,7 @@ private actor MockProgramDetailsAthleteTrainingClient: AthleteTrainingClientProt
                     workoutInstanceId: $0,
                     workoutTemplateId: nil,
                     title: progress.todayWorkoutTitle,
-                    scheduledDate: nil,
+                    scheduledDate: "2026-03-19",
                     status: progress.todayWorkoutStatus,
                 )
             }
@@ -835,7 +836,7 @@ private actor MockProgramDetailsAthleteTrainingClient: AthleteTrainingClientProt
                     workoutInstanceId: $0,
                     workoutTemplateId: nil,
                     title: progress.nextWorkoutTitle,
-                    scheduledDate: nil,
+                    scheduledDate: "2026-03-21",
                     status: progress.nextWorkoutStatus,
                 )
             }

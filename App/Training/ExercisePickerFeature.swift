@@ -425,6 +425,10 @@ final class ExercisePickerViewModel {
         context.isActive && trimmedSearch == nil && !filters.isActive
     }
 
+    var hasGuidedSuggestions: Bool {
+        suggestionsSnapshot.sections.contains { !$0.items.isEmpty }
+    }
+
     var muscleGroupOptions: [ExerciseCatalogMuscleGroup] {
         if !catalogMetadata.muscleGroups.isEmpty {
             return catalogMetadata.muscleGroups
@@ -686,6 +690,9 @@ final class ExercisePickerViewModel {
 
         let snapshot = await suggestions
         suggestionsSnapshot = snapshot
+        if !hasGuidedSuggestions, browseMode == .guided {
+            browseMode = .catalog
+        }
         isLoadingSuggestions = false
         catalogMetadata = await metadata
 
@@ -771,7 +778,9 @@ struct ExercisePickerView: View {
                                 helperText: searchFieldHelperText,
                             )
 
-                            browseModeControl
+                            if availableBrowseModes.count > 1 {
+                                browseModeControl
+                            }
 
                             filterSummaryRow
 
@@ -889,7 +898,7 @@ struct ExercisePickerView: View {
 
     private var browseModeControl: some View {
         HStack(spacing: FFSpacing.xs) {
-            ForEach(ExercisePickerViewModel.BrowseMode.allCases, id: \.rawValue) { mode in
+            ForEach(availableBrowseModes, id: \.rawValue) { mode in
                 TrainingBuilderChoiceTile(
                     title: mode.title,
                     subtitle: mode.subtitle,
@@ -899,6 +908,10 @@ struct ExercisePickerView: View {
                 }
             }
         }
+    }
+
+    private var availableBrowseModes: [ExercisePickerViewModel.BrowseMode] {
+        viewModel.hasGuidedSuggestions ? ExercisePickerViewModel.BrowseMode.allCases : [.catalog]
     }
 
     private var filterSummaryRow: some View {
@@ -1502,16 +1515,10 @@ private struct ExercisePickerFilterStudio: View {
         Button(action: action) {
             Text(title)
                 .font(FFTypography.caption.weight(.semibold))
-                .foregroundStyle(isSelected ? FFColors.background : FFColors.textPrimary)
                 .padding(.horizontal, FFSpacing.sm)
                 .padding(.vertical, FFSpacing.xs)
                 .frame(maxWidth: .infinity)
-                .background(isSelected ? FFColors.primary : FFColors.surface)
-                .clipShape(RoundedRectangle(cornerRadius: FFTheme.Radius.control))
-                .overlay {
-                    RoundedRectangle(cornerRadius: FFTheme.Radius.control)
-                        .stroke(isSelected ? FFColors.primary : FFColors.gray700, lineWidth: 1)
-                }
+                .ffSelectableSurface(isSelected: isSelected, emphasis: .primary)
         }
         .buttonStyle(.plain)
     }

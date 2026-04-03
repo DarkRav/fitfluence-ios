@@ -101,7 +101,7 @@ final class WorkoutsFeatureAndProgressStoreTests: XCTestCase {
         XCTAssertEqual(viewModel.currentExerciseState?.sets.first?.isCompleted, true)
         XCTAssertEqual(viewModel.currentExerciseState?.sets.first?.repsText, "9")
         XCTAssertEqual(viewModel.currentExerciseState?.sets.first?.weightText, "2.5")
-        XCTAssertTrue(viewModel.restTimer.isVisible)
+        XCTAssertFalse(viewModel.restTimer.isVisible)
 
         await viewModel.undoLastChange()
 
@@ -192,6 +192,196 @@ final class WorkoutsFeatureAndProgressStoreTests: XCTestCase {
         XCTAssertEqual(snapshot?.exercises["ex-1"]?.sets.first?.weightText, "42.5")
         XCTAssertEqual(snapshot?.exercises["ex-1"]?.sets.first?.repsText, "10")
         XCTAssertEqual(snapshot?.exercises["ex-1"]?.sets.first?.rpeText, "9")
+    }
+
+    func testWorkoutPlayerViewModelLogsFirstIncompleteSetEvenIfAnotherIsSelected() async {
+        let progressStore = MockWorkoutProgressStore(statuses: [:])
+        let sessionManager = WorkoutSessionManager(progressStore: progressStore)
+        let viewModel = WorkoutPlayerViewModel(
+            userSub: "u1",
+            programId: "p1",
+            workout: sampleWorkoutDetails,
+            sessionManager: sessionManager,
+        )
+
+        await viewModel.onAppear()
+        await viewModel.updateWeight(setIndex: 0, input: "40")
+        await viewModel.updateReps(setIndex: 0, input: "8")
+        await viewModel.updateWeight(setIndex: 1, input: "42.5")
+        await viewModel.updateReps(setIndex: 1, input: "10")
+        viewModel.selectSet(1)
+
+        await viewModel.completeFocusedSet()
+
+        XCTAssertEqual(viewModel.currentExerciseState?.sets[0].isCompleted, true)
+        XCTAssertEqual(viewModel.currentExerciseState?.sets[1].isCompleted, false)
+        XCTAssertEqual(viewModel.activeSetIndex, 1)
+    }
+
+    func testWorkoutPlayerViewModelRequiresWeightBeforeLoggingSelectedSet() async {
+        let progressStore = MockWorkoutProgressStore(statuses: [:])
+        let sessionManager = WorkoutSessionManager(progressStore: progressStore)
+        let viewModel = WorkoutPlayerViewModel(
+            userSub: "u1",
+            programId: "p1",
+            workout: sampleWorkoutDetails,
+            sessionManager: sessionManager,
+        )
+
+        await viewModel.onAppear()
+        await viewModel.updateReps(setIndex: 0, input: "8")
+        viewModel.selectSet(0)
+
+        await viewModel.completeFocusedSet()
+
+        XCTAssertEqual(viewModel.currentExerciseState?.sets[0].isCompleted, false)
+        XCTAssertEqual(viewModel.toastMessage, "Введите вес перед логгированием")
+        XCTAssertEqual(viewModel.focusedSetIndex, 0)
+    }
+
+    func testWorkoutPlayerViewModelRequiresWeightBeforeLogAllSets() async {
+        let progressStore = MockWorkoutProgressStore(statuses: [:])
+        let sessionManager = WorkoutSessionManager(progressStore: progressStore)
+        let viewModel = WorkoutPlayerViewModel(
+            userSub: "u1",
+            programId: "p1",
+            workout: sampleWorkoutDetails,
+            sessionManager: sessionManager,
+        )
+
+        await viewModel.onAppear()
+        await viewModel.updateReps(setIndex: 0, input: "8")
+        await viewModel.updateWeight(setIndex: 0, input: "40")
+        await viewModel.updateReps(setIndex: 1, input: "8")
+
+        await viewModel.completeAllSets()
+
+        XCTAssertEqual(viewModel.currentExerciseState?.sets[0].isCompleted, false)
+        XCTAssertEqual(viewModel.currentExerciseState?.sets[1].isCompleted, false)
+        XCTAssertEqual(viewModel.toastMessage, "Заполните вес у всех подходов перед массовым логгированием")
+        XCTAssertEqual(viewModel.focusedSetIndex, 1)
+    }
+
+    func testWorkoutPlayerViewModelClearingRepsUncompletesSet() async {
+        let progressStore = MockWorkoutProgressStore(statuses: [:])
+        let sessionManager = WorkoutSessionManager(progressStore: progressStore)
+        let viewModel = WorkoutPlayerViewModel(
+            userSub: "u1",
+            programId: "p1",
+            workout: sampleWorkoutDetails,
+            sessionManager: sessionManager,
+        )
+
+        await viewModel.onAppear()
+        await viewModel.updateWeight(setIndex: 0, input: "40")
+        await viewModel.updateReps(setIndex: 0, input: "8")
+        await viewModel.completeFocusedSet()
+        await viewModel.updateReps(setIndex: 0, input: "")
+
+        XCTAssertEqual(viewModel.currentExerciseState?.sets[0].repsText, "")
+        XCTAssertEqual(viewModel.currentExerciseState?.sets[0].isCompleted, false)
+        XCTAssertEqual(viewModel.toastMessage, "Повторы очищены, подход снят с выполнения")
+    }
+
+    func testWorkoutPlayerViewModelAutoAdvanceMovesToNextUncompletedSetInOrder() async {
+        let progressStore = MockWorkoutProgressStore(statuses: [:])
+        let sessionManager = WorkoutSessionManager(progressStore: progressStore)
+        let viewModel = WorkoutPlayerViewModel(
+            userSub: "u1",
+            programId: "p1",
+            workout: sampleWorkoutDetails,
+            sessionManager: sessionManager,
+        )
+
+        await viewModel.onAppear()
+        await viewModel.addSet(duplicateLast: false)
+        await viewModel.updateWeight(setIndex: 0, input: "40")
+        await viewModel.updateReps(setIndex: 0, input: "8")
+        await viewModel.updateWeight(setIndex: 1, input: "42.5")
+        await viewModel.updateReps(setIndex: 1, input: "8")
+        await viewModel.updateWeight(setIndex: 2, input: "45")
+        await viewModel.updateReps(setIndex: 2, input: "8")
+        viewModel.selectSet(1)
+
+        await viewModel.completeFocusedSet()
+
+        XCTAssertEqual(viewModel.currentExerciseState?.sets[0].isCompleted, true)
+        XCTAssertEqual(viewModel.currentExerciseState?.sets[1].isCompleted, false)
+        XCTAssertEqual(viewModel.focusedSetIndex, 1)
+        XCTAssertEqual(viewModel.activeSetIndex, 1)
+    }
+
+    func testWorkoutPlayerViewModelRemovingSetKeepsNearestFocusedSet() async {
+        let progressStore = MockWorkoutProgressStore(statuses: [:])
+        let sessionManager = WorkoutSessionManager(progressStore: progressStore)
+        let viewModel = WorkoutPlayerViewModel(
+            userSub: "u1",
+            programId: "p1",
+            workout: sampleWorkoutDetails,
+            sessionManager: sessionManager,
+        )
+
+        await viewModel.onAppear()
+        await viewModel.addSet(duplicateLast: false)
+        viewModel.selectSet(2)
+
+        await viewModel.removeSet(setIndex: 1)
+
+        XCTAssertEqual(viewModel.currentExerciseState?.sets.count, 2)
+        XCTAssertEqual(viewModel.focusedSetIndex, 1)
+    }
+
+    func testWorkoutPlayerViewModelSelectingCompletedSetKeepsPrimaryCTAOnNextIncompleteSet() async {
+        let progressStore = MockWorkoutProgressStore(statuses: [:])
+        let sessionManager = WorkoutSessionManager(progressStore: progressStore)
+        let viewModel = WorkoutPlayerViewModel(
+            userSub: "u1",
+            programId: "p1",
+            workout: sampleWorkoutDetails,
+            sessionManager: sessionManager,
+        )
+
+        await viewModel.onAppear()
+        await viewModel.updateWeight(setIndex: 0, input: "40")
+        await viewModel.updateReps(setIndex: 0, input: "8")
+        await viewModel.toggleSetComplete(setIndex: 0)
+        viewModel.selectSet(0)
+
+        XCTAssertEqual(viewModel.focusedSetIndex, 1)
+        XCTAssertEqual(viewModel.selectedLoggableSetIndex, 1)
+        XCTAssertEqual(viewModel.primaryActionTitle, "Готово")
+        XCTAssertTrue(viewModel.isPrimaryBottomActionEnabled)
+    }
+
+    func testWorkoutPlayerViewModelEditingTargetDoesNotBecomeActiveSet() async {
+        let progressStore = MockWorkoutProgressStore(statuses: [:])
+        let sessionManager = WorkoutSessionManager(progressStore: progressStore)
+        let viewModel = WorkoutPlayerViewModel(
+            userSub: "u1",
+            programId: "p1",
+            workout: sampleWorkoutDetails,
+            sessionManager: sessionManager,
+        )
+
+        await viewModel.onAppear()
+        await viewModel.addSet(duplicateLast: false)
+        viewModel.selectSet(1)
+
+        XCTAssertEqual(viewModel.activeSetIndex, 0)
+
+        viewModel.requestEditReps(2)
+
+        XCTAssertEqual(viewModel.focusedSetIndex, 2)
+        XCTAssertEqual(viewModel.activeSetIndex, 0)
+        XCTAssertEqual(viewModel.selectedLoggableSetIndex, 0)
+        XCTAssertEqual(viewModel.primaryActionTitle, "Готово")
+
+        if let requestID = viewModel.editingTarget?.requestID {
+            viewModel.endEditing(requestID: requestID)
+        }
+
+        XCTAssertNil(viewModel.editingTarget)
+        XCTAssertEqual(viewModel.activeSetIndex, 0)
     }
 
     func testWorkoutPlayerViewModelRestoresDirectEditsAfterResume() async {
@@ -1112,19 +1302,24 @@ final class WorkoutsFeatureAndProgressStoreTests: XCTestCase {
         )
 
         await viewModel.onAppear()
-        await viewModel.toggleSetComplete(setIndex: 0)
+        viewModel.toggleCurrentExerciseRestTimer()
+        await viewModel.updateWeight(setIndex: 0, input: "60")
+        await viewModel.updateReps(setIndex: 0, input: "8")
+        await viewModel.completeFocusedSet()
 
         XCTAssertEqual(viewModel.currentExercise?.id, "ex-1")
         XCTAssertEqual(viewModel.autoAdvanceUndoState?.includesExerciseMove, false)
         XCTAssertEqual(viewModel.restStatusTitle, "Идёт отдых")
 
-        await viewModel.toggleSetComplete(setIndex: 1)
+        await viewModel.updateWeight(setIndex: 1, input: "62.5")
+        await viewModel.updateReps(setIndex: 1, input: "8")
+        await viewModel.completeFocusedSet()
 
-        XCTAssertEqual(viewModel.currentExercise?.id, "ex-2")
-        XCTAssertEqual(viewModel.autoAdvanceUndoState?.includesExerciseMove, true)
-        XCTAssertEqual(restTimer.exerciseName, "Жим лёжа")
+        XCTAssertEqual(viewModel.currentExercise?.id, "ex-1")
+        XCTAssertEqual(viewModel.autoAdvanceUndoState?.includesExerciseMove, false)
+        XCTAssertEqual(restTimer.exerciseName, "Присед")
         XCTAssertTrue(restTimer.isVisible)
-        XCTAssertEqual(viewModel.nextStepSummary, "Дальше подход 1 в упражнении Жим лёжа.")
+        XCTAssertEqual(viewModel.nextStepSummary, "Дальше упражнение Жим лёжа.")
     }
 
     func testWorkoutPlayerViewModelPreservesCurrentExerciseAcrossResume() async {
@@ -1470,7 +1665,10 @@ final class WorkoutsFeatureAndProgressStoreTests: XCTestCase {
         )
 
         await firstViewModel.onAppear()
-        await firstViewModel.toggleSetComplete(setIndex: 0)
+        firstViewModel.toggleCurrentExerciseRestTimer()
+        await firstViewModel.updateWeight(setIndex: 0, input: "40")
+        await firstViewModel.updateReps(setIndex: 0, input: "8")
+        await firstViewModel.completeFocusedSet()
 
         XCTAssertTrue(restTimer.isVisible)
         XCTAssertEqual(restTimer.workoutId, "w1")
@@ -1504,7 +1702,10 @@ final class WorkoutsFeatureAndProgressStoreTests: XCTestCase {
         )
 
         await viewModel.onAppear()
-        await viewModel.toggleSetComplete(setIndex: 0)
+        viewModel.toggleCurrentExerciseRestTimer()
+        await viewModel.updateWeight(setIndex: 0, input: "40")
+        await viewModel.updateReps(setIndex: 0, input: "8")
+        await viewModel.completeFocusedSet()
         XCTAssertTrue(restTimer.isVisible)
 
         await viewModel.finish()
@@ -1513,6 +1714,222 @@ final class WorkoutsFeatureAndProgressStoreTests: XCTestCase {
         XCTAssertNil(restTimer.workoutId)
         XCTAssertNil(restTimer.exerciseName)
         XCTAssertNil(restTimer.completionMessage)
+    }
+
+    func testWorkoutPlayerViewModelEditingNonLoggableSetShowsDoneForRepsAndWeight() async {
+        let progressStore = MockWorkoutProgressStore(statuses: [:])
+        let sessionManager = WorkoutSessionManager(progressStore: progressStore)
+        let viewModel = WorkoutPlayerViewModel(
+            userSub: "u1",
+            programId: "p1",
+            workout: sampleWorkoutDetails,
+            sessionManager: sessionManager,
+        )
+
+        await viewModel.onAppear()
+        await viewModel.addSet(duplicateLast: false)
+        await viewModel.updateWeight(setIndex: 0, input: "40")
+        await viewModel.updateReps(setIndex: 0, input: "8")
+
+        viewModel.requestEditReps(1)
+        XCTAssertEqual(viewModel.primaryActionTitle, "Готово")
+        XCTAssertTrue(viewModel.isPrimaryBottomActionEnabled)
+
+        if let requestID = viewModel.editingTarget?.requestID {
+            viewModel.endEditing(requestID: requestID)
+        }
+
+        viewModel.requestEditWeight(1)
+        XCTAssertEqual(viewModel.primaryActionTitle, "Готово")
+        XCTAssertTrue(viewModel.isPrimaryBottomActionEnabled)
+    }
+
+    func testWorkoutPlayerViewModelEditingSecondSetKeepsDoneEnabledAcrossCommits() async {
+        let progressStore = MockWorkoutProgressStore(statuses: [:])
+        let sessionManager = WorkoutSessionManager(progressStore: progressStore)
+        let viewModel = WorkoutPlayerViewModel(
+            userSub: "u1",
+            programId: "p1",
+            workout: sampleWorkoutDetails,
+            sessionManager: sessionManager,
+        )
+
+        await viewModel.onAppear()
+
+        XCTAssertEqual(viewModel.activeSetIndex, 0)
+        XCTAssertEqual(viewModel.primaryActionTitle, "Готово")
+        XCTAssertTrue(viewModel.isPrimaryBottomActionEnabled)
+
+        viewModel.requestEditWeight(1)
+        await viewModel.updateWeight(setIndex: 1, input: "42.5")
+
+        XCTAssertEqual(viewModel.activeSetIndex, 0)
+        XCTAssertEqual(viewModel.primaryActionTitle, "Готово")
+        XCTAssertTrue(viewModel.isPrimaryBottomActionEnabled)
+
+        if let requestID = viewModel.editingTarget?.requestID {
+            viewModel.endEditing(requestID: requestID)
+        }
+
+        await viewModel.updateReps(setIndex: 1, input: "10")
+
+        XCTAssertEqual(viewModel.activeSetIndex, 0)
+        XCTAssertEqual(viewModel.primaryActionTitle, "Готово")
+        XCTAssertTrue(viewModel.isPrimaryBottomActionEnabled)
+
+        await viewModel.primaryBottomAction()
+
+        XCTAssertNil(viewModel.editingTarget)
+        XCTAssertNil(viewModel.secondaryEditingSetIndex)
+        XCTAssertEqual(viewModel.activeSetIndex, 0)
+        XCTAssertEqual(viewModel.primaryActionTitle, "Готово")
+        XCTAssertTrue(viewModel.isPrimaryBottomActionEnabled)
+    }
+
+    func testWorkoutPlayerViewModelActiveSetWithCompletePrefilledValuesCanBeLogged() async {
+        let progressStore = MockWorkoutProgressStore(statuses: [:])
+        let sessionManager = WorkoutSessionManager(progressStore: progressStore)
+        let viewModel = WorkoutPlayerViewModel(
+            userSub: "u1",
+            programId: "p1",
+            workout: sampleWorkoutDetails,
+            sessionManager: sessionManager,
+        )
+
+        await viewModel.onAppear()
+        await viewModel.updateWeight(setIndex: 0, input: "60")
+        await viewModel.updateReps(setIndex: 0, input: "8")
+
+        XCTAssertEqual(viewModel.activeSetIndex, 0)
+        XCTAssertEqual(viewModel.primaryActionTitle, "Логировать подход")
+        XCTAssertTrue(viewModel.isPrimaryBottomActionEnabled)
+    }
+
+    func testWorkoutPlayerViewModelActiveSetWithPartialValuesShowsDone() async {
+        let progressStore = MockWorkoutProgressStore(statuses: [:])
+        let sessionManager = WorkoutSessionManager(progressStore: progressStore)
+        let viewModel = WorkoutPlayerViewModel(
+            userSub: "u1",
+            programId: "p1",
+            workout: sampleWorkoutDetails,
+            sessionManager: sessionManager,
+        )
+
+        await viewModel.onAppear()
+        await viewModel.updateReps(setIndex: 0, input: "")
+        await viewModel.updateWeight(setIndex: 0, input: "60")
+
+        XCTAssertEqual(viewModel.activeSetIndex, 0)
+        XCTAssertEqual(viewModel.primaryActionTitle, "Готово")
+        XCTAssertTrue(viewModel.isPrimaryBottomActionEnabled)
+
+        await viewModel.primaryBottomAction()
+
+        XCTAssertEqual(viewModel.activeSetIndex, 0)
+        XCTAssertEqual(viewModel.primaryActionTitle, "Готово")
+        XCTAssertTrue(viewModel.isPrimaryBottomActionEnabled)
+        XCTAssertEqual(viewModel.currentExerciseState?.sets[0].isCompleted, false)
+    }
+
+    func testWorkoutPlayerViewModelPrimaryActionDoneDoesNotLogWhileEditingNonLoggableSet() async {
+        let progressStore = MockWorkoutProgressStore(statuses: [:])
+        let sessionManager = WorkoutSessionManager(progressStore: progressStore)
+        let viewModel = WorkoutPlayerViewModel(
+            userSub: "u1",
+            programId: "p1",
+            workout: sampleWorkoutDetails,
+            sessionManager: sessionManager,
+        )
+
+        await viewModel.onAppear()
+        await viewModel.addSet(duplicateLast: false)
+        await viewModel.updateWeight(setIndex: 0, input: "40")
+        await viewModel.updateReps(setIndex: 0, input: "8")
+        viewModel.requestEditReps(1)
+
+        await viewModel.primaryBottomAction()
+
+        XCTAssertNil(viewModel.editingTarget)
+        XCTAssertEqual(viewModel.currentExerciseState?.sets[0].isCompleted, false)
+        XCTAssertEqual(viewModel.currentExerciseState?.sets[1].isCompleted, false)
+        XCTAssertEqual(viewModel.activeSetIndex, 0)
+    }
+
+    func testWorkoutPlayerViewModelCanEditCompletedSetWithoutChangingLoggableFocus() async {
+        let progressStore = MockWorkoutProgressStore(statuses: [:])
+        let sessionManager = WorkoutSessionManager(progressStore: progressStore)
+        let viewModel = WorkoutPlayerViewModel(
+            userSub: "u1",
+            programId: "p1",
+            workout: sampleWorkoutDetails,
+            sessionManager: sessionManager,
+        )
+
+        await viewModel.onAppear()
+        await viewModel.updateWeight(setIndex: 0, input: "40")
+        await viewModel.updateReps(setIndex: 0, input: "8")
+        await viewModel.completeFocusedSet()
+
+        XCTAssertEqual(viewModel.activeSetIndex, 1)
+
+        viewModel.requestEditReps(0)
+        await viewModel.updateReps(setIndex: 0, input: "9")
+
+        XCTAssertEqual(viewModel.currentExerciseState?.sets[0].repsText, "9")
+        XCTAssertEqual(viewModel.currentExerciseState?.sets[0].isCompleted, true)
+        XCTAssertEqual(viewModel.activeSetIndex, 1)
+        XCTAssertEqual(viewModel.primaryActionTitle, "Готово")
+    }
+
+    func testWorkoutPlayerViewModelDuplicateLastSetCreatesUncompletedCopy() async throws {
+        let progressStore = MockWorkoutProgressStore(statuses: [:])
+        let sessionManager = WorkoutSessionManager(progressStore: progressStore)
+        let viewModel = WorkoutPlayerViewModel(
+            userSub: "u1",
+            programId: "p1",
+            workout: sampleWorkoutDetails,
+            sessionManager: sessionManager,
+        )
+
+        await viewModel.onAppear()
+        await viewModel.updateWeight(setIndex: 0, input: "40")
+        await viewModel.updateReps(setIndex: 0, input: "8")
+        await viewModel.completeFocusedSet()
+
+        await viewModel.addSet(duplicateLast: true)
+
+        let sets = try XCTUnwrap(viewModel.currentExerciseState?.sets)
+        let duplicatedSet = try XCTUnwrap(sets.last)
+        XCTAssertEqual(duplicatedSet.weightText, "")
+        XCTAssertEqual(duplicatedSet.repsText, "8")
+        XCTAssertFalse(duplicatedSet.isCompleted)
+        XCTAssertEqual(viewModel.activeSetIndex, 1)
+    }
+
+    func testWorkoutPlayerViewModelRemovingSetKeepsNextLoggableFocusStable() async {
+        let progressStore = MockWorkoutProgressStore(statuses: [:])
+        let sessionManager = WorkoutSessionManager(progressStore: progressStore)
+        let viewModel = WorkoutPlayerViewModel(
+            userSub: "u1",
+            programId: "p1",
+            workout: sampleWorkoutDetails,
+            sessionManager: sessionManager,
+        )
+
+        await viewModel.onAppear()
+        await viewModel.addSet(duplicateLast: false)
+        await viewModel.updateWeight(setIndex: 0, input: "40")
+        await viewModel.updateReps(setIndex: 0, input: "8")
+        await viewModel.completeFocusedSet()
+
+        XCTAssertEqual(viewModel.activeSetIndex, 1)
+
+        await viewModel.removeSet(setIndex: 0)
+
+        XCTAssertEqual(viewModel.currentExerciseState?.sets.count, 2)
+        XCTAssertEqual(viewModel.activeSetIndex, 0)
+        XCTAssertEqual(viewModel.primaryActionTitle, "Готово")
+        XCTAssertTrue(viewModel.isPrimaryBottomActionEnabled)
     }
 
     func testWorkoutPlayerPrimaryActionShowsFinishConfirmationOnLastExercise() async {
@@ -1526,6 +1943,12 @@ final class WorkoutsFeatureAndProgressStoreTests: XCTestCase {
         )
 
         await viewModel.onAppear()
+        await viewModel.updateWeight(setIndex: 0, input: "40")
+        await viewModel.updateReps(setIndex: 0, input: "8")
+        await viewModel.completeFocusedSet()
+        await viewModel.updateWeight(setIndex: 1, input: "42.5")
+        await viewModel.updateReps(setIndex: 1, input: "8")
+        await viewModel.completeFocusedSet()
 
         XCTAssertTrue(viewModel.isLastExercise)
         XCTAssertFalse(viewModel.isFinishConfirmationPresented)
@@ -1668,8 +2091,9 @@ final class WorkoutsFeatureAndProgressStoreTests: XCTestCase {
 
         await viewModel.toggleSetComplete(setIndex: 0)
 
-        XCTAssertEqual(viewModel.currentExercise?.id, "ex-2")
+        XCTAssertEqual(viewModel.currentExercise?.id, "ex-1")
         XCTAssertNotNil(viewModel.autoAdvanceUndoState)
+        XCTAssertEqual(viewModel.autoAdvanceUndoState?.message, "Упражнение завершено, можно перейти дальше")
 
         await viewModel.undoAutoAdvance()
         XCTAssertEqual(viewModel.currentExercise?.id, "ex-1")
@@ -2205,6 +2629,10 @@ private actor MockWorkoutProgressStore: WorkoutProgressStore {
 
     func save(_ snapshot: WorkoutProgressSnapshot) async {
         snapshotValue = snapshot
+    }
+
+    func remove(userSub _: String, programId _: String, workoutId _: String) async {
+        snapshotValue = nil
     }
 
     func status(userSub _: String, programId _: String, workoutId: String) async -> WorkoutProgressStatus {

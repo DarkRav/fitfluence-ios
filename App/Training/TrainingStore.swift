@@ -31,6 +31,7 @@ struct CompletedWorkoutRecord: Codable, Equatable, Sendable, Identifiable {
     let completedSets: Int
     let totalSets: Int
     let volume: Double
+    let workoutDetails: WorkoutDetailsModel?
     let notes: String?
     let overallRPE: Int?
 }
@@ -280,8 +281,7 @@ struct WorkoutCompositionDraft: Equatable, Sendable {
         else { return false }
 
         let item = exercises.remove(at: from)
-        let destination = from < to ? to - 1 : to
-        exercises.insert(item, at: destination)
+        exercises.insert(item, at: to)
         return true
     }
 
@@ -436,6 +436,11 @@ protocol TrainingStore: Sendable {
         programTitle: String?,
         workoutDetails: WorkoutDetailsModel?,
     ) async
+    func deleteProgramPlans(
+        userSub: String,
+        programId: String,
+        statuses: [TrainingDayStatus]
+    ) async
     func plans(userSub: String, month: Date) async -> [TrainingDayPlan]
     func weeklySummary(userSub: String, weekStart: Date) async -> WeeklyTrainingSummary
     func storageSizeBytes(userSub: String) async -> Int
@@ -463,6 +468,12 @@ extension TrainingStore {
         programId _: String?,
         programTitle _: String?,
         workoutDetails _: WorkoutDetailsModel?,
+    ) async {}
+
+    func deleteProgramPlans(
+        userSub _: String,
+        programId _: String,
+        statuses _: [TrainingDayStatus]
     ) async {}
 }
 
@@ -616,6 +627,20 @@ actor LocalTrainingStore: TrainingStore {
         return items
             .filter { monthInterval.contains($0.day) }
             .sorted { $0.day < $1.day }
+    }
+
+    func deleteProgramPlans(
+        userSub: String,
+        programId: String,
+        statuses: [TrainingDayStatus]
+    ) async {
+        let statusSet = Set(statuses)
+        let items = (loadArray([TrainingDayPlan].self, key: planKey(userSub: userSub)) ?? []).filter { item in
+            guard item.userSub == userSub else { return true }
+            guard item.programId == programId else { return true }
+            return !statusSet.contains(item.status)
+        }
+        await saveArray(items, key: planKey(userSub: userSub))
     }
 
     func weeklySummary(userSub: String, weekStart: Date) async -> WeeklyTrainingSummary {

@@ -110,6 +110,77 @@ final class AuthAndSessionFlowTests: XCTestCase {
         XCTAssertNil(storedToken)
     }
 
+    @MainActor
+    func testRootFeatureAutomaticallyAttemptsLoginAfterUnauthenticatedBootstrap() async {
+        let auth = MockAuthService(tokenSet: sampleTokenSet)
+        let manager = MockSessionManager(nextState: .unauthenticated)
+        manager.postLoginState = .authenticated(UserContext(me: sampleMe(
+            requiresAthlete: false,
+            requiresInfluencer: false,
+        )))
+
+        let store = TestStore(initialState: RootFeature.State()) {
+            RootFeature(
+                sessionManager: manager,
+                authService: auth,
+                apiClient: nil,
+            )
+        }
+
+        await store.send(.sessionResolved(.unauthenticated)) {
+            $0.sessionState = .authenticating
+        }
+
+        await store.receive(.automaticLoginTriggered) {
+            $0.hasAttemptedAutomaticLogin = true
+            $0.sessionState = .authenticating
+        }
+
+        let nextState = RootSessionState.authenticated(UserContext(me: sampleMe(
+            requiresAthlete: false,
+            requiresInfluencer: false,
+        )))
+
+        await store.receive(.sessionResolved(nextState)) {
+            $0.sessionState = nextState
+        }
+    }
+
+    @MainActor
+    func testLogoutDisablesAutomaticLogin() async {
+        let auth = MockAuthService(tokenSet: sampleTokenSet)
+        let manager = MockSessionManager(nextState: .unauthenticated)
+
+        let store = TestStore(initialState: RootFeature.State(
+            hasBootstrapped: true,
+            hasAttemptedAutomaticLogin: true,
+            automaticLoginEnabled: true,
+            isOnline: true,
+            sessionState: .authenticated(UserContext(me: sampleMe(
+                requiresAthlete: false,
+                requiresInfluencer: false,
+            ))),
+            selectedProgram: nil,
+            onboarding: nil,
+        )) {
+            RootFeature(
+                sessionManager: manager,
+                authService: auth,
+                apiClient: nil,
+            )
+        }
+
+        await store.send(.logoutTapped) {
+            $0.automaticLoginEnabled = false
+            $0.sessionState = .authenticating
+            $0.selectedProgram = nil
+        }
+
+        await store.receive(.sessionResolved(.unauthenticated)) {
+            $0.sessionState = .unauthenticated
+        }
+    }
+
     private var sampleTokenSet: TokenSet {
         TokenSet(
             accessToken: "access",
@@ -197,9 +268,11 @@ private final class MockAthleteProfileClient: AthleteProfileClientProtocol, @unc
 
 private final class MockSessionManager: SessionManaging, @unchecked Sendable {
     let nextState: RootSessionState
+    var postLoginState: RootSessionState
 
     init(nextState: RootSessionState) {
         self.nextState = nextState
+        postLoginState = nextState
     }
 
     func bootstrap() async -> RootSessionState {
@@ -207,7 +280,7 @@ private final class MockSessionManager: SessionManaging, @unchecked Sendable {
     }
 
     func postLoginBootstrap() async -> RootSessionState {
-        nextState
+        postLoginState
     }
 
     func logout() async -> RootSessionState {

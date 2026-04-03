@@ -135,26 +135,38 @@ struct WorkoutsListScreen: View {
     var body: some View {
         Group {
             if viewModel.isLoading, viewModel.workouts.isEmpty {
-                FFLoadingState(title: "Загружаем тренировки")
-                    .padding(.horizontal, FFSpacing.md)
-            } else if let error = viewModel.error, viewModel.workouts.isEmpty {
-                FFErrorState(
-                    title: error.title,
-                    message: error.message,
-                    retryTitle: "Повторить",
-                ) {
-                    Task { await viewModel.retry() }
+                FFScreenStateLayout {
+                    FFLoadingState(title: "Загружаем тренировки")
+                        .frame(maxHeight: .infinity)
                 }
-                .padding(.horizontal, FFSpacing.md)
+            } else if let error = viewModel.error, viewModel.workouts.isEmpty {
+                FFScreenStateLayout {
+                    FFErrorState(
+                        title: error.title,
+                        message: error.message,
+                        retryTitle: "Повторить",
+                        fillsAvailableHeight: true,
+                    ) {
+                        Task { await viewModel.retry() }
+                    }
+                }
             } else if viewModel.workouts.isEmpty {
-                FFEmptyState(
-                    title: "В этой программе пока нет тренировок",
-                    message: "Как только тренировки появятся, они будут доступны на этом экране.",
-                )
-                .padding(.horizontal, FFSpacing.md)
+                FFScreenStateLayout {
+                    FFEmptyState(
+                        title: "В этой программе пока нет тренировок",
+                        message: "Как только тренировки появятся, они будут доступны на этом экране.",
+                        fillsAvailableHeight: true,
+                    )
+                }
             } else {
                 ScrollView {
                     VStack(spacing: FFSpacing.sm) {
+                        FFCard {
+                            Text("Здесь можно посмотреть состав программы. Запуск тренировки доступен из календарного плана, чтобы порядок дней не ломался.")
+                                .font(FFTypography.body)
+                                .foregroundStyle(FFColors.textSecondary)
+                        }
+
                         if viewModel.isShowingCachedData {
                             FFCard {
                                 Text("Оффлайн. Показаны сохранённые данные.")
@@ -233,7 +245,7 @@ struct WorkoutsListScreen: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel("Тренировка \(workout.title)")
-        .accessibilityHint("Открыть тренировку")
+        .accessibilityHint("Посмотреть список упражнений")
     }
 
     private func detailsText(workout: WorkoutSummary) -> String {

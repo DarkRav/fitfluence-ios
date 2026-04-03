@@ -40,11 +40,7 @@ actor SyncCoordinator {
     }
 
     func activate(namespace: String) async {
-        let normalized = namespace.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !normalized.isEmpty else { return }
-        activeNamespace = normalized
-        startIfNeeded()
-        await outboxStore.appendSystemLog(namespace: normalized, message: "Sync namespace activated")
+        await prepareNamespace(namespace: namespace)
         await processNow(reason: "activate")
     }
 
@@ -59,8 +55,9 @@ actor SyncCoordinator {
         isCompleted: Bool?,
         isWarmup: Bool?,
         restSecondsActual: Int?,
+        processImmediately: Bool = true,
     ) async -> SyncOutboxMutationResult {
-        await activate(namespace: namespace)
+        await prepareNamespace(namespace: namespace)
 
         if let workoutInstanceId {
             _ = await outboxStore.enqueue(
@@ -84,7 +81,9 @@ actor SyncCoordinator {
             namespace: namespace,
         )
 
-        await processNow(reason: "enqueue_set")
+        if processImmediately {
+            await processNow(reason: "enqueue_set")
+        }
         return result
     }
 
@@ -93,7 +92,7 @@ actor SyncCoordinator {
         workoutInstanceId: String,
         startedAt: Date? = Date(),
     ) async -> SyncOutboxMutationResult {
-        await activate(namespace: namespace)
+        await prepareNamespace(namespace: namespace)
         let result = await outboxStore.enqueue(
             .startWorkout(workoutInstanceId: workoutInstanceId, startedAt: startedAt),
             namespace: namespace,
@@ -107,7 +106,7 @@ actor SyncCoordinator {
         workoutInstanceId: String,
         completedAt: Date? = Date(),
     ) async -> SyncOutboxMutationResult {
-        await activate(namespace: namespace)
+        await prepareNamespace(namespace: namespace)
         let result = await outboxStore.enqueue(
             .completeWorkout(workoutInstanceId: workoutInstanceId, completedAt: completedAt),
             namespace: namespace,
@@ -121,7 +120,7 @@ actor SyncCoordinator {
         workoutInstanceId: String,
         abandonedAt: Date? = Date(),
     ) async -> SyncOutboxMutationResult {
-        await activate(namespace: namespace)
+        await prepareNamespace(namespace: namespace)
         let result = await outboxStore.enqueue(
             .abandonWorkout(workoutInstanceId: workoutInstanceId, abandonedAt: abandonedAt),
             namespace: namespace,
@@ -131,7 +130,7 @@ actor SyncCoordinator {
     }
 
     func retryNow(namespace: String) async {
-        await activate(namespace: namespace)
+        await prepareNamespace(namespace: namespace)
         await processNow(reason: "manual_retry")
     }
 
@@ -145,6 +144,10 @@ actor SyncCoordinator {
 
     func pendingCount(namespace: String) async -> Int {
         await outboxStore.pendingCount(namespace: namespace)
+    }
+
+    func hasPendingAbandon(namespace: String, workoutInstanceId: String) async -> Bool {
+        await outboxStore.hasPendingAbandon(namespace: namespace, workoutInstanceId: workoutInstanceId)
     }
 
     func resolveSyncIndicator(namespace: String) async -> SyncStatusKind {
@@ -198,6 +201,17 @@ actor SyncCoordinator {
                 "sync-indicator namespace=\(namespace) source=remote_sync_status_failed status=\(fallbackStatus.rawValue) pendingCount=\(diagnostics.pendingCount) hasDelayedRetries=\(diagnostics.hasDelayedRetries) lastSyncError=\(diagnostics.lastSyncError ?? "-")",
             )
             return fallbackStatus
+        }
+    }
+
+    private func prepareNamespace(namespace: String) async {
+        let normalized = namespace.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalized.isEmpty else { return }
+        let shouldLogActivation = activeNamespace != normalized
+        activeNamespace = normalized
+        startIfNeeded()
+        if shouldLogActivation {
+            await outboxStore.appendSystemLog(namespace: normalized, message: "Sync namespace activated")
         }
     }
 

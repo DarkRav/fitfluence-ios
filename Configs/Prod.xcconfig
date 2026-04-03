@@ -5,6 +5,6 @@ KEYCLOAK_URL = https:$(SLASH)$(SLASH)176.108.251.89$(SLASH)auth
 KEYCLOAK_REALM = fitfluence
 KEYCLOAK_CLIENT_ID = fitfluence-ios
 KEYCLOAK_REDIRECT_URI = fitfluence:$(SLASH)$(SLASH)oauth/callback
-KEYCLOAK_SCOPES = openid offline_access
+KEYCLOAK_SCOPES = openid
 KEYCLOAK_REGISTRATION_HINT_MODE = kc_action
 APP_ENVIRONMENT_NAME = PROD

@@ -246,6 +246,15 @@ actor SyncOutboxStore {
         return state.operations.count(where: { $0.status.isUnsent })
     }
 
+    func hasPendingAbandon(namespace: String, workoutInstanceId: String) async -> Bool {
+        let state = loadState(namespace: namespace)
+        return state.operations.contains { operation in
+            operation.workoutInstanceId == workoutInstanceId &&
+                operation.type == .abandonWorkout &&
+                operation.status.isUnsent
+        }
+    }
+
     private func applyEnqueue(
         operation: SyncOperation,
         in state: inout PersistedState,

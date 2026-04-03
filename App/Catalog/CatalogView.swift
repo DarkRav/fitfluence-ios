@@ -570,6 +570,7 @@ final class CatalogViewModel {
 }
 
 enum CatalogHubSegment: String, CaseIterable, Identifiable {
+    case myPrograms
     case programs
     case athletes
 
@@ -577,6 +578,8 @@ enum CatalogHubSegment: String, CaseIterable, Identifiable {
 
     var title: String {
         switch self {
+        case .myPrograms:
+            "Моя программа"
         case .programs:
             "Программы"
         case .athletes:
@@ -614,6 +617,7 @@ struct CatalogSegmentHeader: View {
     let thirdAction: CatalogHeaderAction
     let isFiltersActive: Bool
     let isThirdActionSelected: Bool
+    var showsActions = true
     let onSearchTap: () -> Void
     let onFiltersTap: () -> Void
     let onThirdTap: () -> Void
@@ -627,14 +631,16 @@ struct CatalogSegmentHeader: View {
             }
             .pickerStyle(.segmented)
 
-            AthletesActionBar(
-                thirdAction: thirdAction,
-                isFiltersActive: isFiltersActive,
-                isThirdActionSelected: isThirdActionSelected,
-                onSearchTap: onSearchTap,
-                onFiltersTap: onFiltersTap,
-                onThirdTap: onThirdTap,
-            )
+            if showsActions {
+                AthletesActionBar(
+                    thirdAction: thirdAction,
+                    isFiltersActive: isFiltersActive,
+                    isThirdActionSelected: isThirdActionSelected,
+                    onSearchTap: onSearchTap,
+                    onFiltersTap: onFiltersTap,
+                    onThirdTap: onThirdTap,
+                )
+            }
         }
         .padding(.horizontal, FFSpacing.md)
         .padding(.top, 4)
@@ -691,15 +697,13 @@ struct CatalogActionChipButton: View {
                     .lineLimit(1)
                     .minimumScaleFactor(0.68)
             }
-            .foregroundStyle(isSelected ? FFColors.accent : FFColors.textPrimary)
             .padding(.horizontal, 8)
             .frame(maxWidth: .infinity, minHeight: 44)
-            .background(isSelected ? FFColors.accent.opacity(0.18) : FFColors.surface)
-            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-            .overlay {
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .stroke(isSelected ? FFColors.accent.opacity(0.9) : FFColors.gray700, lineWidth: 1)
-            }
+            .ffSelectableSurface(
+                isSelected: isSelected,
+                emphasis: .subtleAccent,
+                cornerRadius: 16,
+            )
         }
         .buttonStyle(.plain)
     }
@@ -2307,16 +2311,367 @@ struct AthletesCatalogViewModel {
     }
 }
 
+@Observable
+@MainActor
+final class MyProgramsViewModel {
+    enum PrimaryActionKind: String, Codable, Equatable {
+        case openProgram
+        case openPlan
+        case openWorkout
+    }
+
+    struct UpcomingWorkout: Codable, Equatable, Identifiable {
+        let id: String
+        let title: String
+        let dateText: String
+    }
+
+    struct ProgramItem: Codable, Equatable, Identifiable {
+        let id: String
+        let title: String
+        let statusTitle: String
+        let subtitle: String
+        let detailsLine: String
+        let progressText: String?
+        let progressValue: Double?
+        let isActive: Bool
+        let primaryActionTitle: String
+        let primaryActionKind: PrimaryActionKind
+        let upcomingWorkouts: [UpcomingWorkout]
+    }
+
+    private struct CachedPayload: Codable, Equatable {
+        let activePrograms: [ProgramItem]
+        let recentPrograms: [ProgramItem]
+    }
+
+    private struct HistorySummary {
+        let programId: String
+        let completedWorkouts: Int
+        let lastWorkoutTitle: String
+        let lastCompletedAt: Date
+    }
+
+    private let userSub: String
+    private let athleteTrainingClient: AthleteTrainingClientProtocol?
+    private let programsClient: ProgramsClientProtocol?
+    private let trainingStore: TrainingStore
+    private let cacheStore: CacheStore
+    private let networkMonitor: NetworkMonitoring
+    private let onUnauthorized: (() -> Void)?
+    private let calendar: Calendar
+
+    var activePrograms: [ProgramItem] = []
+    var recentPrograms: [ProgramItem] = []
+    var isLoading = false
+    var isRefreshing = false
+    var isShowingCachedData = false
+    var error: UserFacingError?
+
+    init(
+        userSub: String,
+        athleteTrainingClient: AthleteTrainingClientProtocol?,
+        programsClient: ProgramsClientProtocol?,
+        trainingStore: TrainingStore = LocalTrainingStore(),
+        cacheStore: CacheStore = CompositeCacheStore(),
+        networkMonitor: NetworkMonitoring = StaticNetworkMonitor(currentStatus: true),
+        calendar: Calendar = .current,
+        onUnauthorized: (() -> Void)? = nil,
+    ) {
+        self.userSub = userSub
+        self.athleteTrainingClient = athleteTrainingClient
+        self.programsClient = programsClient
+        self.trainingStore = trainingStore
+        self.cacheStore = cacheStore
+        self.networkMonitor = networkMonitor
+        self.calendar = calendar
+        self.onUnauthorized = onUnauthorized
+    }
+
+    func onAppear() async {
+        guard activePrograms.isEmpty, recentPrograms.isEmpty, !isLoading else { return }
+        isLoading = true
+        error = nil
+        await load(cachedFirst: true)
+        isLoading = false
+    }
+
+    func refresh() async {
+        guard !isRefreshing else { return }
+        isRefreshing = true
+        error = nil
+        await load(cachedFirst: true)
+        isRefreshing = false
+    }
+
+    func retry() async {
+        guard !isLoading else { return }
+        isLoading = true
+        error = nil
+        await load(cachedFirst: true)
+        isLoading = false
+    }
+
+    private func load(cachedFirst: Bool) async {
+        if cachedFirst,
+           let cached = await cacheStore.get(cacheKey, as: CachedPayload.self, namespace: userSub)
+        {
+            activePrograms = cached.activePrograms
+            recentPrograms = cached.recentPrograms
+            isShowingCachedData = true
+        }
+
+        let history = await trainingStore.history(userSub: userSub, source: .program, limit: 120)
+        let historySummaries = groupedHistory(history)
+
+        var nextActivePrograms = activePrograms
+        if networkMonitor.currentStatus, let athleteTrainingClient {
+            switch await athleteTrainingClient.activeEnrollments() {
+            case let .success(enrollments):
+                var resolved: [ProgramItem] = []
+                for enrollment in enrollments {
+                    if let item = await mapActiveProgram(enrollment) {
+                        resolved.append(item)
+                    }
+                }
+                nextActivePrograms = resolved
+            case let .failure(apiError):
+                if apiError == .unauthorized {
+                    onUnauthorized?()
+                    return
+                }
+                if apiError == .forbidden {
+                    nextActivePrograms = []
+                    error = nil
+                    break
+                }
+                if activePrograms.isEmpty, recentPrograms.isEmpty {
+                    error = apiError.userFacing(context: .catalog)
+                }
+            }
+        }
+
+        let activeIDs = Set(nextActivePrograms.map(\.id))
+        let recentTitles = await resolveProgramTitles(
+            for: historySummaries
+                .map(\.programId)
+                .filter { !activeIDs.contains($0) }
+        )
+
+        let nextRecentPrograms = historySummaries
+            .filter { !activeIDs.contains($0.programId) }
+            .map { mapRecentProgram($0, titleOverride: recentTitles[$0.programId]) }
+
+        activePrograms = nextActivePrograms
+        recentPrograms = nextRecentPrograms
+
+        if !nextActivePrograms.isEmpty || !nextRecentPrograms.isEmpty {
+            error = nil
+            isShowingCachedData = false
+            await cacheStore.set(
+                cacheKey,
+                value: CachedPayload(
+                    activePrograms: nextActivePrograms,
+                    recentPrograms: nextRecentPrograms
+                ),
+                namespace: userSub,
+                ttl: 60 * 15
+            )
+        } else if networkMonitor.currentStatus {
+            isShowingCachedData = false
+        } else if !(activePrograms.isEmpty && recentPrograms.isEmpty) {
+            error = nil
+            isShowingCachedData = true
+        }
+    }
+
+    private func groupedHistory(_ history: [CompletedWorkoutRecord]) -> [HistorySummary] {
+        Dictionary(grouping: history, by: \.programId)
+            .compactMap { programId, items in
+                guard let last = items.max(by: { $0.finishedAt < $1.finishedAt }) else { return nil }
+                return HistorySummary(
+                    programId: programId,
+                    completedWorkouts: items.count,
+                    lastWorkoutTitle: last.workoutTitle,
+                    lastCompletedAt: last.finishedAt,
+                )
+            }
+            .sorted(by: { $0.lastCompletedAt > $1.lastCompletedAt })
+            .prefix(8)
+            .map { $0 }
+    }
+
+    private func mapActiveProgram(_ enrollment: ActiveEnrollmentProgressResponse) async -> ProgramItem? {
+        guard let programId = enrollment.programId?.trimmedNilIfEmpty else { return nil }
+
+        let completed = max(0, enrollment.completedSessions ?? 0)
+        let total = max(completed, enrollment.totalSessions ?? completed, 1)
+        let state = resolveState(enrollment)
+        let upcomingWorkouts = await resolveUpcomingWorkouts(programId: programId)
+
+        return ProgramItem(
+            id: programId,
+            title: enrollment.programTitle?.trimmedNilIfEmpty ?? "Программа",
+            statusTitle: state.statusTitle,
+            subtitle: state.subtitle,
+            detailsLine: state.detailsLine,
+            progressText: "\(completed) / \(total) тренировок",
+            progressValue: normalizedProgress(
+                completed: completed,
+                total: total,
+                rawPercent: enrollment.completionPercent
+            ),
+            isActive: true,
+            primaryActionTitle: state.primaryActionTitle,
+            primaryActionKind: state.primaryActionKind,
+            upcomingWorkouts: upcomingWorkouts,
+        )
+    }
+
+    private func mapRecentProgram(_ summary: HistorySummary, titleOverride: String?) -> ProgramItem {
+        ProgramItem(
+            id: summary.programId,
+            title: titleOverride?.trimmedNilIfEmpty ?? "Программа",
+            statusTitle: "Недавний цикл",
+            subtitle: "Последняя тренировка: \(summary.lastWorkoutTitle)",
+            detailsLine: "Завершено тренировок: \(summary.completedWorkouts)",
+            progressText: nil,
+            progressValue: nil,
+            isActive: false,
+            primaryActionTitle: "Открыть программу",
+            primaryActionKind: .openProgram,
+            upcomingWorkouts: [],
+        )
+    }
+
+    private func resolveState(_ enrollment: ActiveEnrollmentProgressResponse) -> (
+        statusTitle: String,
+        subtitle: String,
+        detailsLine: String,
+        primaryActionTitle: String,
+        primaryActionKind: PrimaryActionKind
+    ) {
+        if enrollment.currentWorkoutStatus == .inProgress,
+           let title = enrollment.currentWorkoutTitle?.trimmedNilIfEmpty
+        {
+            return (
+                statusTitle: "Тренировка в процессе",
+                subtitle: title,
+                detailsLine: "Продолжите с того же места.",
+                primaryActionTitle: "Продолжить",
+                primaryActionKind: .openWorkout
+            )
+        }
+
+        if enrollment.todayWorkoutStatus == .planned,
+           let title = enrollment.todayWorkoutTitle?.trimmedNilIfEmpty
+        {
+            return (
+                statusTitle: "Тренировка сегодня",
+                subtitle: title,
+                detailsLine: "Откройте программу.",
+                primaryActionTitle: "Открыть программу",
+                primaryActionKind: .openProgram
+            )
+        }
+
+        if let title = enrollment.nextWorkoutTitle?.trimmedNilIfEmpty {
+            return (
+                statusTitle: "Следующая тренировка",
+                subtitle: title,
+                detailsLine: "Даты в плане.",
+                primaryActionTitle: "Открыть программу",
+                primaryActionKind: .openProgram
+            )
+        }
+
+        return (
+            statusTitle: "Программа не распланирована",
+            subtitle: "Выберите дни тренировок",
+            detailsLine: "Сначала сохраните расписание.",
+            primaryActionTitle: "Распланировать",
+            primaryActionKind: .openProgram
+        )
+    }
+
+    private func resolveUpcomingWorkouts(programId: String) async -> [UpcomingWorkout] {
+        let today = calendar.startOfDay(for: Date())
+        let months: [Date] = [
+            today,
+            calendar.date(byAdding: .month, value: 1, to: today) ?? today,
+        ]
+
+        var plans: [TrainingDayPlan] = []
+        for month in months {
+            let monthPlans = await trainingStore.plans(userSub: userSub, month: month)
+            plans.append(contentsOf: monthPlans)
+        }
+
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "ru_RU")
+        formatter.setLocalizedDateFormatFromTemplate("EEE d MMM")
+
+        return plans
+            .filter { $0.programId == programId }
+            .filter { $0.status == .planned || $0.status == .inProgress }
+            .filter { calendar.startOfDay(for: $0.day) >= today }
+            .sorted { $0.day < $1.day }
+            .prefix(3)
+            .map { plan in
+                UpcomingWorkout(
+                    id: plan.id,
+                    title: plan.title,
+                    dateText: formatter.string(from: plan.day).capitalized,
+                )
+            }
+    }
+
+    private func resolveProgramTitles(for programIDs: [String]) async -> [String: String] {
+        guard networkMonitor.currentStatus, let programsClient else { return [:] }
+
+        var titles: [String: String] = [:]
+        for programId in Array(Set(programIDs)).prefix(8) {
+            let result = await programsClient.getProgramDetails(programId: programId)
+            switch result {
+            case let .success(details):
+                titles[programId] = details.title
+            case let .failure(apiError):
+                if apiError == .unauthorized {
+                    onUnauthorized?()
+                    return titles
+                }
+            }
+        }
+        return titles
+    }
+
+    private func normalizedProgress(completed: Int, total: Int, rawPercent: Double?) -> Double {
+        if total > 0 {
+            return min(max(Double(completed) / Double(total), 0), 1)
+        }
+
+        guard let rawPercent else { return 0 }
+        let value = rawPercent > 1 ? rawPercent / 100 : rawPercent
+        return min(max(value, 0), 1)
+    }
+
+    private var cacheKey: String {
+        "catalog.my-programs"
+    }
+}
+
 struct CatalogScreen: View {
     @State var programsViewModel: CatalogViewModel
+    @State var myProgramsViewModel: MyProgramsViewModel
     @State var athletesShowcaseViewModel: AthletesShowcaseViewModel
     @State var athletesSearchViewModel: AthleteSearchViewModel
     @State var followingViewModel: FollowingAthletesViewModel
-    let programsHeaderContent: AnyView?
 
     let userSub: String
     let environment: AppEnvironment
-    let onProgramTap: (String) -> Void
+    let onProgramTap: (String, ProgramDetailsDisplayMode) -> Void
+    let onOpenPlan: () -> Void
+    let onOpenWorkoutHub: () -> Void
     let onUnauthorized: (() -> Void)?
 
     @State private var selectedSegment: CatalogHubSegment
@@ -2332,23 +2687,27 @@ struct CatalogScreen: View {
 
     init(
         programsViewModel: CatalogViewModel,
+        myProgramsViewModel: MyProgramsViewModel,
         athletesShowcaseViewModel: AthletesShowcaseViewModel,
         athletesSearchViewModel: AthleteSearchViewModel,
         followingViewModel: FollowingAthletesViewModel,
-        programsHeaderContent: AnyView? = nil,
         userSub: String,
         environment: AppEnvironment,
-        onProgramTap: @escaping (String) -> Void,
+        onProgramTap: @escaping (String, ProgramDetailsDisplayMode) -> Void,
+        onOpenPlan: @escaping () -> Void,
+        onOpenWorkoutHub: @escaping () -> Void,
         onUnauthorized: (() -> Void)? = nil,
     ) {
         _programsViewModel = State(initialValue: programsViewModel)
+        _myProgramsViewModel = State(initialValue: myProgramsViewModel)
         _athletesShowcaseViewModel = State(initialValue: athletesShowcaseViewModel)
         _athletesSearchViewModel = State(initialValue: athletesSearchViewModel)
         _followingViewModel = State(initialValue: followingViewModel)
-        self.programsHeaderContent = programsHeaderContent
         self.userSub = userSub
         self.environment = environment
         self.onProgramTap = onProgramTap
+        self.onOpenPlan = onOpenPlan
+        self.onOpenWorkoutHub = onOpenWorkoutHub
         self.onUnauthorized = onUnauthorized
 
         let persisted = UserDefaults.standard.string(forKey: Self.segmentStorageKey(for: userSub))
@@ -2362,24 +2721,34 @@ struct CatalogScreen: View {
                 thirdAction: thirdAction,
                 isFiltersActive: isFiltersActive,
                 isThirdActionSelected: isThirdActionSelected,
+                showsActions: selectedSegment != .myPrograms,
                 onSearchTap: handleSearchTap,
                 onFiltersTap: handleFiltersTap,
                 onThirdTap: handleThirdTap,
             )
 
-            switch selectedSegment {
-            case .programs:
+            TabView(selection: $selectedSegment) {
+                MyProgramsScreen(
+                    viewModel: myProgramsViewModel,
+                    onProgramTap: { onProgramTap($0, .active) },
+                    onOpenPlan: onOpenPlan,
+                    onOpenWorkoutHub: onOpenWorkoutHub,
+                    onOpenCatalog: {
+                        selectedSegment = .programs
+                    },
+                )
+                .tag(CatalogHubSegment.myPrograms)
+
                 ProgramsCatalogScreen(
                     viewModel: programsViewModel,
-                    headerContent: programsHeaderContent,
                     environment: environment,
                     isSearchPresented: $isProgramSearchPresented,
                     isFiltersPresented: $isProgramFiltersPresented,
                     isSortPresented: $isProgramSortPresented,
-                    onProgramTap: onProgramTap,
+                    onProgramTap: { onProgramTap($0, .discovery) },
                 )
+                .tag(CatalogHubSegment.programs)
 
-            case .athletes:
                 AthletesCatalogScreen(
                     showcaseViewModel: athletesShowcaseViewModel,
                     searchViewModel: athletesSearchViewModel,
@@ -2397,7 +2766,9 @@ struct CatalogScreen: View {
                         applyCreatorUpdate(creator)
                     },
                 )
+                .tag(CatalogHubSegment.athletes)
             }
+            .tabViewStyle(.page(indexDisplayMode: .never))
         }
         .background(FFColors.background)
         .onChange(of: selectedSegment) { _, newValue in
@@ -2414,7 +2785,7 @@ struct CatalogScreen: View {
                 ),
                 environment: environment,
                 onProgramTap: { programID in
-                    onProgramTap(programID)
+                    onProgramTap(programID, .discovery)
                 },
                 onCreatorUpdated: { updated in
                     applyCreatorUpdate(updated)
@@ -2439,6 +2810,8 @@ struct CatalogScreen: View {
 
     private var thirdAction: CatalogHeaderAction {
         switch selectedSegment {
+        case .myPrograms:
+            CatalogHeaderAction(title: "Каталог", systemImage: "square.grid.2x2")
         case .programs:
             CatalogHeaderAction(title: "Сортировка", systemImage: "arrow.up.arrow.down")
         case .athletes:
@@ -2448,6 +2821,8 @@ struct CatalogScreen: View {
 
     private var isFiltersActive: Bool {
         switch selectedSegment {
+        case .myPrograms:
+            return false
         case .programs:
             return programsViewModel.selectedGoal != nil || programsViewModel.selectedLevel != nil
         case .athletes:
@@ -2457,6 +2832,8 @@ struct CatalogScreen: View {
 
     private var isThirdActionSelected: Bool {
         switch selectedSegment {
+        case .myPrograms:
+            return false
         case .programs:
             return false
         case .athletes:
@@ -2466,6 +2843,8 @@ struct CatalogScreen: View {
 
     private func handleSearchTap() {
         switch selectedSegment {
+        case .myPrograms:
+            return
         case .programs:
             isProgramSearchPresented = true
         case .athletes:
@@ -2475,6 +2854,8 @@ struct CatalogScreen: View {
 
     private func handleFiltersTap() {
         switch selectedSegment {
+        case .myPrograms:
+            return
         case .programs:
             isProgramFiltersPresented = true
         case .athletes:
@@ -2484,10 +2865,225 @@ struct CatalogScreen: View {
 
     private func handleThirdTap() {
         switch selectedSegment {
+        case .myPrograms:
+            selectedSegment = .programs
         case .programs:
             isProgramSortPresented = true
         case .athletes:
             isAthletesSubscriptionsMode.toggle()
+        }
+    }
+}
+
+struct MyProgramsScreen: View {
+    @State var viewModel: MyProgramsViewModel
+    let onProgramTap: (String) -> Void
+    let onOpenPlan: () -> Void
+    let onOpenWorkoutHub: () -> Void
+    let onOpenCatalog: () -> Void
+
+    var body: some View {
+        Group {
+            if viewModel.isLoading,
+               viewModel.activePrograms.isEmpty,
+               viewModel.recentPrograms.isEmpty
+            {
+                FFScreenStateLayout {
+                    FFLoadingState(title: "Загружаем ваши программы")
+                        .frame(maxHeight: .infinity)
+                }
+            } else if let error = viewModel.error,
+                      viewModel.activePrograms.isEmpty,
+                      viewModel.recentPrograms.isEmpty
+            {
+                FFScreenStateLayout {
+                    FFErrorState(
+                        title: error.title,
+                        message: error.message,
+                        retryTitle: "Повторить",
+                        fillsAvailableHeight: true,
+                    ) {
+                        Task { await viewModel.retry() }
+                    }
+                }
+            } else if viewModel.activePrograms.isEmpty, viewModel.recentPrograms.isEmpty {
+                FFScreenStateLayout {
+                    FFEmptyState(
+                        title: "У вас пока нет программ",
+                        message: "Подключите первую программу в каталоге, и она появится здесь.",
+                        fillsAvailableHeight: true,
+                    )
+                } footer: {
+                    VStack(spacing: FFSpacing.md) {
+                        FFButton(
+                            title: "Открыть каталог программ",
+                            variant: .secondary,
+                            action: onOpenCatalog
+                        )
+                    }
+                }
+            } else {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: FFSpacing.md) {
+                        if viewModel.isShowingCachedData {
+                            FFCard {
+                                Text("Нет сети. Показаны сохранённые программы.")
+                                    .font(FFTypography.caption.weight(.semibold))
+                                    .foregroundStyle(FFColors.primary)
+                            }
+                        }
+
+                        if let currentProgram = viewModel.activePrograms.first {
+                            currentProgramCard(currentProgram)
+                        }
+
+                        if !viewModel.recentPrograms.isEmpty {
+                            sectionTitle("Архив")
+                            ForEach(viewModel.recentPrograms) { item in
+                                programCard(item)
+                            }
+                        }
+                    }
+                    .padding(.horizontal, FFSpacing.md)
+                    .padding(.vertical, FFSpacing.md)
+                }
+                .refreshable {
+                    await viewModel.refresh()
+                }
+            }
+        }
+        .background(FFColors.background)
+        .task {
+            await viewModel.onAppear()
+        }
+    }
+
+    private func sectionTitle(_ title: String) -> some View {
+        Text(title)
+            .font(FFTypography.h2)
+            .foregroundStyle(FFColors.textPrimary)
+    }
+
+    private func currentProgramCard(_ item: MyProgramsViewModel.ProgramItem) -> some View {
+        FFCard {
+            VStack(alignment: .leading, spacing: FFSpacing.md) {
+                Text(item.title)
+                    .font(FFTypography.h1)
+                    .foregroundStyle(FFColors.textPrimary)
+                    .lineLimit(2)
+
+                VStack(alignment: .leading, spacing: FFSpacing.xxs) {
+                    Text(item.statusTitle)
+                        .font(FFTypography.body.weight(.semibold))
+                        .foregroundStyle(FFColors.textPrimary)
+
+                    Text(item.subtitle)
+                        .font(FFTypography.body)
+                        .foregroundStyle(FFColors.textSecondary)
+                        .lineLimit(2)
+
+                    Text(item.detailsLine)
+                        .font(FFTypography.caption)
+                        .foregroundStyle(FFColors.textSecondary)
+                        .lineLimit(1)
+                }
+
+                if let progressText = item.progressText,
+                   let progressValue = item.progressValue
+                {
+                    VStack(alignment: .leading, spacing: FFSpacing.xs) {
+                        Text(progressText)
+                            .font(FFTypography.caption)
+                            .foregroundStyle(FFColors.textSecondary)
+
+                        GeometryReader { proxy in
+                            ZStack(alignment: .leading) {
+                                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                    .fill(FFColors.gray700.opacity(0.9))
+
+                                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                    .fill(FFColors.accent)
+                                    .frame(width: max(8, proxy.size.width * min(max(progressValue, 0), 1)))
+                            }
+                        }
+                        .frame(height: 8)
+                    }
+                }
+
+                if !item.upcomingWorkouts.isEmpty {
+                    VStack(alignment: .leading, spacing: FFSpacing.sm) {
+                        Text("Ближайшие")
+                            .font(FFTypography.body.weight(.semibold))
+                            .foregroundStyle(FFColors.textPrimary)
+
+                        ForEach(item.upcomingWorkouts) { workout in
+                            HStack(alignment: .firstTextBaseline, spacing: FFSpacing.sm) {
+                                Text(workout.dateText)
+                                    .font(FFTypography.caption.weight(.semibold))
+                                    .foregroundStyle(FFColors.textSecondary)
+                                    .frame(width: 88, alignment: .leading)
+
+                                Text(workout.title)
+                                    .font(FFTypography.body)
+                                    .foregroundStyle(FFColors.textPrimary)
+                                    .lineLimit(1)
+
+                                Spacer(minLength: FFSpacing.xs)
+                            }
+                        }
+                    }
+                }
+
+                FFButton(
+                    title: item.primaryActionTitle,
+                    variant: .primary
+                ) {
+                    handlePrimaryAction(for: item)
+                }
+
+                if item.primaryActionKind != .openProgram {
+                    FFButton(
+                        title: "Открыть программу",
+                        variant: .secondary
+                    ) {
+                        onProgramTap(item.id)
+                    }
+                }
+            }
+        }
+    }
+
+    private func programCard(_ item: MyProgramsViewModel.ProgramItem) -> some View {
+        FFCard {
+            VStack(alignment: .leading, spacing: FFSpacing.sm) {
+                Text(item.title)
+                    .font(FFTypography.body.weight(.semibold))
+                    .foregroundStyle(FFColors.textPrimary)
+                    .lineLimit(2)
+
+                Text(item.subtitle)
+                    .font(FFTypography.body)
+                    .foregroundStyle(FFColors.textSecondary)
+                    .lineLimit(2)
+
+                FFButton(
+                    title: "Открыть программу",
+                    variant: .secondary,
+                ) {
+                    onProgramTap(item.id)
+                }
+            }
+        }
+    }
+
+    private func handlePrimaryAction(for item: MyProgramsViewModel.ProgramItem) {
+        switch item.primaryActionKind {
+        case .openProgram:
+            onProgramTap(item.id)
+        case .openPlan:
+            onOpenPlan()
+        case .openWorkout:
+            onOpenWorkoutHub()
         }
     }
 }
@@ -4330,10 +4926,7 @@ struct ProgramsCatalogScreen: View {
     }
 
     private var loadingSkeleton: some View {
-        VStack(spacing: FFSpacing.sm) {
-            FFLoadingState(title: "Загружаем каталог программ")
-            FFLoadingState(title: "Подбираем лучшие варианты")
-        }
+        FFLoadingState(title: "Загружаем программы", fillsAvailableHeight: true)
     }
 }
 

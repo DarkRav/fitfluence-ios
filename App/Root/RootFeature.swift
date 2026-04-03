@@ -29,9 +29,12 @@ struct RootFeature {
         struct SelectedProgram: Equatable {
             let programId: String
             let userSub: String
+            let displayMode: ProgramDetailsDisplayMode
         }
 
         var hasBootstrapped = false
+        var hasAttemptedAutomaticLogin = false
+        var automaticLoginEnabled = true
         var isOnline = true
         var sessionState: RootSessionState = .authenticating
         var selectedProgram: SelectedProgram?
@@ -40,13 +43,14 @@ struct RootFeature {
 
     enum Action: Equatable {
         case onAppear
+        case automaticLoginTriggered
         case retryBootstrapTapped
         case loginTapped(LoginEntryMode)
         case logoutTapped
         case networkStatusChanged(Bool)
         case sessionResolved(RootSessionState)
         case onboarding(OnboardingFeature.Action)
-        case openProgram(programId: String, userSub: String)
+        case openProgram(programId: String, userSub: String, displayMode: ProgramDetailsDisplayMode)
         case programDetailsDismissed
     }
 
@@ -75,6 +79,14 @@ struct RootFeature {
                         .cancellable(id: CancelID.networkMonitoring, cancelInFlight: true),
                     )
 
+                case .automaticLoginTriggered:
+                    guard state.automaticLoginEnabled, !state.hasAttemptedAutomaticLogin else {
+                        return .none
+                    }
+                    state.hasAttemptedAutomaticLogin = true
+                    state.sessionState = .authenticating
+                    return loginEffect(mode: .login)
+
                 case .retryBootstrapTapped:
                     state.sessionState = .authenticating
                     return .run { [sessionManager] send in
@@ -83,34 +95,13 @@ struct RootFeature {
                     }
 
                 case let .loginTapped(mode):
+                    state.hasAttemptedAutomaticLogin = true
                     state.sessionState = .authenticating
-                    return .run { [authService, sessionManager] send in
-                        let result = await authService.login(mode: mode)
-
-                        switch result {
-                        case .success:
-                            let nextState = await sessionManager.postLoginBootstrap()
-                            await send(.sessionResolved(nextState))
-                        case let .failure(error):
-                            if error == .cancelled {
-                                await send(.sessionResolved(.unauthenticated))
-                            } else {
-                                await send(
-                                    .sessionResolved(
-                                        .error(
-                                            UserFacingError(
-                                                title: "Ошибка входа",
-                                                message: error.loginFailureMessage,
-                                            ),
-                                        ),
-                                    ),
-                                )
-                            }
-                        }
-                    }
+                    return loginEffect(mode: mode)
 
                 case .logoutTapped:
                     let namespace = cacheNamespace(for: state)
+                    state.automaticLoginEnabled = false
                     state.sessionState = .authenticating
                     state.selectedProgram = nil
                     return .run { [sessionManager, cacheStore] send in
@@ -124,6 +115,13 @@ struct RootFeature {
                     return .none
 
                 case let .sessionResolved(nextState):
+                    if case .unauthenticated = nextState,
+                       state.automaticLoginEnabled,
+                       !state.hasAttemptedAutomaticLogin
+                    {
+                        state.sessionState = .authenticating
+                        return .send(.automaticLoginTriggered)
+                    }
                     state.sessionState = nextState
                     if case let .needsOnboarding(context) = nextState {
                         state.onboarding = OnboardingFeature.State(context: context)
@@ -132,10 +130,11 @@ struct RootFeature {
                     }
                     return .none
 
-                case let .openProgram(programID, userSub):
+                case let .openProgram(programID, userSub, displayMode):
                     state.selectedProgram = State.SelectedProgram(
                         programId: programID,
                         userSub: userSub,
+                        displayMode: displayMode,
                     )
                     return .none
 
@@ -170,6 +169,33 @@ struct RootFeature {
             return context.me.subject ?? "anonymous"
         }
         return "anonymous"
+    }
+
+    private func loginEffect(mode: LoginEntryMode) -> Effect<Action> {
+        .run { [authService, sessionManager] send in
+            let result = await authService.login(mode: mode)
+
+            switch result {
+            case .success:
+                let nextState = await sessionManager.postLoginBootstrap()
+                await send(.sessionResolved(nextState))
+            case let .failure(error):
+                if error == .cancelled {
+                    await send(.sessionResolved(.unauthenticated))
+                } else {
+                    await send(
+                        .sessionResolved(
+                            .error(
+                                UserFacingError(
+                                    title: "Ошибка входа",
+                                    message: error.loginFailureMessage,
+                                ),
+                            ),
+                        ),
+                    )
+                }
+            }
+        }
     }
 }
 

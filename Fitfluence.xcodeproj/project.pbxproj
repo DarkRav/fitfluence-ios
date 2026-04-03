@@ -16,10 +16,10 @@
 		0AF9ACEEACEF5516F5A125FC /* APIRequest.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E4CF13A2531205E9575D66B /* APIRequest.swift */; };
 		0BD75B053CAE785680A0D197 /* DataAndOfflineView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0D6D04C74DE23C15A1CF9745 /* DataAndOfflineView.swift */; };
 		0CFE26D86AB1FDFEB7ADDBB6 /* QuickWorkoutBuilderView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D7ADF6ADDAF5414D4B59CDCA /* QuickWorkoutBuilderView.swift */; };
-		0D4C85A21F4A4D09A1B2C3D4 /* TrainingBuilderChrome.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0D4C85A11F4A4D09A1B2C3D4 /* TrainingBuilderChrome.swift */; };
 		112789E5E9B2E40BD29A0427 /* WorkoutHomeCardStyle.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3F0DFD48B79D4EC127D5DC30 /* WorkoutHomeCardStyle.swift */; };
 		12A7A67E73A0788C42B3430E /* WorkoutHomeButtons.swift in Sources */ = {isa = PBXBuildFile; fileRef = 491FFA62A600D1871EB304BB /* WorkoutHomeButtons.swift */; };
 		13A18B1EF9CA176E069703E6 /* TrainingStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5413D44EC8006C41BACCA576 /* TrainingStoreTests.swift */; };
+		1493B477DED951AA73A590AF /* TrainingBuilderChrome.swift in Sources */ = {isa = PBXBuildFile; fileRef = 36711DF7E9C4ADB024C54372 /* TrainingBuilderChrome.swift */; };
 		1AB57DA5730C1782367D6BE4 /* OnboardingFeature.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0E8CAAC9949B18D9481EB13C /* OnboardingFeature.swift */; };
 		1C5C34BAA4F5A899346780FA /* ResumeWorkoutCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6738DCE7C58830BB8D53065B /* ResumeWorkoutCard.swift */; };
 		1D7E67CC678EE15C79E3AB96 /* Typography.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2E5D8994FEA468EC4504CD0 /* Typography.swift */; };
@@ -37,6 +37,7 @@
 		2CE8882383E07A4A2B57A3D6 /* MeResponseDecodingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FD446047AAC8E76A26560F57 /* MeResponseDecodingTests.swift */; };
 		2F222A6AB61570B975628D77 /* WorkoutsFeatureAndProgressStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F4E83E16D03A9159D9FAC56A /* WorkoutsFeatureAndProgressStoreTests.swift */; };
 		302383A11BF7E3A6A2017B59 /* PreviewMocks.swift in Sources */ = {isa = PBXBuildFile; fileRef = 967F2EF94A530FC0D94A6D5C /* PreviewMocks.swift */; };
+		302E0DF4F9A883B79A9DAC29 /* FFIconButton.swift in Sources */ = {isa = PBXBuildFile; fileRef = E7634D5CBD5C11B08A38E476 /* FFIconButton.swift */; };
 		311CA55C4D9E860BDCEF21B9 /* WorkoutsListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E2183400A1DCC3A118320601 /* WorkoutsListView.swift */; };
 		3D4D395035704708BEAB49E2 /* ProfileView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E6F716B639AD2AA123C18F3B /* ProfileView.swift */; };
 		3FA3EB4628A444E086A3F7CB /* CatalogView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A56CE81EAF5FA874DDFE6201 /* CatalogView.swift */; };
@@ -54,13 +55,16 @@
 		635298A51412083CA54F796A /* WorkoutStructureEditingComponents.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2270FB6531858BD9EB2C428E /* WorkoutStructureEditingComponents.swift */; };
 		659A792308E4E63241F9DE2C /* FFBadge.swift in Sources */ = {isa = PBXBuildFile; fileRef = E190F6607FF86AE368CDC6DC /* FFBadge.swift */; };
 		68E89882A51C1B39345D7DEE /* AuthAndSessionFlowTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4E282B8F338673539A3669DB /* AuthAndSessionFlowTests.swift */; };
+		692FC97E50BD8EE2FD1E739D /* FFSelectableSurface.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3AD4395019193C44A7327D43 /* FFSelectableSurface.swift */; };
 		7BC195B6A8FE68F18A9E8127 /* ProgramsClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = B0CF331419F45FF9802465D8 /* ProgramsClient.swift */; };
 		7D795EB4253C3CBEBB64D77C /* DiagnosticsProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 50FF6814BEAD2D555129739F /* DiagnosticsProvider.swift */; };
 		7DC580BDD827A661BE5FF243 /* StartWorkoutCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = D928341C0D0F07AC1F0B63F3 /* StartWorkoutCard.swift */; };
+		7FB5C611515B63BF3EEC466D /* FFCompactActionButton.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0344D557B035FB5CF7CB2C84 /* FFCompactActionButton.swift */; };
 		80DA7B6D97E76CD158F61AA2 /* HomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DDDCF672A28D5C4E67F32596 /* HomeView.swift */; };
 		821B466B649676C4B1ADCC36 /* QuickActionsSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 74E11F1CB909C74B1DC174BE /* QuickActionsSection.swift */; };
 		8280F2DF9DDBB29E8568D6A9 /* TodayWorkoutDraftGeneratorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1DF0A3CEDC288774F1F9441A /* TodayWorkoutDraftGeneratorTests.swift */; };
 		849A338E87813F3C4CB7BF03 /* Environment.swift in Sources */ = {isa = PBXBuildFile; fileRef = 44A1273CE966730AE3C9922B /* Environment.swift */; };
+		8A89EC6533EF25A735E1704D /* FFCapsuleButton.swift in Sources */ = {isa = PBXBuildFile; fileRef = D243A5934458BD5092AFA6A9 /* FFCapsuleButton.swift */; };
 		8A98A907B47F082A0A6F188F /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 95010017815E9FC7623DDB93 /* Assets.xcassets */; };
 		8D8127A6EF2465DFDE792FAD /* OIDCAndTokenStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 329834B4D1A96F4EA44A775F /* OIDCAndTokenStoreTests.swift */; };
 		9A72122484AC7D26561004B4 /* SyncCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2470CD8E28F4838E9A6B693B /* SyncCoordinator.swift */; };
@@ -130,11 +134,11 @@
 
 /* Begin PBXFileReference section */
 		02FB6451DC5112CB7DE94103 /* DiagnosticsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiagnosticsView.swift; sourceTree = "<group>"; };
+		0344D557B035FB5CF7CB2C84 /* FFCompactActionButton.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFCompactActionButton.swift; sourceTree = "<group>"; };
 		075C9ED6113F50057E609DD0 /* ProgramDetailsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProgramDetailsView.swift; sourceTree = "<group>"; };
 		0969AE8DCBC8CC20AB132913 /* WorkoutSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkoutSettingsView.swift; sourceTree = "<group>"; };
 		0A3A5018D89BEF09A1424EEF /* Spacing.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Spacing.swift; sourceTree = "<group>"; };
 		0D6D04C74DE23C15A1CF9745 /* DataAndOfflineView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DataAndOfflineView.swift; sourceTree = "<group>"; };
-		0D4C85A11F4A4D09A1B2C3D4 /* TrainingBuilderChrome.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrainingBuilderChrome.swift; sourceTree = "<group>"; };
 		0E8CAAC9949B18D9481EB13C /* OnboardingFeature.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingFeature.swift; sourceTree = "<group>"; };
 		1203A36F8050A4BC9C2E299F /* OnboardingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingView.swift; sourceTree = "<group>"; };
 		14C19E971649693B43AC91DB /* HTTPClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HTTPClient.swift; sourceTree = "<group>"; };
@@ -152,6 +156,8 @@
 		30BBB37A691100CC5A0AE895 /* QuickActionCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QuickActionCard.swift; sourceTree = "<group>"; };
 		329834B4D1A96F4EA44A775F /* OIDCAndTokenStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OIDCAndTokenStoreTests.swift; sourceTree = "<group>"; };
 		366931D3D1FC0644839DBF70 /* WorkoutHomeViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkoutHomeViewModel.swift; sourceTree = "<group>"; };
+		36711DF7E9C4ADB024C54372 /* TrainingBuilderChrome.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrainingBuilderChrome.swift; sourceTree = "<group>"; };
+		3AD4395019193C44A7327D43 /* FFSelectableSurface.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFSelectableSurface.swift; sourceTree = "<group>"; };
 		3B0C590AD2E0CF52FB2BE38B /* TokenStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TokenStore.swift; sourceTree = "<group>"; };
 		3C9FD7FE9B6C9960E351C3D8 /* ExercisePickerFeature.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExercisePickerFeature.swift; sourceTree = "<group>"; };
 		3CFBC879865A7070DA0BC19D /* SyncOperation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SyncOperation.swift; sourceTree = "<group>"; };
@@ -215,6 +221,7 @@
 		C7DAB8925BEFB1102F1A545C /* NetworkMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NetworkMonitor.swift; sourceTree = "<group>"; };
 		CAEB6BFF14C57697C73E6CD3 /* RootFeature.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootFeature.swift; sourceTree = "<group>"; };
 		D049FFBF6B3F8E522C058CAA /* APIError.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIError.swift; sourceTree = "<group>"; };
+		D243A5934458BD5092AFA6A9 /* FFCapsuleButton.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFCapsuleButton.swift; sourceTree = "<group>"; };
 		D3D152248888DA9E6279DACD /* AthleteProfileClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AthleteProfileClient.swift; sourceTree = "<group>"; };
 		D45116A2BFE9402EC531FE76 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		D4D6772D2C40BCF7FEB3C45C /* FFCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFCard.swift; sourceTree = "<group>"; };
@@ -230,6 +237,7 @@
 		E4EE124DB6FA8A5986B4A1F8 /* FFRemoteImage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFRemoteImage.swift; sourceTree = "<group>"; };
 		E57133D28607426285EF799D /* ProgramProgressCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProgramProgressCard.swift; sourceTree = "<group>"; };
 		E6F716B639AD2AA123C18F3B /* ProfileView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProfileView.swift; sourceTree = "<group>"; };
+		E7634D5CBD5C11B08A38E476 /* FFIconButton.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFIconButton.swift; sourceTree = "<group>"; };
 		ED3B939F25D70B624ECD73AC /* APILogger.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APILogger.swift; sourceTree = "<group>"; };
 		EF34A4AE4A992ECE90DD03CE /* SyncWorker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SyncWorker.swift; sourceTree = "<group>"; };
 		F2168C23890FEB64360E40A5 /* TrainingHubView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrainingHubView.swift; sourceTree = "<group>"; };
@@ -264,9 +272,9 @@
 				3C9FD7FE9B6C9960E351C3D8 /* ExercisePickerFeature.swift */,
 				D7ADF6ADDAF5414D4B59CDCA /* QuickWorkoutBuilderView.swift */,
 				1A5EE0FB696AC968E52E7C79 /* TemplateLibraryView.swift */,
-				0D4C85A11F4A4D09A1B2C3D4 /* TrainingBuilderChrome.swift */,
 				78718E402653FFCE42DCE4D1 /* TodayWorkoutDraftGenerator.swift */,
 				ABE87CD172972974497272A5 /* TodayWorkoutPlanningView.swift */,
+				36711DF7E9C4ADB024C54372 /* TrainingBuilderChrome.swift */,
 				F2168C23890FEB64360E40A5 /* TrainingHubView.swift */,
 				2E16BBE6F885A8F976874EE8 /* TrainingInsightsView.swift */,
 				FD06968D96E5E12F603103BA /* TrainingStore.swift */,
@@ -473,11 +481,15 @@
 			children = (
 				E190F6607FF86AE368CDC6DC /* FFBadge.swift */,
 				A97D9C4C6794471BA7C75525 /* FFButton.swift */,
+				D243A5934458BD5092AFA6A9 /* FFCapsuleButton.swift */,
 				D4D6772D2C40BCF7FEB3C45C /* FFCard.swift */,
+				0344D557B035FB5CF7CB2C84 /* FFCompactActionButton.swift */,
 				E40B5498BB99116B3021C4E4 /* FFEmptyState.swift */,
 				151CCFD42F23601C4661B789 /* FFErrorState.swift */,
+				E7634D5CBD5C11B08A38E476 /* FFIconButton.swift */,
 				2C571FBEBDFDA288B1E05B14 /* FFLoadingState.swift */,
 				E4EE124DB6FA8A5986B4A1F8 /* FFRemoteImage.swift */,
+				3AD4395019193C44A7327D43 /* FFSelectableSurface.swift */,
 				B202B94DE2C375FB67F019B3 /* FFTextField.swift */,
 			);
 			path = Components;
@@ -676,11 +688,15 @@
 				C1D6308BA5AEACAD00CE143B /* ExercisePickerFeature.swift in Sources */,
 				659A792308E4E63241F9DE2C /* FFBadge.swift in Sources */,
 				D0381F8271688F1DD55ECF64 /* FFButton.swift in Sources */,
+				8A89EC6533EF25A735E1704D /* FFCapsuleButton.swift in Sources */,
 				F12AF47E2E6A7061D391E5F6 /* FFCard.swift in Sources */,
+				7FB5C611515B63BF3EEC466D /* FFCompactActionButton.swift in Sources */,
 				D0EDEA7F9D27535EA83A0F26 /* FFEmptyState.swift in Sources */,
 				47666B7411F0CE528FE8B1F4 /* FFErrorState.swift in Sources */,
+				302E0DF4F9A883B79A9DAC29 /* FFIconButton.swift in Sources */,
 				5C6A1DDAACA62605B0E42581 /* FFLoadingState.swift in Sources */,
 				D7932E90DA35D8CD26261D66 /* FFRemoteImage.swift in Sources */,
+				692FC97E50BD8EE2FD1E739D /* FFSelectableSurface.swift in Sources */,
 				F540D452CC4979E1CE3FDFED /* FFTextField.swift in Sources */,
 				C091B3E8CBC8FB1F8ABFDC95 /* FitfluenceApp.swift in Sources */,
 				A894EEF1CB87660C0CDB9600 /* HTTPClient.swift in Sources */,
@@ -724,11 +740,11 @@
 				29B89F66630D53FDF9B00030 /* SyncWorker.swift in Sources */,
 				D34BBA531B3DE3454AA05356 /* TemplateLibraryView.swift in Sources */,
 				B68CFEB25BF04441A03234E5 /* Theme.swift in Sources */,
-				0D4C85A21F4A4D09A1B2C3D4 /* TrainingBuilderChrome.swift in Sources */,
 				1E35EE045535206D19D38D48 /* TodayWorkoutDraftGenerator.swift in Sources */,
 				BC4404B2DD2701B7BB27B24D /* TodayWorkoutPlanningView.swift in Sources */,
 				D69C1CB30BD7205B98ECCCC3 /* TokenSet.swift in Sources */,
 				C32507921BC5A60036A562D7 /* TokenStore.swift in Sources */,
+				1493B477DED951AA73A590AF /* TrainingBuilderChrome.swift in Sources */,
 				037DA4B0A17D3A336DF64827 /* TrainingHubView.swift in Sources */,
 				B3A6C32678411ED371703D18 /* TrainingInsightsView.swift in Sources */,
 				F67E9F2C45A40F855D4E42AB /* TrainingStore.swift in Sources */,

@@ -130,6 +130,7 @@ enum WorkoutExerciseDisplayFormatting {
 }
 
 struct WorkoutSetRowView: View {
+    let editingTarget: WorkoutPlayerViewModel.EditingTarget?
     let index: Int
     let set: SessionSetState
     let isBodyweight: Bool
@@ -143,6 +144,9 @@ struct WorkoutSetRowView: View {
     let onCopy: () -> Void
     let onToggleWarmup: () -> Void
     let onRemove: () -> Void
+    let onRequestWeightEdit: () -> Void
+    let onRequestRepsEdit: () -> Void
+    let onEditingEnded: (UUID) -> Void
     let onWeightCommit: (String) -> Void
     let onDecreaseWeight: () -> Void
     let onIncreaseWeight: () -> Void
@@ -150,6 +154,7 @@ struct WorkoutSetRowView: View {
     let onDecreaseReps: () -> Void
     let onIncreaseReps: () -> Void
     let onSelectRPE: (Int?) -> Void
+    let onInvalidInput: (WorkoutPlayerViewModel.EditableInputField) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: showsRPE ? FFSpacing.xs : 0) {
@@ -160,7 +165,7 @@ struct WorkoutSetRowView: View {
                         .foregroundStyle(isFocused ? FFColors.primary : FFColors.textSecondary)
 
                     if set.isWarmup {
-                        Text("R")
+                        Text("Р")
                             .font(FFTypography.caption.weight(.bold))
                             .foregroundStyle(FFColors.primary)
                     }
@@ -171,26 +176,36 @@ struct WorkoutSetRowView: View {
                     WorkoutSetMetricInput(
                         title: "Вес",
                         valueText: set.weightText,
-                        placeholder: "—",
+                        placeholder: "",
                         keyboardType: .decimalPad,
                         stepText: weightStepLabel,
                         kind: .weight,
+                        editingTarget: editingTarget,
+                        setIndex: index,
+                        onRequestEdit: onRequestWeightEdit,
+                        onEditingEnded: onEditingEnded,
                         onCommit: onWeightCommit,
                         onMinus: onDecreaseWeight,
                         onPlus: onIncreaseWeight,
+                        onInvalidInput: onInvalidInput,
                     )
                 }
 
                 WorkoutSetMetricInput(
                     title: "Повторы",
                     valueText: set.repsText,
-                    placeholder: "—",
+                    placeholder: "",
                     keyboardType: .numberPad,
                     stepText: "1",
                     kind: .reps,
+                    editingTarget: editingTarget,
+                    setIndex: index,
+                    onRequestEdit: onRequestRepsEdit,
+                    onEditingEnded: onEditingEnded,
                     onCommit: onRepsCommit,
                     onMinus: onDecreaseReps,
                     onPlus: onIncreaseReps,
+                    onInvalidInput: onInvalidInput,
                 )
             }
 
@@ -261,9 +276,14 @@ private struct WorkoutSetMetricInput: View {
     let keyboardType: UIKeyboardType
     let stepText: String
     let kind: Kind
+    let editingTarget: WorkoutPlayerViewModel.EditingTarget?
+    let setIndex: Int
+    let onRequestEdit: () -> Void
+    let onEditingEnded: (UUID) -> Void
     let onCommit: (String) -> Void
     let onMinus: () -> Void
     let onPlus: () -> Void
+    let onInvalidInput: (WorkoutPlayerViewModel.EditableInputField) -> Void
 
     @State private var isEditing = false
     @FocusState private var isFocused: Bool
@@ -276,9 +296,14 @@ private struct WorkoutSetMetricInput: View {
         keyboardType: UIKeyboardType,
         stepText: String,
         kind: Kind,
+        editingTarget: WorkoutPlayerViewModel.EditingTarget?,
+        setIndex: Int,
+        onRequestEdit: @escaping () -> Void,
+        onEditingEnded: @escaping (UUID) -> Void,
         onCommit: @escaping (String) -> Void,
         onMinus: @escaping () -> Void,
         onPlus: @escaping () -> Void,
+        onInvalidInput: @escaping (WorkoutPlayerViewModel.EditableInputField) -> Void,
     ) {
         self.title = title
         self.valueText = valueText
@@ -286,9 +311,14 @@ private struct WorkoutSetMetricInput: View {
         self.keyboardType = keyboardType
         self.stepText = stepText
         self.kind = kind
+        self.editingTarget = editingTarget
+        self.setIndex = setIndex
+        self.onRequestEdit = onRequestEdit
+        self.onEditingEnded = onEditingEnded
         self.onCommit = onCommit
         self.onMinus = onMinus
         self.onPlus = onPlus
+        self.onInvalidInput = onInvalidInput
         _draftText = State(initialValue: valueText)
     }
 
@@ -328,16 +358,33 @@ private struct WorkoutSetMetricInput: View {
                         }
                     }
                 } else {
-                    Button(action: beginEditing) {
-                        Text(displayText)
-                            .font(.system(size: 28, weight: .bold, design: .rounded))
-                            .foregroundStyle(valueText.isEmpty ? FFColors.textSecondary : FFColors.textPrimary)
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.5)
-                            .allowsTightening(true)
-                            .frame(maxWidth: .infinity, minHeight: 60)
+                    ZStack {
+                        if valueText.isEmpty {
+                            RoundedRectangle(cornerRadius: 14)
+                                .stroke(FFColors.gray700.opacity(0.8), style: StrokeStyle(lineWidth: 1, dash: [6, 4]))
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 8)
+
+                            Text(title)
+                                .font(FFTypography.caption.weight(.semibold))
+                                .foregroundStyle(FFColors.textSecondary.opacity(0.75))
+                        } else {
+                            Text(displayText)
+                                .font(.system(size: 28, weight: .bold, design: .rounded))
+                                .foregroundStyle(FFColors.textPrimary)
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.5)
+                                .allowsTightening(true)
+                        }
                     }
-                    .buttonStyle(.plain)
+                    .frame(maxWidth: .infinity, minHeight: 60)
+                    .contentShape(RoundedRectangle(cornerRadius: 16))
+                    .highPriorityGesture(
+                        TapGesture().onEnded {
+                            onRequestEdit()
+                            beginEditing()
+                        }
+                    )
                     .accessibilityLabel("Редактировать \(title.lowercased()) для подхода")
                 }
             }
@@ -359,9 +406,17 @@ private struct WorkoutSetMetricInput: View {
                 draftText = valueText
             } else {
                 guard isEditing else { return }
+                let requestID = editingTarget?.requestID
                 commitDraft()
                 isEditing = false
+                if let requestID {
+                    onEditingEnded(requestID)
+                }
             }
+        }
+        .onChange(of: editingTarget) { _, target in
+            guard let target, target.setIndex == setIndex, target.field == editableField else { return }
+            beginEditing()
         }
     }
 
@@ -372,6 +427,9 @@ private struct WorkoutSetMetricInput: View {
     private func beginEditing() {
         draftText = valueText
         isEditing = true
+        DispatchQueue.main.async {
+            isFocused = true
+        }
     }
 
     private func commitDraft() {
@@ -391,11 +449,21 @@ private struct WorkoutSetMetricInput: View {
 
         guard let normalized else {
             draftText = valueText
+            onInvalidInput(editableField)
             return
         }
 
         draftText = normalized
         onCommit(normalized)
+    }
+
+    private var editableField: WorkoutPlayerViewModel.EditableInputField {
+        switch kind {
+        case .weight:
+            return .weight
+        case .reps:
+            return .reps
+        }
     }
 
     private func stepControlButton(
@@ -428,7 +496,7 @@ private struct WorkoutSetRPEPicker: View {
                     isInfoPresented = true
                 } label: {
                     HStack(spacing: 6) {
-                        Text("Нагрузка (RPE)")
+                        Text("Нагрузка")
                             .font(FFTypography.caption)
                         Image(systemName: "info.circle")
                             .font(.system(size: 12, weight: .semibold))
@@ -462,15 +530,15 @@ private struct WorkoutSetRPEPicker: View {
                         } label: {
                             Text("\(value)")
                                 .font(FFTypography.caption.weight(.semibold))
-                                .foregroundStyle(selectedValue == value ? FFColors.background : FFColors.textPrimary)
                                 .padding(.horizontal, FFSpacing.sm)
                                 .padding(.vertical, FFSpacing.xs)
-                                .background(selectedValue == value ? FFColors.primary : FFColors.gray700)
-                                .clipShape(Capsule())
-                                .overlay {
-                                    Capsule()
-                                        .stroke(selectedValue == value ? FFColors.primary : FFColors.gray500, lineWidth: 1)
-                                }
+                                .ffSelectableSurface(
+                                    isSelected: selectedValue == value,
+                                    emphasis: .primary,
+                                    unselectedBackground: FFColors.gray700,
+                                    unselectedBorder: FFColors.gray500,
+                                    cornerRadius: 999,
+                                )
                         }
                         .buttonStyle(.plain)
                         .accessibilityLabel("Установить нагрузку \(value)")

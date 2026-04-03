@@ -6,27 +6,23 @@ struct ResumeWorkoutCard: View {
     let onContinue: () -> Void
 
     var body: some View {
-        WorkoutCardContainer(cornerRadius: 20, padding: 16, minHeight: 110) {
-            VStack(alignment: .leading, spacing: 8) {
+        FFCard {
+            VStack(alignment: .leading, spacing: FFSpacing.sm) {
                 Text("Продолжить тренировку")
-                    .font(FFTypography.body.weight(.semibold))
+                    .font(FFTypography.h2)
                     .foregroundStyle(FFColors.textPrimary)
 
                 Text(workoutName)
-                    .font(FFTypography.body)
-                    .foregroundStyle(FFColors.textSecondary)
+                    .font(FFTypography.body.weight(.semibold))
+                    .foregroundStyle(FFColors.textPrimary)
                     .lineLimit(2)
 
                 Text(metricsText)
                     .font(FFTypography.caption)
                     .foregroundStyle(FFColors.textSecondary)
+                    .lineLimit(2)
 
-                WorkoutSecondaryButton(
-                    title: "Продолжить",
-                    height: 44,
-                    cornerRadius: 14,
-                    action: onContinue,
-                )
+                FFButton(title: "Продолжить", variant: .secondary, action: onContinue)
             }
         }
         .contentShape(Rectangle())

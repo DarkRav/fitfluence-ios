@@ -369,6 +369,7 @@ struct ActiveWorkoutSession: Equatable, Sendable {
 protocol WorkoutProgressStore: Sendable {
     func load(userSub: String, programId: String, workoutId: String) async -> WorkoutProgressSnapshot?
     func save(_ snapshot: WorkoutProgressSnapshot) async
+    func remove(userSub: String, programId: String, workoutId: String) async
     func status(userSub: String, programId: String, workoutId: String) async -> WorkoutProgressStatus
     func statuses(userSub: String, programId: String, workoutIds: [String]) async -> [String: WorkoutProgressStatus]
     func latestActiveSession(userSub: String) async -> ActiveWorkoutSession?
@@ -394,6 +395,11 @@ actor LocalWorkoutProgressStore: WorkoutProgressStore {
         defaults.set(data, forKey: key)
     }
 
+    func remove(userSub: String, programId: String, workoutId: String) async {
+        let key = storageKey(userSub: userSub, programId: programId, workoutId: workoutId)
+        defaults.removeObject(forKey: key)
+    }
+
     func status(userSub: String, programId: String, workoutId: String) async -> WorkoutProgressStatus {
         guard let snapshot = await load(userSub: userSub, programId: programId, workoutId: workoutId) else {
             return .notStarted
@@ -417,9 +423,14 @@ actor LocalWorkoutProgressStore: WorkoutProgressStore {
                 guard let data = defaults.data(forKey: key) else { return nil }
                 return try? JSONDecoder().decode(WorkoutProgressSnapshot.self, from: data)
             }
-            .filter { $0.status == .inProgress }
+            .filter { !$0.isFinished }
             .sorted {
-                $0.lastUpdated > $1.lastUpdated
+                let lhsPriority = activeSessionSortPriority(for: $0.status)
+                let rhsPriority = activeSessionSortPriority(for: $1.status)
+                if lhsPriority != rhsPriority {
+                    return lhsPriority > rhsPriority
+                }
+                return $0.lastUpdated > $1.lastUpdated
             }
 
         guard let snapshot = snapshots.first else { return nil }
@@ -432,6 +443,17 @@ actor LocalWorkoutProgressStore: WorkoutProgressStore {
             currentExerciseIndex: snapshot.currentExerciseIndex,
             lastUpdated: snapshot.lastUpdated,
         )
+    }
+
+    private func activeSessionSortPriority(for status: WorkoutProgressStatus) -> Int {
+        switch status {
+        case .inProgress:
+            return 2
+        case .notStarted:
+            return 1
+        case .completed:
+            return 0
+        }
     }
 
     private func storageKey(userSub: String, programId: String, workoutId: String) -> String {
@@ -541,14 +563,14 @@ actor WorkoutSessionManager {
     ) async -> WorkoutSessionLoadResult {
         let key = sessionKey(userSub: userSub, programId: programId, workoutId: workout.id)
 
-        if let snapshot = await progressStore.load(userSub: userSub, programId: programId, workoutId: workout.id) {
-            return .session(sessionState(from: snapshot, workout: workout))
-        }
-
         if let activeSession = await progressStore.latestActiveSession(userSub: userSub),
            activeSession.programId != programId || activeSession.workoutId != workout.id
         {
             return .blockedByActiveSession(activeSession)
+        }
+
+        if let snapshot = await progressStore.load(userSub: userSub, programId: programId, workoutId: workout.id) {
+            return .session(sessionState(from: snapshot, workout: workout))
         }
 
         let session = WorkoutSessionState(
@@ -695,13 +717,22 @@ actor WorkoutSessionManager {
             else { return }
 
             let newSet = duplicateLast
-                ? (target.exercises[exerciseIndex].sets.last ?? SessionSetState(
-                    isCompleted: false,
-                    repsText: "",
-                    weightText: "",
-                    rpeText: "",
-                    isWarmup: false,
-                ))
+                ? {
+                    let source = target.exercises[exerciseIndex].sets.last ?? SessionSetState(
+                        isCompleted: false,
+                        repsText: "",
+                        weightText: "",
+                        rpeText: "",
+                        isWarmup: false,
+                    )
+                    return SessionSetState(
+                        isCompleted: false,
+                        repsText: source.repsText,
+                        weightText: source.weightText,
+                        rpeText: source.rpeText,
+                        isWarmup: source.isWarmup,
+                    )
+                }()
                 : SessionSetState(
                     isCompleted: false,
                     repsText: "",
@@ -1031,6 +1062,7 @@ actor WorkoutSessionManager {
             completedSets: session.completedSetsCount,
             totalSets: session.totalSetsCount,
             volume: volume,
+            workoutDetails: session.workoutDetails,
             notes: nil,
             overallRPE: averageRPE,
         )
@@ -1288,7 +1320,7 @@ private extension WorkoutExercise {
             orderIndex: orderIndex,
             isBodyweight: isBodyweight,
             media: media,
-        )
+            )
     }
 }
 

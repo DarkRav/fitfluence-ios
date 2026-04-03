@@ -2,6 +2,7 @@ import SwiftUI
 
 struct FFLoadingState: View {
     var title: String = "Загрузка"
+    var fillsAvailableHeight = false
 
     var body: some View {
         VStack(spacing: FFSpacing.sm) {
@@ -15,6 +16,7 @@ struct FFLoadingState: View {
         }
         .frame(maxWidth: .infinity)
         .frame(minHeight: 140)
+        .frame(maxHeight: fillsAvailableHeight ? .infinity : nil)
         .padding(.vertical, FFSpacing.md)
     }
 }

@@ -533,6 +533,17 @@ struct AutoAdvanceUndoState: Equatable, Sendable, Identifiable {
 @Observable
 @MainActor
 final class WorkoutPlayerViewModel {
+    enum EditableInputField: Equatable, Sendable {
+        case weight
+        case reps
+    }
+
+    struct EditingTarget: Equatable, Sendable {
+        let setIndex: Int
+        let field: EditableInputField
+        let requestID: UUID
+    }
+
     struct ExerciseRestTimerPreference: Equatable, Sendable {
         var isEnabled: Bool
         var seconds: Int
@@ -576,6 +587,7 @@ final class WorkoutPlayerViewModel {
 
     private var autoAdvanceUndoTask: Task<Void, Never>?
     private var networkObserverTask: Task<Void, Never>?
+    private var pendingSetSyncFlushTask: Task<Void, Never>?
 
     private var lastPerformanceByExerciseId: [String: AthleteExerciseLastPerformanceResponse] = [:]
     private var personalRecordByExerciseId: [String: AthletePersonalRecord] = [:]
@@ -607,6 +619,9 @@ final class WorkoutPlayerViewModel {
     var isJumpNavigationActive = false
     var focusedSetIndex: Int?
     var exercisePickerFlow: WorkoutExercisePickerFlow?
+    var editingTarget: EditingTarget?
+    var secondaryEditingSetIndex: Int?
+    var pendingInlineCommitCount = 0
 
     init(
         userSub: String,
@@ -651,6 +666,7 @@ final class WorkoutPlayerViewModel {
     deinit {
         autoAdvanceUndoTask?.cancel()
         networkObserverTask?.cancel()
+        pendingSetSyncFlushTask?.cancel()
     }
 
     var title: String {
@@ -719,15 +735,58 @@ final class WorkoutPlayerViewModel {
         firstUncompletedSetIndex(in: currentExerciseState)
     }
 
+    var activeSetIndex: Int? {
+        nextLoggableSetIndex
+    }
+
+    var selectedLoggableSetIndex: Int? {
+        activeSetIndex
+    }
+
+    var effectiveEditingSetIndex: Int? {
+        editingTarget?.setIndex ?? secondaryEditingSetIndex
+    }
+
+    var isEditingNonLoggableSet: Bool {
+        guard let effectiveEditingSetIndex else { return false }
+        return effectiveEditingSetIndex != activeSetIndex
+    }
+
+    private var activeSetEntryState: SetEntryState {
+        guard let activeSetIndex else { return .unavailable }
+        return entryState(for: activeSetIndex)
+    }
+
     var hasUncompletedSetsInCurrentExercise: Bool {
         nextLoggableSetIndex != nil
     }
 
-    var primaryActionTitle: String {
-        if hasUncompletedSetsInCurrentExercise {
-            return "Логировать подход"
+    private var primaryActionMode: PrimaryActionMode {
+        if isEditingNonLoggableSet {
+            return .done
         }
-        return primaryBottomTitle
+        guard hasUncompletedSetsInCurrentExercise else {
+            return .advance
+        }
+        switch activeSetEntryState {
+        case .complete:
+            return .log
+        case .partial:
+            return .done
+        case .empty, .unavailable:
+            return .log
+        }
+    }
+
+    var primaryActionTitle: String {
+        switch primaryActionMode {
+        case .done:
+            return "Готово"
+        case .log:
+            return "Логировать подход"
+        case .advance:
+            return primaryBottomTitle
+        }
     }
 
     var secondaryActionTitle: String {
@@ -738,7 +797,32 @@ final class WorkoutPlayerViewModel {
     }
 
     var isPrimaryBottomActionEnabled: Bool {
-        !isSubmittingFinish && !isFinished
+        guard !isSubmittingFinish, !isFinished else { return false }
+        switch primaryActionMode {
+        case .done:
+            return true
+        case .advance:
+            return true
+        case .log:
+            guard hasUncompletedSetsInCurrentExercise else { return true }
+            guard let setIndex = selectedLoggableSetIndex else { return false }
+            return canLogSet(setIndex: setIndex)
+        }
+    }
+
+    var isSecondaryBottomActionEnabled: Bool {
+        guard !isSubmittingFinish, !isFinished else { return false }
+        guard hasUncompletedSetsInCurrentExercise,
+              let exerciseState = currentExerciseState
+        else {
+            return true
+        }
+
+        let incompleteIndexes = exerciseState.sets.enumerated().compactMap { index, set in
+            set.isCompleted ? nil : index
+        }
+        guard !incompleteIndexes.isEmpty else { return false }
+        return incompleteIndexes.allSatisfy(canLogSet(setIndex:))
     }
 
     var progressItems: [ExerciseProgressItem] {
@@ -795,8 +879,8 @@ final class WorkoutPlayerViewModel {
 
     var quickActionSetIndex: Int? {
         guard let exerciseState = currentExerciseState else { return nil }
-        if let focusedSetIndex, exerciseState.sets.indices.contains(focusedSetIndex) {
-            return focusedSetIndex
+        if let activeSetIndex, exerciseState.sets.indices.contains(activeSetIndex) {
+            return activeSetIndex
         }
         if let next = firstUncompletedSetIndex(in: exerciseState) {
             return next
@@ -1036,11 +1120,43 @@ final class WorkoutPlayerViewModel {
         else {
             return
         }
-        focusedSetIndex = setIndex
+        if editingTarget?.setIndex != setIndex {
+            editingTarget = nil
+        }
+        if setIndex == activeSetIndex {
+            secondaryEditingSetIndex = nil
+            focusedSetIndex = setIndex
+        }
+    }
+
+    func selectSetAndEditReps(_ setIndex: Int) {
+        requestEditing(setIndex: setIndex, field: .reps)
+    }
+
+    func requestEditWeight(_ setIndex: Int) {
+        requestEditing(setIndex: setIndex, field: .weight)
+    }
+
+    func requestEditReps(_ setIndex: Int) {
+        requestEditing(setIndex: setIndex, field: .reps)
+    }
+
+    func beginInlineCommit() {
+        pendingInlineCommitCount += 1
+    }
+
+    func finishInlineCommit() {
+        pendingInlineCommitCount = max(0, pendingInlineCommitCount - 1)
+    }
+
+    func endEditing(requestID: UUID) {
+        guard editingTarget?.requestID == requestID else { return }
+        editingTarget = nil
     }
 
     func toggleWarmup(setIndex: Int) async {
         guard let currentExercise, let session else { return }
+        beginSecondaryEditingModeIfNeeded(for: setIndex)
         self.session = await sessionManager.toggleSetWarmup(
             session,
             exerciseId: currentExercise.id,
@@ -1062,6 +1178,7 @@ final class WorkoutPlayerViewModel {
             duplicateLast: duplicateLast,
         )
         let newIndex = max(0, (currentExerciseState?.sets.count ?? 1) - 1)
+        secondaryEditingSetIndex = nil
         focusedSetIndex = newIndex
         toastMessage = duplicateLast
             ? "Добавлен дубликат последнего подхода"
@@ -1084,6 +1201,12 @@ final class WorkoutPlayerViewModel {
             setIndex: setIndex,
         )
         focusedSetIndex = min(setIndex, max(0, (currentExerciseState?.sets.count ?? 1) - 1))
+        editingTarget = nil
+        if secondaryEditingSetIndex == setIndex {
+            secondaryEditingSetIndex = nil
+        } else if let secondaryEditingSetIndex, secondaryEditingSetIndex > setIndex {
+            self.secondaryEditingSetIndex = secondaryEditingSetIndex - 1
+        }
         toastMessage = "Подход удалён"
         await ensureCurrentExerciseContext()
         await syncCanonicalWorkoutIfNeeded()
@@ -1210,7 +1333,6 @@ final class WorkoutPlayerViewModel {
         autoAdvanceUndoTask = nil
         autoAdvanceUndoState = nil
         toastMessage = "Последнее действие отменено"
-        focusedSetIndex = firstUncompletedSetIndex(in: currentExerciseState) ?? focusedSetIndex
         await ensureCurrentExerciseContext()
     }
 
@@ -1231,7 +1353,6 @@ final class WorkoutPlayerViewModel {
         autoAdvanceUndoTask = nil
         autoAdvanceUndoState = nil
         toastMessage = "Изменение отменено"
-        focusedSetIndex = firstUncompletedSetIndex(in: currentExerciseState) ?? focusedSetIndex
         await ensureCurrentExerciseContext()
     }
 
@@ -1371,13 +1492,24 @@ final class WorkoutPlayerViewModel {
     func completeFocusedSet() async {
         guard let exerciseState = currentExerciseState else { return }
         let targetIndex: Int
-        if let nextLoggableSetIndex {
-            targetIndex = nextLoggableSetIndex
-        } else if let focusedSetIndex, exerciseState.sets.indices.contains(focusedSetIndex) {
-            targetIndex = focusedSetIndex
-        } else if let lastIndex = exerciseState.sets.indices.last {
-            targetIndex = lastIndex
+        if let selectedLoggableSetIndex {
+            targetIndex = selectedLoggableSetIndex
         } else {
+            if let focusedSetIndex, exerciseState.sets.indices.contains(focusedSetIndex) {
+                self.focusedSetIndex = focusedSetIndex
+            }
+            toastMessage = "Выберите незавершённый подход"
+            return
+        }
+
+        guard canLogSet(setIndex: targetIndex) else {
+            focusedSetIndex = targetIndex
+            editingTarget = EditingTarget(
+                setIndex: targetIndex,
+                field: preferredEditingField(for: targetIndex),
+                requestID: UUID()
+            )
+            toastMessage = validationMessage(for: targetIndex, scope: .singleSet)
             return
         }
 
@@ -1399,6 +1531,17 @@ final class WorkoutPlayerViewModel {
 
         guard !incompleteIndexes.isEmpty else {
             toastMessage = "Все подходы уже отмечены"
+            return
+        }
+
+        if let firstInvalidIndex = incompleteIndexes.first(where: { !canLogSet(setIndex: $0) }) {
+            focusedSetIndex = firstInvalidIndex
+            editingTarget = EditingTarget(
+                setIndex: firstInvalidIndex,
+                field: preferredEditingField(for: firstInvalidIndex),
+                requestID: UUID()
+            )
+            toastMessage = validationMessage(for: firstInvalidIndex, scope: .allSets)
             return
         }
 
@@ -1461,12 +1604,18 @@ final class WorkoutPlayerViewModel {
 
     func primaryBottomAction() async {
         restTimer.dismissCompletionMessage()
-        if hasUncompletedSetsInCurrentExercise {
+        switch primaryActionMode {
+        case .done:
+            secondaryEditingSetIndex = nil
+            editingTarget = nil
+        case .log:
             await completeFocusedSet()
-        } else if isLastExercise {
-            isFinishConfirmationPresented = true
-        } else {
-            await nextExercise()
+        case .advance:
+            if isLastExercise {
+                isFinishConfirmationPresented = true
+            } else {
+                await nextExercise()
+            }
         }
     }
 
@@ -1542,7 +1691,22 @@ final class WorkoutPlayerViewModel {
         )
         await ensureInsightsLoaded(for: exercise.id)
         await applySmartDefaultsIfNeeded(for: exercise)
-        focusedSetIndex = firstUncompletedSetIndex(in: currentExerciseState) ?? 0
+        if let currentExerciseState, !currentExerciseState.sets.isEmpty {
+            if let focusedSetIndex,
+               currentExerciseState.sets.indices.contains(focusedSetIndex)
+            {
+                self.focusedSetIndex = focusedSetIndex
+            } else if let focusedSetIndex {
+                self.focusedSetIndex = min(max(0, focusedSetIndex), currentExerciseState.sets.count - 1)
+            } else {
+                focusedSetIndex = firstUncompletedSetIndex(in: currentExerciseState) ?? 0
+            }
+            if let secondaryEditingSetIndex,
+               (!currentExerciseState.sets.indices.contains(secondaryEditingSetIndex) || secondaryEditingSetIndex == activeSetIndex)
+            {
+                self.secondaryEditingSetIndex = nil
+            }
+        }
         trackExerciseStartedIfNeeded(exerciseId: exercise.id)
     }
 
@@ -1673,6 +1837,8 @@ final class WorkoutPlayerViewModel {
             return
         }
 
+        beginSecondaryEditingModeIfNeeded(for: setIndex)
+
         let currentValue = Double(exerciseState.sets[setIndex][keyPath: keyPath]) ?? 0
         let next = max(0, currentValue + step)
         let nextString = keyPath == \.weightText
@@ -1689,7 +1855,7 @@ final class WorkoutPlayerViewModel {
     private func handleAutoAdvanceIfNeeded(exerciseId: String, completedSetIndex: Int) async {
         guard !isJumpNavigationActive else {
             if let exerciseState = session?.exercises.first(where: { $0.exerciseId == exerciseId }) {
-                focusedSetIndex = firstUncompletedSetIndex(in: exerciseState)
+                focusedSetIndex = nextFocusIndex(afterCompleting: completedSetIndex, in: exerciseState)
             }
             presentAutoAdvanceUndo(message: "Подход выполнен", includesExerciseMove: false)
             return
@@ -1703,7 +1869,7 @@ final class WorkoutPlayerViewModel {
 
         let isLastSet = completedSetIndex >= exerciseState.sets.count - 1
         if !isLastSet {
-            focusedSetIndex = firstUncompletedSetIndex(in: exerciseState)
+            focusedSetIndex = nextFocusIndex(afterCompleting: completedSetIndex, in: exerciseState)
             presentAutoAdvanceUndo(
                 message: "Подход выполнен, открыт следующий",
                 includesExerciseMove: false,
@@ -1712,12 +1878,12 @@ final class WorkoutPlayerViewModel {
         }
 
         if isLastExercise {
-            focusedSetIndex = firstUncompletedSetIndex(in: exerciseState)
+            focusedSetIndex = nextFocusIndex(afterCompleting: completedSetIndex, in: exerciseState)
             presentAutoAdvanceUndo(message: "Упражнение завершено, можно финишировать", includesExerciseMove: false)
             return
         }
 
-        focusedSetIndex = firstUncompletedSetIndex(in: exerciseState)
+        focusedSetIndex = nextFocusIndex(afterCompleting: completedSetIndex, in: exerciseState)
         presentAutoAdvanceUndo(message: "Упражнение завершено, можно перейти дальше", includesExerciseMove: false)
     }
 
@@ -1763,7 +1929,11 @@ final class WorkoutPlayerViewModel {
         }
     }
 
-    private func syncCurrentSetIfNeeded(exerciseId: String, setIndex: Int) async {
+    private func syncCurrentSetIfNeeded(
+        exerciseId: String,
+        setIndex: Int,
+        processImmediately: Bool = true,
+    ) async {
         guard let session else {
             return
         }
@@ -1792,8 +1962,12 @@ final class WorkoutPlayerViewModel {
             isCompleted: set.isCompleted,
             isWarmup: set.isWarmup,
             restSecondsActual: nil,
+            processImmediately: processImmediately,
         )
         await refreshSyncStatusIndicator()
+        if !processImmediately {
+            schedulePendingSetSyncFlush()
+        }
     }
 
     private func syncCanonicalWorkoutIfNeeded() async {
@@ -1922,8 +2096,19 @@ final class WorkoutPlayerViewModel {
     }
 
     private func flushPendingSetSyncOperations() async {
+        pendingSetSyncFlushTask?.cancel()
+        pendingSetSyncFlushTask = nil
         await syncCoordinator.retryNow(namespace: userSub)
         await refreshSyncStatusIndicator()
+    }
+
+    private func schedulePendingSetSyncFlush() {
+        pendingSetSyncFlushTask?.cancel()
+        pendingSetSyncFlushTask = Task(priority: .utility) { [weak self] in
+            try? await Task.sleep(nanoseconds: 800_000_000)
+            guard !Task.isCancelled, let self else { return }
+            await self.flushPendingSetSyncOperations()
+        }
     }
 
     private func refreshSyncStatusIndicator() async {
@@ -2160,6 +2345,8 @@ final class WorkoutPlayerViewModel {
             return
         }
 
+        beginSecondaryEditingModeIfNeeded(for: setIndex)
+
         let previousValue: String = switch field {
         case .weight:
             currentState.weightText
@@ -2169,10 +2356,7 @@ final class WorkoutPlayerViewModel {
             currentState.rpeText
         }
 
-        guard previousValue != normalizedValue else {
-            focusedSetIndex = setIndex
-            return
-        }
+        guard previousValue != normalizedValue else { return }
 
         switch field {
         case .weight:
@@ -2193,6 +2377,14 @@ final class WorkoutPlayerViewModel {
                 setIndex: setIndex,
                 reps: normalizedValue,
             )
+            if normalizedValue.isEmpty, currentState.isCompleted, let updatedSession = self.session {
+                self.session = await sessionManager.toggleSetComplete(
+                    updatedSession,
+                    exerciseId: currentExercise.id,
+                    setIndex: setIndex,
+                )
+                toastMessage = "Повторы очищены, подход снят с выполнения"
+            }
             ClientAnalytics.track(
                 .repsChanged,
                 properties: analyticsExerciseProperties(exerciseId: currentExercise.id),
@@ -2206,8 +2398,140 @@ final class WorkoutPlayerViewModel {
             )
         }
 
-        focusedSetIndex = setIndex
-        await syncCurrentSetIfNeeded(exerciseId: currentExercise.id, setIndex: setIndex)
+        await syncCurrentSetIfNeeded(
+            exerciseId: currentExercise.id,
+            setIndex: setIndex,
+            processImmediately: false,
+        )
+    }
+
+    private func canLogSet(setIndex: Int) -> Bool {
+        entryState(for: setIndex) == .complete
+    }
+
+    private func entryState(for setIndex: Int) -> SetEntryState {
+        guard let exerciseState = currentExerciseState,
+              exerciseState.sets.indices.contains(setIndex)
+        else {
+            return .unavailable
+        }
+
+        let set = exerciseState.sets[setIndex]
+        let hasReps = !set.repsText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        if currentExerciseIsBodyweight {
+            return hasReps ? .complete : .empty
+        }
+
+        let hasWeight = !set.weightText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        switch (hasWeight, hasReps) {
+        case (true, true):
+            return .complete
+        case (false, false):
+            return .empty
+        default:
+            return .partial
+        }
+    }
+
+    private func requestEditing(setIndex: Int, field: EditableInputField) {
+        guard let exerciseState = currentExerciseState,
+              exerciseState.sets.indices.contains(setIndex)
+        else {
+            return
+        }
+
+        beginSecondaryEditingModeIfNeeded(for: setIndex)
+        editingTarget = EditingTarget(setIndex: setIndex, field: field, requestID: UUID())
+    }
+
+    private func beginSecondaryEditingModeIfNeeded(for setIndex: Int) {
+        if setIndex == activeSetIndex {
+            secondaryEditingSetIndex = nil
+        } else {
+            secondaryEditingSetIndex = setIndex
+        }
+    }
+
+    private enum LoggingValidationScope {
+        case singleSet
+        case allSets
+    }
+
+    private enum PrimaryActionMode {
+        case done
+        case log
+        case advance
+    }
+
+    private enum SetEntryState {
+        case unavailable
+        case empty
+        case partial
+        case complete
+    }
+
+    private func preferredEditingField(for setIndex: Int) -> EditableInputField {
+        guard let exerciseState = currentExerciseState,
+              exerciseState.sets.indices.contains(setIndex)
+        else {
+            return .reps
+        }
+
+        let set = exerciseState.sets[setIndex]
+        let hasReps = !set.repsText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let hasWeight = !set.weightText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+
+        if !currentExerciseIsBodyweight, !hasWeight {
+            return .weight
+        }
+        if !hasReps {
+            return .reps
+        }
+        return .reps
+    }
+
+    private func validationMessage(for setIndex: Int, scope: LoggingValidationScope) -> String {
+        guard let exerciseState = currentExerciseState,
+              exerciseState.sets.indices.contains(setIndex)
+        else {
+            return scope == .singleSet
+                ? "Заполните подход перед логгированием"
+                : "Заполните все подходы перед массовым логгированием"
+        }
+
+        let set = exerciseState.sets[setIndex]
+        let hasReps = !set.repsText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let hasWeight = !set.weightText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+
+        switch (currentExerciseIsBodyweight, hasWeight, hasReps, scope) {
+        case (true, _, false, .singleSet):
+            return "Введите повторы перед логгированием"
+        case (true, _, false, .allSets):
+            return "Заполните повторы у всех подходов перед массовым логгированием"
+        case (false, false, false, .singleSet):
+            return "Введите вес и повторы перед логгированием"
+        case (false, false, false, .allSets):
+            return "Заполните вес и повторы у всех подходов перед массовым логгированием"
+        case (false, false, true, .singleSet):
+            return "Введите вес перед логгированием"
+        case (false, false, true, .allSets):
+            return "Заполните вес у всех подходов перед массовым логгированием"
+        case (_, _, false, .singleSet):
+            return "Введите повторы перед логгированием"
+        case (_, _, false, .allSets):
+            return "Заполните повторы у всех подходов перед массовым логгированием"
+        default:
+            return scope == .singleSet
+                ? "Заполните подход перед логгированием"
+                : "Заполните все подходы перед массовым логгированием"
+        }
+    }
+
+    private func nextFocusIndex(afterCompleting setIndex: Int, in exerciseState: SessionExerciseState) -> Int? {
+        if let nextForward = exerciseState.sets.indices.first(where: { $0 > setIndex && !exerciseState.sets[$0].isCompleted }) {
+            return nextForward
+        }
+        return exerciseState.sets.indices.first(where: { !exerciseState.sets[$0].isCompleted })
     }
 
     private func normalizedSetFieldValue(field: EditableSetField, rawValue: String) -> String? {
@@ -2264,13 +2588,12 @@ struct WorkoutPlayerViewV2: View {
                     }
                     .padding(.horizontal, FFSpacing.md)
                     .padding(.top, FFSpacing.xs)
-                    .padding(.bottom, 104)
+                    .padding(.bottom, FFSpacing.lg)
                 }
             }
         }
         .toolbar(.hidden, for: .navigationBar)
         .toolbar(.hidden, for: .tabBar)
-        .safeAreaInset(edge: .bottom) { workoutListBottomBar }
         .task { await viewModel.onAppear() }
         .alert("Завершить раньше?", isPresented: $viewModel.isFinishEarlyConfirmationPresented) {
             Button("Отмена", role: .cancel) {}
@@ -2331,7 +2654,7 @@ struct WorkoutPlayerViewV2: View {
         }
         .sheet(isPresented: $isExerciseDetailsPresented) {
             if let exercise = viewModel.currentExercise {
-                ExerciseDetailsSheet(exercise: exercise)
+                WorkoutExerciseDetailsSheet(exercise: exercise)
             }
         }
         .sheet(isPresented: $isExerciseLoggingPresented) {
@@ -2344,6 +2667,7 @@ struct WorkoutPlayerViewV2: View {
             if let message = viewModel.toastMessage {
                 Text(message)
                     .font(FFTypography.caption.weight(.semibold))
+                    .foregroundStyle(FFColors.textPrimary)
                     .padding(.horizontal, FFSpacing.md)
                     .padding(.vertical, FFSpacing.xs)
                     .background(FFColors.gray700)
@@ -2464,24 +2788,22 @@ struct WorkoutPlayerViewV2: View {
 
     private var navigationCard: some View {
         VStack(spacing: FFSpacing.sm) {
-            FFCard {
-                HStack(spacing: FFSpacing.xs) {
-                    SyncStatusIndicator(status: viewModel.syncStatus, compact: true)
-                    if viewModel.pendingSyncCount > 0 {
-                        Text("\(viewModel.pendingSyncCount)")
-                            .font(FFTypography.caption.weight(.semibold))
-                            .foregroundStyle(FFColors.primary)
-                            .padding(.horizontal, FFSpacing.xs)
-                            .padding(.vertical, FFSpacing.xxs)
-                            .background(FFColors.primary.opacity(0.14))
-                            .clipShape(Capsule())
-                    }
-                    if viewModel.canRetrySync {
-                        compactActionButton(title: "Повторить", systemImage: "arrow.clockwise") {
-                            Task { await viewModel.flushPendingSyncNow() }
+            if viewModel.syncStatus == .delayed || viewModel.canRetrySync {
+                FFCard {
+                    HStack(spacing: FFSpacing.xs) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundStyle(FFColors.danger)
+                        Text("Ошибка синхронизации")
+                            .font(FFTypography.caption)
+                            .foregroundStyle(FFColors.textSecondary)
+                        Spacer(minLength: 0)
+                        if viewModel.canRetrySync {
+                            compactActionButton(title: "Повторить", systemImage: "arrow.clockwise") {
+                                Task { await viewModel.flushPendingSyncNow() }
+                            }
                         }
                     }
-                    Spacer(minLength: 0)
                 }
             }
 
@@ -2544,31 +2866,63 @@ struct WorkoutPlayerViewV2: View {
                 VStack(spacing: FFSpacing.sm) {
                     ForEach(Array(exerciseState.sets.enumerated()), id: \.offset) { index, set in
                         WorkoutSetRowView(
+                            editingTarget: viewModel.editingTarget,
                             index: index,
                             set: set,
                             isBodyweight: viewModel.currentExerciseIsBodyweight,
                             showsCopyAction: viewModel.canCopyPreviousSet(setIndex: index),
                             weightStepLabel: viewModel.weightStepLabel,
-                            isFocused: viewModel.focusedSetIndex == index,
-                            showsRPE: viewModel.showsRPEControl && viewModel.focusedSetIndex == index,
+                            isFocused: viewModel.activeSetIndex == index,
+                            showsRPE: viewModel.showsRPEControl && viewModel.activeSetIndex == index,
                             targetRPE: viewModel.currentExercise?.targetRpe,
                             canRemove: viewModel.canRemoveSet(setIndex: index),
                             onSelect: { viewModel.selectSet(index) },
                             onCopy: { Task { await viewModel.copyPreviousSet(setIndex: index) } },
                             onToggleWarmup: { Task { await viewModel.toggleWarmup(setIndex: index) } },
                             onRemove: { Task { await viewModel.removeSet(setIndex: index) } },
+                            onRequestWeightEdit: { viewModel.requestEditWeight(index) },
+                            onRequestRepsEdit: { viewModel.requestEditReps(index) },
+                            onEditingEnded: { requestID in
+                                viewModel.endEditing(requestID: requestID)
+                            },
                             onWeightCommit: { value in
-                                Task { await viewModel.updateWeight(setIndex: index, input: value) }
+                                viewModel.beginInlineCommit()
+                                Task {
+                                    await viewModel.updateWeight(setIndex: index, input: value)
+                                    await MainActor.run {
+                                        viewModel.finishInlineCommit()
+                                    }
+                                }
                             },
                             onDecreaseWeight: { Task { await viewModel.decrementWeight(setIndex: index) } },
                             onIncreaseWeight: { Task { await viewModel.incrementWeight(setIndex: index) } },
                             onRepsCommit: { value in
-                                Task { await viewModel.updateReps(setIndex: index, input: value) }
+                                viewModel.beginInlineCommit()
+                                Task {
+                                    await viewModel.updateReps(setIndex: index, input: value)
+                                    await MainActor.run {
+                                        viewModel.finishInlineCommit()
+                                    }
+                                }
                             },
                             onDecreaseReps: { Task { await viewModel.decrementReps(setIndex: index) } },
                             onIncreaseReps: { Task { await viewModel.incrementReps(setIndex: index) } },
                             onSelectRPE: { value in
-                                Task { await viewModel.updateRPE(setIndex: index, rpe: value) }
+                                viewModel.beginInlineCommit()
+                                Task {
+                                    await viewModel.updateRPE(setIndex: index, rpe: value)
+                                    await MainActor.run {
+                                        viewModel.finishInlineCommit()
+                                    }
+                                }
+                            },
+                            onInvalidInput: { field in
+                                switch field {
+                                case .weight:
+                                    viewModel.toastMessage = "Проверьте значение веса"
+                                case .reps:
+                                    viewModel.toastMessage = "Введите целое число повторов"
+                                }
                             },
                         )
                         .id(setRowID(index))
@@ -2642,6 +2996,10 @@ struct WorkoutPlayerViewV2: View {
                         viewModel.openHistory()
                     }
 
+                    compactActionButton(title: "Добавить", systemImage: "plus.rectangle.on.rectangle") {
+                        viewModel.presentAddExerciseFlow()
+                    }
+
                     compactActionButton(title: "Заменить", systemImage: "arrow.triangle.2.circlepath") {
                         viewModel.presentReplaceCurrentExerciseFlow()
                     }
@@ -2682,11 +3040,7 @@ struct WorkoutPlayerViewV2: View {
                         .padding(.bottom, 104)
                     }
                     .scrollDismissesKeyboard(.interactively)
-                    .contentShape(Rectangle())
-                    .onTapGesture {
-                        dismissKeyboard()
-                    }
-                    .onChange(of: viewModel.focusedSetIndex) { _, index in
+                    .onChange(of: viewModel.activeSetIndex) { _, index in
                         guard let index else { return }
                         withAnimation(.easeInOut(duration: 0.2)) {
                             proxy.scrollTo(setRowID(index), anchor: .center)
@@ -2771,6 +3125,7 @@ struct WorkoutPlayerViewV2: View {
         WorkoutPrimaryActionStrip(
             secondaryTitle: viewModel.secondaryActionTitle,
             primaryTitle: viewModel.primaryActionTitle,
+            isSecondaryEnabled: viewModel.isSecondaryBottomActionEnabled,
             isPrimaryEnabled: viewModel.isPrimaryBottomActionEnabled,
             onSecondary: {
                 performLoggingAction {
@@ -2787,23 +3142,6 @@ struct WorkoutPlayerViewV2: View {
                 }
             },
         )
-        .padding(.horizontal, FFSpacing.sm)
-        .padding(.top, FFSpacing.sm)
-        .padding(.bottom, FFSpacing.sm)
-        .background(FFColors.background.opacity(0.96))
-        .overlay(alignment: .top) {
-            Rectangle()
-                .fill(FFColors.gray700.opacity(0.45))
-                .frame(height: 1)
-        }
-    }
-
-    private var workoutListBottomBar: some View {
-        bottomActionButton(title: "Логгировать упражнение", variant: .primary) {
-            isExerciseLoggingPresented = true
-        }
-        .disabled(!viewModel.isPrimaryBottomActionEnabled)
-        .opacity(viewModel.isPrimaryBottomActionEnabled ? 1 : 0.55)
         .padding(.horizontal, FFSpacing.sm)
         .padding(.top, FFSpacing.sm)
         .padding(.bottom, FFSpacing.sm)
@@ -2872,7 +3210,10 @@ struct WorkoutPlayerViewV2: View {
     private func performLoggingAction(_ action: @escaping @MainActor () async -> Void) {
         dismissKeyboard()
         Task {
-            try? await Task.sleep(for: .milliseconds(120))
+            try? await Task.sleep(for: .milliseconds(80))
+            while await MainActor.run(body: { viewModel.pendingInlineCommitCount > 0 }) {
+                try? await Task.sleep(for: .milliseconds(20))
+            }
             await action()
         }
     }
@@ -2900,10 +3241,7 @@ struct WorkoutPlayerViewV2: View {
     }
 
     private func compactActionButton(title: String, systemImage: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            compactActionLabel(title: title, systemImage: systemImage)
-        }
-        .buttonStyle(.plain)
+        FFCompactActionButton(title: title, systemImage: systemImage, action: action)
     }
 
     private func compactActionLabel(title: String, systemImage: String) -> some View {
@@ -2913,30 +3251,15 @@ struct WorkoutPlayerViewV2: View {
             .frame(minHeight: 44)
             .padding(.horizontal, FFSpacing.sm)
             .background(FFColors.surface)
-            .clipShape(RoundedRectangle(cornerRadius: FFTheme.Radius.control))
+            .clipShape(RoundedRectangle(cornerRadius: FFTheme.Radius.control, style: .continuous))
             .overlay {
-                RoundedRectangle(cornerRadius: FFTheme.Radius.control)
+                RoundedRectangle(cornerRadius: FFTheme.Radius.control, style: .continuous)
                     .stroke(FFColors.gray700, lineWidth: 1)
             }
     }
 
     private func compactBottomButton(title: String, systemImage: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            HStack(spacing: FFSpacing.xxs) {
-                Image(systemName: systemImage)
-                Text(title)
-            }
-            .font(FFTypography.caption.weight(.semibold))
-            .foregroundStyle(FFColors.textPrimary)
-            .frame(maxWidth: .infinity, minHeight: 44)
-            .background(FFColors.surface)
-            .clipShape(RoundedRectangle(cornerRadius: FFTheme.Radius.control))
-            .overlay {
-                RoundedRectangle(cornerRadius: FFTheme.Radius.control)
-                    .stroke(FFColors.gray700, lineWidth: 1)
-            }
-        }
-        .buttonStyle(.plain)
+        FFCompactActionButton(title: title, systemImage: systemImage, action: action)
     }
 
     private func bottomActionButton(
@@ -2948,7 +3271,7 @@ struct WorkoutPlayerViewV2: View {
             Text(title)
                 .font(FFTypography.body.weight(.bold))
                 .kerning(0.8)
-                .foregroundStyle(variant == .primary ? Color.black : FFColors.textPrimary)
+                .foregroundStyle(variant == .primary ? FFColors.textOnEmphasis : FFColors.textPrimary)
                 .multilineTextAlignment(.center)
                 .lineLimit(2)
                 .minimumScaleFactor(0.85)
@@ -2956,7 +3279,7 @@ struct WorkoutPlayerViewV2: View {
                 .padding(.horizontal, FFSpacing.sm)
                 .background(
                     variant == .primary
-                        ? LinearGradient(colors: [Color.white, Color.white.opacity(0.92)], startPoint: .top, endPoint: .bottom)
+                        ? LinearGradient(colors: [FFColors.primary, FFColors.primary.opacity(0.9)], startPoint: .top, endPoint: .bottom)
                         : LinearGradient(colors: [FFColors.surface, FFColors.surface], startPoint: .top, endPoint: .bottom)
                 )
                 .clipShape(RoundedRectangle(cornerRadius: 18))
@@ -3132,36 +3455,11 @@ private struct QuickActionsBar: View {
         systemImage: String,
         action: @escaping () -> Void,
     ) -> some View {
-        Button(action: action) {
-            VStack(spacing: 2) {
-                Label(title, systemImage: systemImage)
-                    .font(FFTypography.caption.weight(.semibold))
-                    .lineLimit(2)
-                    .multilineTextAlignment(.center)
-                    .minimumScaleFactor(0.8)
-                if let subtitle {
-                    Text(subtitle)
-                        .font(.system(size: 11, weight: .regular, design: .rounded))
-                        .foregroundStyle(FFColors.textSecondary)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.72)
-                }
-            }
-            .foregroundStyle(FFColors.textPrimary)
-            .frame(maxWidth: .infinity, minHeight: 52)
-            .padding(.horizontal, FFSpacing.xxs)
-            .background(FFColors.surface)
-            .clipShape(RoundedRectangle(cornerRadius: FFTheme.Radius.control))
-            .overlay {
-                RoundedRectangle(cornerRadius: FFTheme.Radius.control)
-                    .stroke(FFColors.gray700, lineWidth: 1)
-            }
-        }
-        .buttonStyle(.plain)
+        FFCompactActionButton(title: title, subtitle: subtitle, systemImage: systemImage, action: action)
     }
 }
 
-private struct ExerciseDetailsSheet: View {
+struct WorkoutExerciseDetailsSheet: View {
     let exercise: WorkoutExercise
     @Environment(\.dismiss) private var dismiss
     private let environment = AppEnvironment.from()
@@ -3273,43 +3571,57 @@ private struct ResolvedExerciseMedia: Identifiable {
 
 private struct ExerciseMediaCard: View {
     let media: ResolvedExerciseMedia
+    @State private var presentedMedia: ResolvedExerciseMedia?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: FFSpacing.xs) {
-            switch media.type {
-            case .image:
-                AsyncImage(url: media.url) { phase in
-                    switch phase {
-                    case let .success(image):
-                        image
-                            .resizable()
-                            .scaledToFill()
-                    case .failure:
-                        mediaPlaceholder(systemImage: "photo", title: "Изображение недоступно")
-                    case .empty:
-                        ZStack {
-                            FFColors.surface
-                            ProgressView()
-                                .tint(FFColors.accent)
+        Button {
+            presentedMedia = media
+        } label: {
+            VStack(alignment: .leading, spacing: FFSpacing.xs) {
+                switch media.type {
+                case .image:
+                    AsyncImage(url: media.url) { phase in
+                        switch phase {
+                        case let .success(image):
+                            ZStack {
+                                FFColors.surface
+                                image
+                                    .resizable()
+                                    .scaledToFit()
+                                    .padding(FFSpacing.xs)
+                            }
+                        case .failure:
+                            mediaPlaceholder(systemImage: "photo", title: "Изображение недоступно")
+                        case .empty:
+                            ZStack {
+                                FFColors.surface
+                                ProgressView()
+                                    .tint(FFColors.accent)
+                            }
+                        @unknown default:
+                            mediaPlaceholder(systemImage: "photo", title: "Изображение недоступно")
                         }
-                    @unknown default:
-                        mediaPlaceholder(systemImage: "photo", title: "Изображение недоступно")
                     }
+                    .frame(height: 220)
+                    .frame(maxWidth: .infinity)
+                    .clipShape(RoundedRectangle(cornerRadius: FFTheme.Radius.control))
+
+                case .video:
+                    ExerciseVideoCard(url: media.url, showsExpandHint: true)
                 }
-                .frame(height: 220)
-                .frame(maxWidth: .infinity)
-                .clipped()
-                .clipShape(RoundedRectangle(cornerRadius: FFTheme.Radius.control))
 
-            case .video:
-                ExerciseVideoCard(url: media.url)
+                HStack(spacing: FFSpacing.xs) {
+                    Image(systemName: media.type == .video ? "play.rectangle" : "arrow.up.left.and.arrow.down.right")
+                        .font(.system(size: 12, weight: .semibold))
+                    Text(media.type == .video ? "Открыть видео" : "Открыть изображение")
+                        .font(FFTypography.caption.weight(.semibold))
+                }
+                .foregroundStyle(FFColors.accent)
             }
-
-            Link(destination: media.url) {
-                Label("Открыть медиа", systemImage: media.type == .video ? "play.rectangle" : "arrow.up.right.square")
-                    .font(FFTypography.caption.weight(.semibold))
-                    .foregroundStyle(FFColors.accent)
-            }
+        }
+        .buttonStyle(.plain)
+        .sheet(item: $presentedMedia) { item in
+            ExerciseMediaViewer(media: item)
         }
     }
 
@@ -3331,20 +3643,110 @@ private struct ExerciseMediaCard: View {
 
 private struct ExerciseVideoCard: View {
     let url: URL
+    var showsExpandHint = false
     @State private var player: AVPlayer
 
-    init(url: URL) {
+    init(url: URL, showsExpandHint: Bool = false) {
         self.url = url
+        self.showsExpandHint = showsExpandHint
         _player = State(initialValue: AVPlayer(url: url))
     }
 
     var body: some View {
-        VideoPlayer(player: player)
-            .frame(height: 220)
-            .clipShape(RoundedRectangle(cornerRadius: FFTheme.Radius.control))
-            .onDisappear {
-                player.pause()
+        ZStack(alignment: .bottomTrailing) {
+            VideoPlayer(player: player)
+                .frame(height: 220)
+                .clipShape(RoundedRectangle(cornerRadius: FFTheme.Radius.control))
+
+            if showsExpandHint {
+                Label("Развернуть", systemImage: "arrow.up.left.and.arrow.down.right")
+                    .font(FFTypography.caption.weight(.semibold))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, FFSpacing.sm)
+                    .padding(.vertical, FFSpacing.xs)
+                    .background(Color.black.opacity(0.55))
+                    .clipShape(Capsule())
+                    .padding(FFSpacing.sm)
             }
+        }
+        .onDisappear {
+            player.pause()
+        }
+    }
+}
+
+private struct ExerciseMediaViewer: View {
+    let media: ResolvedExerciseMedia
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            ZStack {
+                Color.black.ignoresSafeArea()
+
+                switch media.type {
+                case .image:
+                    ZoomableExerciseImage(url: media.url)
+                case .video:
+                    ExerciseVideoCard(url: media.url)
+                        .padding(.horizontal, FFSpacing.md)
+                }
+            }
+            .navigationTitle(media.type == .video ? "Видео" : "Изображение")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Закрыть") {
+                        dismiss()
+                    }
+                }
+            }
+        }
+    }
+}
+
+private struct ZoomableExerciseImage: View {
+    let url: URL
+
+    var body: some View {
+        GeometryReader { proxy in
+            ScrollView([.horizontal, .vertical], showsIndicators: false) {
+                AsyncImage(url: url) { phase in
+                    switch phase {
+                    case let .success(image):
+                        image
+                            .resizable()
+                            .scaledToFit()
+                            .frame(
+                                maxWidth: proxy.size.width,
+                                maxHeight: proxy.size.height
+                            )
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    case .failure:
+                        ZStack {
+                            Color.black
+                            VStack(spacing: FFSpacing.xs) {
+                                Image(systemName: "photo")
+                                    .font(.system(size: 28, weight: .semibold))
+                                    .foregroundStyle(.white.opacity(0.8))
+                                Text("Изображение недоступно")
+                                    .font(FFTypography.body)
+                                    .foregroundStyle(.white.opacity(0.8))
+                            }
+                        }
+                    case .empty:
+                        ZStack {
+                            Color.black
+                            ProgressView()
+                                .tint(.white)
+                        }
+                    @unknown default:
+                        EmptyView()
+                    }
+                }
+                .frame(minWidth: proxy.size.width, minHeight: proxy.size.height)
+            }
+        }
     }
 }
 
@@ -3393,7 +3795,7 @@ private struct RestTimerBanner: View {
             timeValue
 
             capsuleButton(title: isRunning ? "Пауза" : "Продолжить", tint: FFColors.gray700, action: onPauseResume)
-            capsuleButton(title: "Пропустить", tint: FFColors.danger, action: onSkip)
+            capsuleButton(title: "Пропустить", tint: FFColors.danger, usesEmphasisForeground: true, action: onSkip)
             expandButton
         }
     }
@@ -3409,7 +3811,7 @@ private struct RestTimerBanner: View {
 
             HStack(spacing: FFSpacing.xs) {
                 capsuleButton(title: isRunning ? "Пауза" : "Продолжить", tint: FFColors.gray700, action: onPauseResume)
-                capsuleButton(title: "Пропустить", tint: FFColors.danger, action: onSkip)
+                capsuleButton(title: "Пропустить", tint: FFColors.danger, usesEmphasisForeground: true, action: onSkip)
             }
         }
     }
@@ -3452,32 +3854,28 @@ private struct RestTimerBanner: View {
         .buttonStyle(.plain)
     }
 
-    private func capsuleButton(title: String, tint: Color, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Text(title)
-                .font(FFTypography.caption.weight(.semibold))
-                .foregroundStyle(FFColors.textPrimary)
-                .lineLimit(1)
-                .minimumScaleFactor(0.8)
-                .padding(.horizontal, FFSpacing.xs)
-                .frame(minHeight: 36)
-                .background(tint)
-                .clipShape(Capsule())
-        }
-        .buttonStyle(.plain)
+    private func capsuleButton(
+        title: String,
+        tint: Color,
+        usesEmphasisForeground: Bool = false,
+        action: @escaping () -> Void,
+    ) -> some View {
+        FFCapsuleButton(
+            title: title,
+            style: .filled(tint),
+            foreground: usesEmphasisForeground ? FFColors.textOnEmphasis : FFColors.textPrimary,
+            action: action,
+        )
     }
 
     private func timerChip(title: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Text(title)
-                .font(FFTypography.caption.weight(.semibold))
-                .foregroundStyle(FFColors.textPrimary)
-                .padding(.horizontal, FFSpacing.sm)
-                .frame(minHeight: 38)
-                .background(FFColors.gray700)
-                .clipShape(RoundedRectangle(cornerRadius: FFTheme.Radius.control))
-        }
-        .buttonStyle(.plain)
+        FFCapsuleButton(
+            title: title,
+            style: .subtle(FFColors.gray500),
+            minHeight: 38,
+            horizontalPadding: FFSpacing.sm,
+            action: action,
+        )
     }
 
     private func formattedTime(_ totalSeconds: Int) -> String {
