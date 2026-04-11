@@ -2770,7 +2770,7 @@ struct CatalogScreen: View {
             }
             .tabViewStyle(.page(indexDisplayMode: .never))
         }
-        .background(FFColors.background)
+        .ffScreenBackground()
         .onChange(of: selectedSegment) { _, newValue in
             UserDefaults.standard.set(newValue.rawValue, forKey: Self.segmentStorageKey(for: userSub))
         }
@@ -2952,7 +2952,7 @@ struct MyProgramsScreen: View {
                 }
             }
         }
-        .background(FFColors.background)
+        .ffScreenBackground()
         .task {
             await viewModel.onAppear()
         }
@@ -3215,7 +3215,7 @@ struct AthletesTabView: View {
                 .padding(.bottom, FFSpacing.lg)
             }
         }
-        .background(FFColors.background)
+        .ffScreenBackground()
         .sheet(isPresented: $isSearchPresented) {
             NavigationStack {
                 AthletesSearchView(
@@ -3619,7 +3619,7 @@ struct AthletesShowcaseView: View {
             .padding(.horizontal, FFSpacing.md)
             .padding(.bottom, FFSpacing.lg)
         }
-        .background(FFColors.background)
+        .ffScreenBackground()
         .refreshable {
             await viewModel.refresh()
         }
@@ -3801,7 +3801,7 @@ struct AthletesSearchView: View {
             .padding(.horizontal, FFSpacing.md)
             .padding(.bottom, FFSpacing.lg)
         }
-        .background(FFColors.background)
+        .ffScreenBackground()
         .refreshable {
             await viewModel.refresh()
         }
@@ -3896,7 +3896,7 @@ struct FollowingAthletesView: View {
             .padding(.horizontal, FFSpacing.md)
             .padding(.bottom, FFSpacing.lg)
         }
-        .background(FFColors.background)
+        .ffScreenBackground()
         .refreshable {
             await viewModel.refresh()
         }
@@ -4003,7 +4003,7 @@ struct AthleteProfileView: View {
             .padding(.horizontal, FFSpacing.md)
             .padding(.vertical, FFSpacing.md)
         }
-        .background(FFColors.background)
+        .ffScreenBackground()
         .refreshable {
             await viewModel.refresh()
         }
@@ -4075,7 +4075,7 @@ private struct AthleteProgramsListView: View {
             .padding(.horizontal, FFSpacing.md)
             .padding(.vertical, FFSpacing.md)
         }
-        .background(FFColors.background)
+        .ffScreenBackground()
         .refreshable {
             await viewModel.refresh()
         }
@@ -4833,7 +4833,7 @@ struct ProgramsCatalogScreen: View {
             .padding(.top, 4)
             .padding(.bottom, FFSpacing.lg)
         }
-        .background(FFColors.background)
+        .ffScreenBackground()
         .sheet(isPresented: $isSearchPresented) {
             ProgramSearchSheet(viewModel: viewModel)
         }
@@ -4958,7 +4958,7 @@ private struct ProgramSearchSheet: View {
                 .padding(.top, FFSpacing.sm)
                 .padding(.bottom, FFSpacing.md)
             }
-            .background(FFColors.background)
+            .ffScreenBackground()
             .navigationTitle("Поиск")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -5005,7 +5005,7 @@ private struct ProgramSortSheet: View {
                 .padding(.top, FFSpacing.sm)
                 .padding(.bottom, FFSpacing.md)
             }
-            .background(FFColors.background)
+            .ffScreenBackground()
             .navigationTitle("Сортировка")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -5052,7 +5052,7 @@ private struct AthleteSortSheet: View {
                 .padding(.top, FFSpacing.sm)
                 .padding(.bottom, FFSpacing.md)
             }
-            .background(FFColors.background)
+            .ffScreenBackground()
             .navigationTitle("Сортировка")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -5123,7 +5123,7 @@ private struct AthletesFiltersSheet: View {
                 .padding(.top, FFSpacing.sm)
                 .padding(.bottom, FFSpacing.md)
             }
-            .background(FFColors.background)
+            .ffScreenBackground()
             .navigationTitle("Фильтры")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -5224,7 +5224,7 @@ struct FiltersSheet: View {
                 .padding(.horizontal, FFSpacing.md)
                 .padding(.vertical, FFSpacing.sm)
             }
-            .background(FFColors.background)
+            .ffScreenBackground()
             .navigationTitle("Фильтры")
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {

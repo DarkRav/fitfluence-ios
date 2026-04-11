@@ -203,7 +203,7 @@ struct WorkoutsListScreen: View {
                 }
             }
         }
-        .background(FFColors.background)
+        .ffScreenBackground()
         .task {
             await viewModel.onAppear()
         }

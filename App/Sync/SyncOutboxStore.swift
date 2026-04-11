@@ -255,6 +255,29 @@ actor SyncOutboxStore {
         }
     }
 
+    func cancelCreateCustomWorkout(namespace: String, planId: String) async {
+        mutate(namespace: namespace) { state in
+            let now = Date()
+            for index in state.operations.indices where state.operations[index].status.isUnsent {
+                guard state.operations[index].type == .createCustomWorkout,
+                      state.operations[index].payload.customWorkoutCreation?.planId == planId
+                else {
+                    continue
+                }
+                state.operations[index].markDead(error: "cancelled_by_user", at: now)
+                appendLog(
+                    to: &state,
+                    SyncLogEntry(
+                        operationId: state.operations[index].id,
+                        operationType: state.operations[index].type,
+                        operationStatus: .dead,
+                        message: "Pending custom workout creation cancelled by user",
+                    ),
+                )
+            }
+        }
+    }
+
     private func applyEnqueue(
         operation: SyncOperation,
         in state: inout PersistedState,
@@ -313,7 +336,7 @@ actor SyncOutboxStore {
                                 message: "Discarded because ABANDON_WORKOUT was queued",
                             ),
                         )
-                    case .startWorkout, .abandonWorkout:
+                    case .createCustomWorkout, .startWorkout, .abandonWorkout:
                         continue
                     }
                 }

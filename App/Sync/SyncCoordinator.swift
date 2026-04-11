@@ -6,6 +6,7 @@ actor SyncCoordinator {
 
     private let outboxStore: SyncOutboxStore
     private let worker: SyncWorker
+    private let pendingCustomWorkoutReconciler: PendingCustomWorkoutReconciler
 
     private var athleteTrainingClient: AthleteTrainingClientProtocol?
     private var networkMonitor: NetworkMonitoring
@@ -22,10 +23,15 @@ actor SyncCoordinator {
     init(
         outboxStore: SyncOutboxStore = SyncOutboxStore(),
         networkMonitor: NetworkMonitoring = StaticNetworkMonitor(currentStatus: true),
+        pendingCustomWorkoutReconciler: PendingCustomWorkoutReconciler = PendingCustomWorkoutReconciler(),
         periodicIntervalSeconds: UInt64 = 180,
     ) {
         self.outboxStore = outboxStore
-        worker = SyncWorker(outboxStore: outboxStore)
+        self.pendingCustomWorkoutReconciler = pendingCustomWorkoutReconciler
+        worker = SyncWorker(
+            outboxStore: outboxStore,
+            pendingCustomWorkoutReconciler: pendingCustomWorkoutReconciler,
+        )
         self.networkMonitor = networkMonitor
         self.periodicIntervalSeconds = periodicIntervalSeconds
     }
@@ -127,6 +133,35 @@ actor SyncCoordinator {
         )
         await processNow(reason: "enqueue_abandon")
         return result
+    }
+
+    func enqueueCreateCustomWorkout(
+        namespace: String,
+        planId: String,
+        source: WorkoutSource,
+        workout: WorkoutDetailsModel,
+        scheduledDay: Date,
+        processImmediately: Bool = true,
+    ) async -> SyncOutboxMutationResult {
+        await prepareNamespace(namespace: namespace)
+        let result = await outboxStore.enqueue(
+            .createCustomWorkout(
+                planId: planId,
+                source: source,
+                workout: workout,
+                scheduledDay: scheduledDay,
+            ),
+            namespace: namespace,
+        )
+        if processImmediately {
+            await processNow(reason: "enqueue_create_custom_workout")
+        }
+        return result
+    }
+
+    func cancelPendingCreateCustomWorkout(namespace: String, planId: String) async {
+        await prepareNamespace(namespace: namespace)
+        await outboxStore.cancelCreateCustomWorkout(namespace: namespace, planId: planId)
     }
 
     func retryNow(namespace: String) async {

@@ -2,6 +2,7 @@ import Foundation
 
 enum SyncOperationType: String, Codable, Equatable, Sendable {
     case upsertSet = "UPSERT_SET"
+    case createCustomWorkout = "CREATE_CUSTOM_WORKOUT"
     case startWorkout = "START_WORKOUT"
     case completeWorkout = "COMPLETE_WORKOUT"
     case abandonWorkout = "ABANDON_WORKOUT"
@@ -24,6 +25,16 @@ enum SyncOperationStatus: String, Codable, Equatable, Sendable {
     }
 }
 
+struct SyncCustomWorkoutCreationPayload: Codable, Equatable, Sendable {
+    let planId: String
+    let idempotencyKey: String
+    let source: WorkoutSource
+    let title: String
+    let scheduledDate: String?
+    let notes: String?
+    let exercises: [AthleteCustomWorkoutExerciseDraftRequest]
+}
+
 struct SyncOperationPayload: Codable, Equatable, Sendable {
     var weight: Double?
     var reps: Int?
@@ -35,6 +46,7 @@ struct SyncOperationPayload: Codable, Equatable, Sendable {
     var startedAt: String?
     var completedAt: String?
     var abandonedAt: String?
+    var customWorkoutCreation: SyncCustomWorkoutCreationPayload?
 
     static func upsertSet(
         weight: Double?,
@@ -54,6 +66,7 @@ struct SyncOperationPayload: Codable, Equatable, Sendable {
             startedAt: nil,
             completedAt: nil,
             abandonedAt: nil,
+            customWorkoutCreation: nil,
         )
     }
 
@@ -68,6 +81,7 @@ struct SyncOperationPayload: Codable, Equatable, Sendable {
             startedAt: startedAt,
             completedAt: nil,
             abandonedAt: nil,
+            customWorkoutCreation: nil,
         )
     }
 
@@ -82,6 +96,7 @@ struct SyncOperationPayload: Codable, Equatable, Sendable {
             startedAt: nil,
             completedAt: completedAt,
             abandonedAt: nil,
+            customWorkoutCreation: nil,
         )
     }
 
@@ -96,6 +111,22 @@ struct SyncOperationPayload: Codable, Equatable, Sendable {
             startedAt: nil,
             completedAt: nil,
             abandonedAt: abandonedAt,
+            customWorkoutCreation: nil,
+        )
+    }
+
+    static func createCustomWorkout(_ payload: SyncCustomWorkoutCreationPayload) -> SyncOperationPayload {
+        SyncOperationPayload(
+            weight: nil,
+            reps: nil,
+            rpe: nil,
+            isCompleted: nil,
+            isWarmup: nil,
+            restSecondsActual: nil,
+            startedAt: nil,
+            completedAt: nil,
+            abandonedAt: nil,
+            customWorkoutCreation: payload,
         )
     }
 }
@@ -181,6 +212,37 @@ struct SyncOperation: Codable, Equatable, Sendable, Identifiable {
             dedupeKey: "\(workoutInstanceId):\(SyncOperationType.startWorkout.rawValue)",
             payload: .startWorkout(startedAt: Self.iso8601String(startedAt)),
             workoutInstanceId: workoutInstanceId,
+            exerciseExecutionId: nil,
+            setNumber: nil,
+        )
+    }
+
+    static func customWorkoutCreationIdempotencyKey(planId: String) -> String {
+        "custom-workout-create:\(planId)"
+    }
+
+    static func createCustomWorkout(
+        planId: String,
+        source: WorkoutSource,
+        workout: WorkoutDetailsModel,
+        scheduledDay: Date,
+    ) -> SyncOperation {
+        let request = workout.asCreateCustomWorkoutRequest(scheduledDate: scheduledDay)
+        return SyncOperation(
+            type: .createCustomWorkout,
+            dedupeKey: "\(planId):\(SyncOperationType.createCustomWorkout.rawValue)",
+            payload: .createCustomWorkout(
+                SyncCustomWorkoutCreationPayload(
+                    planId: planId,
+                    idempotencyKey: customWorkoutCreationIdempotencyKey(planId: planId),
+                    source: source,
+                    title: request.title,
+                    scheduledDate: request.scheduledDate,
+                    notes: request.notes,
+                    exercises: request.exercises ?? [],
+                )
+            ),
+            workoutInstanceId: nil,
             exerciseExecutionId: nil,
             setNumber: nil,
         )

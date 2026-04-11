@@ -81,7 +81,7 @@ struct DataAndOfflineView: View {
             .padding(.horizontal, FFSpacing.md)
             .padding(.vertical, FFSpacing.md)
         }
-        .background(FFColors.background)
+        .ffScreenBackground()
         .navigationTitle("Данные и офлайн")
         .navigationBarBackButtonHidden(false)
         .alert("Сбросить тренировку?", isPresented: $isResetConfirmationPresented) {

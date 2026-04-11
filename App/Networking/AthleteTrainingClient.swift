@@ -1248,7 +1248,10 @@ protocol AthleteTrainingClientProtocol: Sendable {
     func statsSummary() async -> Result<AthleteStatsSummaryResponse, APIError>
     func creatorAnalytics() async -> Result<CreatorAnalyticsResponse, APIError>
     func getWorkoutDetails(workoutInstanceId: String) async -> Result<AthleteWorkoutDetailsResponse, APIError>
-    func createCustomWorkout(request: AthleteCreateCustomWorkoutRequest) async -> Result<AthleteWorkoutDetailsResponse, APIError>
+    func createCustomWorkout(
+        request: AthleteCreateCustomWorkoutRequest,
+        idempotencyKey: String?,
+    ) async -> Result<AthleteWorkoutDetailsResponse, APIError>
     func updateCustomWorkout(
         workoutInstanceId: String,
         request: AthleteUpdateCustomWorkoutRequest,
@@ -1346,8 +1349,13 @@ extension AthleteTrainingClientProtocol {
         .failure(.unknown)
     }
 
+    func createCustomWorkout(request: AthleteCreateCustomWorkoutRequest) async -> Result<AthleteWorkoutDetailsResponse, APIError> {
+        await createCustomWorkout(request: request, idempotencyKey: nil)
+    }
+
     func createCustomWorkout(
         request _: AthleteCreateCustomWorkoutRequest,
+        idempotencyKey _: String?,
     ) async -> Result<AthleteWorkoutDetailsResponse, APIError> {
         .failure(.unknown)
     }
@@ -1436,6 +1444,70 @@ extension AthleteWorkoutDetailsResponse {
             exercises: mappedExercises,
         )
     }
+
+    func asWorkoutProgressSnapshot(
+        userSub: String,
+        fallbackProgramId: String,
+        fallbackStartedAt: Date? = nil,
+        fallbackFinishedAt: Date? = nil,
+    ) -> WorkoutProgressSnapshot {
+        let startedAt = Self.parseISO8601(workout.startedAt) ?? fallbackStartedAt
+        let finishedAt = Self.parseISO8601(workout.completedAt)
+            ?? fallbackFinishedAt
+            ?? startedAt
+            ?? Date()
+
+        let storedExercises = Dictionary(
+            uniqueKeysWithValues: exercises.map { execution in
+                let sets = (execution.sets ?? [])
+                    .sorted(by: { $0.setNumber < $1.setNumber })
+                    .map { set in
+                        StoredSetProgress(
+                            isCompleted: set.isCompleted,
+                            repsText: set.reps.map(String.init) ?? "",
+                            weightText: set.weight.map(WorkoutSetInputFormatting.formatWeight) ?? "",
+                            rpeText: set.rpe.map(String.init) ?? "",
+                            isWarmup: set.isWarmup ?? false,
+                        )
+                    }
+                return (execution.exerciseId, StoredExerciseProgress(sets: sets))
+            }
+        )
+
+        return WorkoutProgressSnapshot(
+            userSub: userSub,
+            programId: workout.programId?.trimmedNilIfEmpty ?? fallbackProgramId,
+            workoutId: workout.id,
+            currentExerciseIndex: nil,
+            startedAt: startedAt,
+            source: workout.source == .custom ? .freestyle : .program,
+            workoutDetails: asWorkoutDetailsModel(),
+            hasLocalOnlyStructuralChanges: false,
+            isFinished: workout.status == .completed || workout.completedAt != nil,
+            lastUpdated: finishedAt,
+            exercises: storedExercises,
+        )
+    }
+
+    private static func parseISO8601(_ value: String?) -> Date? {
+        guard let value = value?.trimmedNilIfEmpty else { return nil }
+        if let withFractions = iso8601WithFractions.date(from: value) {
+            return withFractions
+        }
+        return iso8601.date(from: value)
+    }
+
+    private static let iso8601WithFractions: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter
+    }()
+
+    private static let iso8601: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime]
+        return formatter
+    }()
 }
 
 private extension String {
@@ -1610,12 +1682,16 @@ extension APIClient: AthleteTrainingClientProtocol {
         return await decode(request, as: AthleteWorkoutDetailsResponse.self)
     }
 
-    func createCustomWorkout(request: AthleteCreateCustomWorkoutRequest) async -> Result<AthleteWorkoutDetailsResponse, APIError> {
+    func createCustomWorkout(
+        request: AthleteCreateCustomWorkoutRequest,
+        idempotencyKey: String?,
+    ) async -> Result<AthleteWorkoutDetailsResponse, APIError> {
         do {
             let body = try JSONEncoder().encode(request)
             let apiRequest = APIRequest(
                 path: "/v1/athlete/workouts/custom",
                 method: .post,
+                headers: idempotencyKey.map { ["Idempotency-Key": $0] } ?? [:],
                 body: body,
                 requiresAuthorization: true,
             )

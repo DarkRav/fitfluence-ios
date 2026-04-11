@@ -225,6 +225,316 @@ final class TrainingStoreTests: XCTestCase {
         XCTAssertEqual(item.sourceTitle, "Программа: Сила 8 недель")
     }
 
+    @MainActor
+    func testScheduleRepeatedWorkoutCreatesRemoteMirrorAfterServerCreate() async throws {
+        let suite = "fitfluence.tests.training.plan.repeat-remote.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        let calendar = Calendar.current
+        let today = calendar.startOfDay(for: Date())
+        let targetDay = calendar.date(byAdding: .day, value: 1, to: today) ?? today
+        let store = LocalTrainingStore(defaults: defaults, calendar: calendar)
+        let remoteWorkoutID = "11111111-1111-1111-1111-111111111111"
+        let client = MockRepeatWorkoutAthleteTrainingClient(
+            createResult: .success(
+                makeWorkoutDetailsResponse(
+                    workoutID: remoteWorkoutID,
+                    title: "Повтор тренировки",
+                    source: .custom,
+                )
+            )
+        )
+        let viewModel = PlanScheduleViewModel(
+            userSub: "u1",
+            trainingStore: store,
+            athleteTrainingClient: client,
+            cacheStore: MemoryCacheStore(),
+            networkMonitor: StaticNetworkMonitor(currentStatus: true),
+            calendar: calendar,
+        )
+        let workout = makeRepeatWorkout(id: "quick-repeat-local", title: "Повтор тренировки")
+
+        let didSchedule = await viewModel.scheduleRepeatedWorkout(workout, source: .freestyle, on: targetDay)
+
+        XCTAssertTrue(didSchedule)
+        let request = await client.lastCreateRequest
+        XCTAssertEqual(request?.scheduledDate, scheduledDayString(targetDay, calendar: calendar))
+        let idempotencyKey = await client.lastCreateIdempotencyKey
+        XCTAssertTrue(idempotencyKey?.hasPrefix("custom-workout-create:pending-custom-") == true)
+
+        let item = try XCTUnwrap(viewModel.dayItems(for: targetDay).first)
+        XCTAssertEqual(item.planId, "remote-\(remoteWorkoutID)")
+        XCTAssertEqual(item.workoutId, remoteWorkoutID)
+        XCTAssertEqual(item.source, .freestyle)
+        XCTAssertEqual(item.title, "Повтор тренировки")
+        XCTAssertEqual(item.workoutDetails?.exercises.count, 1)
+    }
+
+    @MainActor
+    func testScheduleRepeatedWorkoutQueuesPendingTemplatePlanWhenOffline() async throws {
+        let suite = "fitfluence.tests.training.plan.repeat-local-pending.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        let calendar = Calendar.current
+        let today = calendar.startOfDay(for: Date())
+        let targetDay = calendar.date(byAdding: .day, value: 2, to: today) ?? today
+        let store = LocalTrainingStore(defaults: defaults, calendar: calendar)
+        let client = MockRepeatWorkoutAthleteTrainingClient(createResult: .success(makeWorkoutDetailsResponse(
+            workoutID: "should-not-be-used",
+            title: "Шаблонный повтор",
+            source: .custom,
+        )))
+        let viewModel = PlanScheduleViewModel(
+            userSub: "u1",
+            trainingStore: store,
+            athleteTrainingClient: client,
+            cacheStore: MemoryCacheStore(),
+            networkMonitor: StaticNetworkMonitor(currentStatus: false),
+            calendar: calendar,
+        )
+        let workout = makeRepeatWorkout(id: "template-repeat-local", title: "Шаблонный повтор")
+
+        let didSchedule = await viewModel.scheduleRepeatedWorkout(workout, source: .template, on: targetDay)
+
+        XCTAssertTrue(didSchedule)
+        let request = await client.lastCreateRequest
+        XCTAssertNil(request)
+
+        let item = try XCTUnwrap(viewModel.dayItems(for: targetDay).first)
+        XCTAssertTrue(item.planId.hasPrefix("pending-custom-"))
+        XCTAssertEqual(item.workoutId, "template-repeat-local")
+        XCTAssertEqual(item.source, .template)
+        XCTAssertEqual(item.title, "Шаблонный повтор")
+        XCTAssertEqual(item.workoutDetails, workout)
+        XCTAssertTrue(item.isPendingRemoteCreation)
+    }
+
+    @MainActor
+    func testRepeatCompletedManualWorkoutCreatesFreshRemoteInstance() async throws {
+        let suite = "fitfluence.tests.training.plan.repeat-completed-remote.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        let calendar = Calendar.current
+        let completedDay = calendar.startOfDay(for: Date())
+        let targetDay = calendar.date(byAdding: .day, value: 1, to: completedDay) ?? completedDay
+        let store = LocalTrainingStore(defaults: defaults, calendar: calendar)
+        let oldWorkoutID = "11111111-1111-1111-1111-111111111111"
+        let newWorkoutID = "22222222-2222-2222-2222-222222222222"
+        let client = MockRepeatWorkoutAthleteTrainingClient(
+            createResult: .success(
+                makeWorkoutDetailsResponse(
+                    workoutID: newWorkoutID,
+                    title: "Повтор manual",
+                    source: .custom,
+                )
+            )
+        )
+        let viewModel = PlanScheduleViewModel(
+            userSub: "u1",
+            trainingStore: store,
+            athleteTrainingClient: client,
+            cacheStore: MemoryCacheStore(),
+            networkMonitor: StaticNetworkMonitor(currentStatus: true),
+            calendar: calendar,
+        )
+        let completedWorkout = makeRepeatWorkout(id: oldWorkoutID, title: "Повтор manual")
+        await store.schedule(
+            TrainingDayPlan(
+                id: "completed-manual",
+                userSub: "u1",
+                day: completedDay,
+                status: .completed,
+                programId: nil,
+                programTitle: nil,
+                workoutId: oldWorkoutID,
+                title: "Повтор manual",
+                source: .freestyle,
+                workoutDetails: completedWorkout,
+            )
+        )
+        await viewModel.onAppear()
+
+        let completedItem = try XCTUnwrap(viewModel.dayItems(for: completedDay).first)
+
+        await viewModel.repeatCompleted(completedItem, on: targetDay)
+
+        let request = await client.lastCreateRequest
+        XCTAssertEqual(request?.scheduledDate, scheduledDayString(targetDay, calendar: calendar))
+        let idempotencyKey = await client.lastCreateIdempotencyKey
+        XCTAssertTrue(idempotencyKey?.hasPrefix("custom-workout-create:pending-custom-") == true)
+
+        let repeatedItem = try XCTUnwrap(viewModel.dayItems(for: targetDay).first)
+        XCTAssertEqual(repeatedItem.source, .freestyle)
+        XCTAssertEqual(repeatedItem.status, .planned)
+        XCTAssertEqual(repeatedItem.workoutId, newWorkoutID)
+        XCTAssertNotEqual(repeatedItem.workoutId, oldWorkoutID)
+        XCTAssertEqual(repeatedItem.planId, "remote-\(newWorkoutID)")
+    }
+
+    @MainActor
+    func testRepeatCompletedManualWorkoutQueuesPendingFreshCopyWhenOffline() async throws {
+        let suite = "fitfluence.tests.training.plan.repeat-completed-local.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        let calendar = Calendar.current
+        let completedDay = calendar.startOfDay(for: Date())
+        let targetDay = calendar.date(byAdding: .day, value: 2, to: completedDay) ?? completedDay
+        let store = LocalTrainingStore(defaults: defaults, calendar: calendar)
+        let oldWorkoutID = "33333333-3333-3333-3333-333333333333"
+        let client = MockRepeatWorkoutAthleteTrainingClient(createResult: .failure(.unknown))
+        let viewModel = PlanScheduleViewModel(
+            userSub: "u1",
+            trainingStore: store,
+            athleteTrainingClient: client,
+            cacheStore: MemoryCacheStore(),
+            networkMonitor: StaticNetworkMonitor(currentStatus: false),
+            calendar: calendar,
+        )
+        let completedWorkout = makeRepeatWorkout(id: oldWorkoutID, title: "Локальный повтор")
+        await store.schedule(
+            TrainingDayPlan(
+                id: "completed-local-manual",
+                userSub: "u1",
+                day: completedDay,
+                status: .completed,
+                programId: nil,
+                programTitle: nil,
+                workoutId: oldWorkoutID,
+                title: "Локальный повтор",
+                source: .freestyle,
+                workoutDetails: completedWorkout,
+            )
+        )
+        await viewModel.onAppear()
+
+        let completedItem = try XCTUnwrap(viewModel.dayItems(for: completedDay).first)
+
+        await viewModel.repeatCompleted(completedItem, on: targetDay)
+
+        let request = await client.lastCreateRequest
+        XCTAssertNil(request)
+
+        let repeatedItem = try XCTUnwrap(viewModel.dayItems(for: targetDay).first)
+        XCTAssertEqual(repeatedItem.source, .freestyle)
+        XCTAssertEqual(repeatedItem.status, .planned)
+        XCTAssertNotEqual(repeatedItem.workoutId, oldWorkoutID)
+        XCTAssertTrue(repeatedItem.planId.hasPrefix("pending-custom-"))
+        XCTAssertEqual(repeatedItem.workoutDetails?.title, "Локальный повтор")
+        XCTAssertNotEqual(repeatedItem.workoutDetails?.id, oldWorkoutID)
+        XCTAssertTrue(repeatedItem.isPendingRemoteCreation)
+    }
+
+    @MainActor
+    func testScheduleRepeatLastWorkoutFetchesMissingManualDetailsBeforeCreate() async throws {
+        let suite = "fitfluence.tests.training.plan.repeat-last-fetch-details.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        let calendar = Calendar.current
+        let completedDay = calendar.startOfDay(for: Date())
+        let targetDay = calendar.date(byAdding: .day, value: 1, to: completedDay) ?? completedDay
+        let store = LocalTrainingStore(defaults: defaults, calendar: calendar)
+        let completedWorkoutID = "44444444-4444-4444-4444-444444444444"
+        let newWorkoutID = "55555555-5555-5555-5555-555555555555"
+        let fetchedDetails = makeRepeatWorkout(id: completedWorkoutID, title: "Последняя manual")
+        let client = MockRepeatWorkoutAthleteTrainingClient(
+            createResult: .success(
+                makeWorkoutDetailsResponse(
+                    workoutID: newWorkoutID,
+                    title: "Последняя manual",
+                    source: .custom,
+                )
+            ),
+            getDetailsResult: .success(
+                makeWorkoutDetailsResponse(
+                    workoutID: completedWorkoutID,
+                    title: "Последняя manual",
+                    source: .custom,
+                    workoutTemplateID: nil,
+                )
+            )
+        )
+        let viewModel = PlanScheduleViewModel(
+            userSub: "u1",
+            trainingStore: store,
+            athleteTrainingClient: client,
+            cacheStore: MemoryCacheStore(),
+            networkMonitor: StaticNetworkMonitor(currentStatus: true),
+            calendar: calendar,
+        )
+
+        await store.appendHistory(
+            CompletedWorkoutRecord(
+                id: "history-last-manual",
+                userSub: "u1",
+                programId: "",
+                workoutId: completedWorkoutID,
+                workoutTitle: fetchedDetails.title,
+                source: .freestyle,
+                startedAt: completedDay.addingTimeInterval(1800),
+                finishedAt: completedDay.addingTimeInterval(3600),
+                durationSeconds: 1800,
+                completedSets: 4,
+                totalSets: 4,
+                volume: 640,
+                workoutDetails: nil,
+                notes: nil,
+                overallRPE: nil,
+            )
+        )
+        await viewModel.onAppear()
+
+        await viewModel.scheduleRepeatLastWorkout(on: targetDay)
+
+        let fetchedWorkoutID = await client.lastFetchedWorkoutID
+        XCTAssertEqual(fetchedWorkoutID, completedWorkoutID)
+        let createRequest = await client.lastCreateRequest
+        XCTAssertEqual(createRequest?.title, "Последняя manual")
+
+        let repeatedItem = try XCTUnwrap(viewModel.dayItems(for: targetDay).first)
+        XCTAssertEqual(repeatedItem.planId, "remote-\(newWorkoutID)")
+        XCTAssertEqual(repeatedItem.workoutId, newWorkoutID)
+    }
+
+    @MainActor
+    func testScheduleRepeatedWorkoutDoesNotQueuePendingAfterAmbiguousServerFailure() async throws {
+        let suite = "fitfluence.tests.training.plan.repeat-server-failure.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        let calendar = Calendar.current
+        let today = calendar.startOfDay(for: Date())
+        let targetDay = calendar.date(byAdding: .day, value: 1, to: today) ?? today
+        let store = LocalTrainingStore(defaults: defaults, calendar: calendar)
+        let client = MockRepeatWorkoutAthleteTrainingClient(
+            createResult: .failure(.serverError(statusCode: 500, bodySnippet: nil))
+        )
+        let viewModel = PlanScheduleViewModel(
+            userSub: "u1",
+            trainingStore: store,
+            athleteTrainingClient: client,
+            cacheStore: MemoryCacheStore(),
+            networkMonitor: StaticNetworkMonitor(currentStatus: true),
+            calendar: calendar,
+        )
+        let workout = makeRepeatWorkout(id: "quick-repeat-local", title: "Повтор тренировки")
+
+        let didSchedule = await viewModel.scheduleRepeatedWorkout(workout, source: .freestyle, on: targetDay)
+
+        XCTAssertFalse(didSchedule)
+        let request = await client.lastCreateRequest
+        XCTAssertNotNil(request)
+        XCTAssertTrue(viewModel.dayItems(for: targetDay).isEmpty)
+        XCTAssertEqual(
+            viewModel.repeatSchedulingErrorMessage,
+            "Не удалось создать тренировку на сервере. Проверьте план и повторите попытку."
+        )
+    }
+
     func testProgressInsightEnginePrioritizesMissedWorkouts() {
         let context = ProgressInsightContext(
             workouts7d: 4,
@@ -864,6 +1174,110 @@ final class TrainingStoreTests: XCTestCase {
             source: .athleteCatalog,
             draftDefaults: defaults,
         )
+    }
+
+    private func makeRepeatWorkout(id: String, title: String) -> WorkoutDetailsModel {
+        WorkoutDetailsModel(
+            id: id,
+            title: title,
+            dayOrder: 0,
+            coachNote: "Повтор",
+            exercises: [
+                WorkoutExercise(
+                    id: "ex-1",
+                    name: "Жим лёжа",
+                    sets: 4,
+                    repsMin: 6,
+                    repsMax: 8,
+                    targetRpe: 8,
+                    restSeconds: 120,
+                    notes: "Тяжёлый сет",
+                    orderIndex: 0,
+                ),
+            ],
+        )
+    }
+
+    private func makeWorkoutDetailsResponse(
+        workoutID: String,
+        title: String,
+        source: AthleteWorkoutSource,
+        workoutTemplateID: String? = nil,
+    ) -> AthleteWorkoutDetailsResponse {
+        AthleteWorkoutDetailsResponse(
+            workout: AthleteWorkoutInstance(
+                id: workoutID,
+                enrollmentId: nil,
+                workoutTemplateId: workoutTemplateID,
+                title: title,
+                status: .planned,
+                source: source,
+                scheduledDate: nil,
+                startedAt: nil,
+                completedAt: nil,
+                durationSeconds: nil,
+                notes: "Повтор",
+                programId: nil,
+            ),
+            exercises: [
+                AthleteExerciseExecution(
+                    id: "execution-1",
+                    workoutInstanceId: workoutID,
+                    exerciseTemplateId: nil,
+                    workoutPlanId: nil,
+                    exerciseId: "ex-1",
+                    orderIndex: 0,
+                    notes: nil,
+                    plannedSets: 4,
+                    plannedRepsMin: 6,
+                    plannedRepsMax: 8,
+                    plannedTargetRpe: 8,
+                    plannedRestSeconds: 120,
+                    plannedNotes: "Тяжёлый сет",
+                    progressionPolicyId: nil,
+                    exercise: AthleteExerciseBrief(
+                        id: "ex-1",
+                        code: nil,
+                        name: "Жим лёжа",
+                        description: nil,
+                        isBodyweight: false,
+                        equipment: nil,
+                        media: nil,
+                    ),
+                    sets: nil,
+                ),
+            ],
+        )
+    }
+}
+
+private actor MockRepeatWorkoutAthleteTrainingClient: AthleteTrainingClientProtocol {
+    private(set) var lastCreateRequest: AthleteCreateCustomWorkoutRequest?
+    private(set) var lastCreateIdempotencyKey: String?
+    private(set) var lastFetchedWorkoutID: String?
+    private let createResult: Result<AthleteWorkoutDetailsResponse, APIError>
+    private let getDetailsResult: Result<AthleteWorkoutDetailsResponse, APIError>
+
+    init(
+        createResult: Result<AthleteWorkoutDetailsResponse, APIError>,
+        getDetailsResult: Result<AthleteWorkoutDetailsResponse, APIError> = .failure(.unknown),
+    ) {
+        self.createResult = createResult
+        self.getDetailsResult = getDetailsResult
+    }
+
+    func createCustomWorkout(
+        request: AthleteCreateCustomWorkoutRequest,
+        idempotencyKey: String?,
+    ) async -> Result<AthleteWorkoutDetailsResponse, APIError> {
+        lastCreateRequest = request
+        lastCreateIdempotencyKey = idempotencyKey
+        return createResult
+    }
+
+    func getWorkoutDetails(workoutInstanceId: String) async -> Result<AthleteWorkoutDetailsResponse, APIError> {
+        lastFetchedWorkoutID = workoutInstanceId
+        return getDetailsResult
     }
 }
 

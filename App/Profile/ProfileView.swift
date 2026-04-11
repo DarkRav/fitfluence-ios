@@ -33,7 +33,7 @@ struct ProfileScreen: View {
             .padding(.horizontal, FFSpacing.md)
             .padding(.vertical, FFSpacing.md)
         }
-        .background(FFColors.background)
+        .ffScreenBackground()
         .task {
             await viewModel.onAppear()
         }

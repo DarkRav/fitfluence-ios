@@ -385,11 +385,17 @@ final class WorkoutHomeViewModel {
 
         let remoteRecent = summary.recentActivity.recentWorkouts.compactMap(makeCompletedWorkoutRecord)
         if !remoteRecent.isEmpty {
+            let mergedRecent = mergeRecentWorkouts(existing: recentWorkouts, incoming: remoteRecent)
             for record in remoteRecent {
-                await trainingStore.appendHistory(record)
+                guard let preferredRecord = mergedRecent.first(where: { isSameRecentWorkout($0, record) }) else {
+                    await trainingStore.appendHistory(record)
+                    continue
+                }
+                guard preferredRecord.id == record.id else { continue }
+                await trainingStore.appendHistory(preferredRecord)
             }
-            recentWorkouts = remoteRecent
-            lastCompleted = remoteRecent.first
+            recentWorkouts = Array(mergedRecent.prefix(8))
+            lastCompleted = recentWorkouts.first
         }
 
         if let todayWorkout = summary.todayWorkout {
@@ -594,11 +600,14 @@ final class WorkoutHomeViewModel {
             guard let status = todayWorkoutStatus(for: plan.status) else { continue }
 
             let launchTarget = await resolveLaunchTarget(for: plan)
+            let detailText = plan.isPendingCustomWorkoutCreation
+                ? "Ожидает синхронизации с сервером"
+                : statusDetailText(status, source: plan.source)
             resolved.append(
                 TodayWorkout(
                     title: plan.title,
                     subtitle: localTodaySubtitle(for: plan),
-                    detailText: statusDetailText(status, source: plan.source),
+                    detailText: detailText,
                     status: status,
                     source: plan.source,
                     launchTarget: launchTarget,
@@ -727,6 +736,10 @@ final class WorkoutHomeViewModel {
     }
 
     private func resolveLaunchTarget(for plan: TrainingDayPlan) async -> TodayWorkout.LaunchTarget? {
+        if plan.isPendingCustomWorkoutCreation {
+            return nil
+        }
+
         if plan.source == .program,
            !plan.id.hasPrefix("remote-"),
            let workoutDetails = plan.workoutDetails
@@ -903,6 +916,80 @@ final class WorkoutHomeViewModel {
             notes: nil,
             overallRPE: nil,
         )
+    }
+
+    private func mergeRecentWorkouts(
+        existing: [CompletedWorkoutRecord],
+        incoming: [CompletedWorkoutRecord],
+    ) -> [CompletedWorkoutRecord] {
+        var merged = existing
+
+        for record in incoming {
+            if let existingIndex = merged.firstIndex(where: { isSameRecentWorkout($0, record) }) {
+                merged[existingIndex] = richerRecentWorkout(merged[existingIndex], record)
+            } else {
+                merged.append(record)
+            }
+        }
+
+        merged.sort { lhs, rhs in
+            if lhs.finishedAt != rhs.finishedAt {
+                return lhs.finishedAt > rhs.finishedAt
+            }
+            return recentWorkoutRichnessScore(lhs) > recentWorkoutRichnessScore(rhs)
+        }
+        return merged
+    }
+
+    private func isSameRecentWorkout(_ lhs: CompletedWorkoutRecord, _ rhs: CompletedWorkoutRecord) -> Bool {
+        guard lhs.source == rhs.source else { return false }
+        guard lhs.programId == rhs.programId, lhs.workoutId == rhs.workoutId else { return false }
+        let finishedDelta = abs(lhs.finishedAt.timeIntervalSince(rhs.finishedAt))
+        return finishedDelta <= 60 * 60 * 12
+    }
+
+    private func richerRecentWorkout(
+        _ lhs: CompletedWorkoutRecord,
+        _ rhs: CompletedWorkoutRecord,
+    ) -> CompletedWorkoutRecord {
+        let lhsScore = recentWorkoutRichnessScore(lhs)
+        let rhsScore = recentWorkoutRichnessScore(rhs)
+
+        if lhsScore != rhsScore {
+            return lhsScore > rhsScore ? lhs : rhs
+        }
+
+        if lhs.finishedAt != rhs.finishedAt {
+            return lhs.finishedAt > rhs.finishedAt ? lhs : rhs
+        }
+
+        return lhs.id <= rhs.id ? lhs : rhs
+    }
+
+    private func recentWorkoutRichnessScore(_ record: CompletedWorkoutRecord) -> Int {
+        var score = 0
+
+        if record.workoutDetails != nil {
+            score += 80
+        }
+
+        if record.totalSets > 0 || record.completedSets > 0 {
+            score += 30
+        }
+
+        if record.volume > 0 {
+            score += 10
+        }
+
+        if record.overallRPE != nil {
+            score += 5
+        }
+
+        if record.notes?.trimmedNilIfEmpty != nil {
+            score += 5
+        }
+
+        return score
     }
 
     private func mapStatus(_ status: AthleteWorkoutInstanceStatus?) -> TrainingDayStatus {

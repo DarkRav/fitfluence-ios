@@ -867,7 +867,10 @@ private actor MockProgramDetailsAthleteTrainingClient: AthleteTrainingClientProt
         .failure(.unknown)
     }
 
-    func createCustomWorkout(request _: AthleteCreateCustomWorkoutRequest) async -> Result<AthleteWorkoutDetailsResponse, APIError> {
+    func createCustomWorkout(
+        request _: AthleteCreateCustomWorkoutRequest,
+        idempotencyKey _: String?,
+    ) async -> Result<AthleteWorkoutDetailsResponse, APIError> {
         .failure(.unknown)
     }
 

@@ -116,7 +116,7 @@ struct WorkoutSettingsView: View {
             .padding(.horizontal, FFSpacing.md)
             .padding(.vertical, FFSpacing.md)
         }
-        .background(FFColors.background)
+        .ffScreenBackground()
         .navigationTitle("Настройки тренировки")
         .navigationBarBackButtonHidden(false)
     }

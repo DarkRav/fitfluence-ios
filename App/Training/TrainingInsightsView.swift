@@ -1365,7 +1365,7 @@ struct TrainingInsightsView: View {
             .padding(.horizontal, FFSpacing.md)
             .padding(.vertical, FFSpacing.md)
         }
-        .background(FFColors.background)
+        .ffScreenBackground()
         .refreshable {
             await viewModel.reload()
         }
@@ -1876,7 +1876,7 @@ struct ExerciseProgressDetailsView: View {
             .padding(.horizontal, FFSpacing.md)
             .padding(.vertical, FFSpacing.md)
         }
-        .background(FFColors.background)
+        .ffScreenBackground()
         .navigationTitle(viewModel.item.name)
         .navigationBarBackButtonHidden(false)
         .task {

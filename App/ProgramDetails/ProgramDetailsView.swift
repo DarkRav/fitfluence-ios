@@ -1865,7 +1865,7 @@ struct ProgramDetailsScreen: View {
             .padding(.horizontal, FFSpacing.md)
             .padding(.vertical, FFSpacing.md)
         }
-        .background(FFColors.background)
+        .ffScreenBackground()
         .sheet(isPresented: $isPlanningSetupPresented) {
             if let route = viewModel.planningSetupRoute() {
                 ProgramPlanningSetupView(
@@ -3144,7 +3144,7 @@ struct ProgramOnboardingView: View {
             .padding(.horizontal, FFSpacing.md)
             .padding(.vertical, FFSpacing.md)
         }
-        .background(FFColors.background)
+        .ffScreenBackground()
         .sheet(isPresented: $isPlanningPresented) {
             ProgramPlanningSetupView(
                 route: route,
@@ -3496,7 +3496,7 @@ struct WorkoutIntroView: View {
             .padding(.horizontal, FFSpacing.md)
             .padding(.vertical, FFSpacing.md)
         }
-        .background(FFColors.background)
+        .ffScreenBackground()
         .sheet(item: $selectedExercise) { exercise in
             WorkoutExerciseDetailsSheet(exercise: exercise)
         }

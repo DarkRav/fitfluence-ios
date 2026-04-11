@@ -186,7 +186,7 @@ struct ProgramWorkoutHistoryScreen: View {
                 }
             }
         }
-        .background(FFColors.background)
+        .ffScreenBackground()
         .navigationTitle("Прогресс программы")
         .navigationBarTitleDisplayMode(.inline)
         .task {

@@ -588,6 +588,7 @@ final class WorkoutPlayerViewModel {
     private var autoAdvanceUndoTask: Task<Void, Never>?
     private var networkObserverTask: Task<Void, Never>?
     private var pendingSetSyncFlushTask: Task<Void, Never>?
+    private var primaryActionHoldMode: PrimaryActionMode?
 
     private var lastPerformanceByExerciseId: [String: AthleteExerciseLastPerformanceResponse] = [:]
     private var personalRecordByExerciseId: [String: AthletePersonalRecord] = [:]
@@ -620,6 +621,7 @@ final class WorkoutPlayerViewModel {
     var focusedSetIndex: Int?
     var exercisePickerFlow: WorkoutExercisePickerFlow?
     var editingTarget: EditingTarget?
+    var inlineEditingSetIndex: Int?
     var secondaryEditingSetIndex: Int?
     var pendingInlineCommitCount = 0
 
@@ -744,12 +746,16 @@ final class WorkoutPlayerViewModel {
     }
 
     var effectiveEditingSetIndex: Int? {
-        editingTarget?.setIndex ?? secondaryEditingSetIndex
+        editingTarget?.setIndex ?? inlineEditingSetIndex ?? secondaryEditingSetIndex
     }
 
     var isEditingNonLoggableSet: Bool {
         guard let effectiveEditingSetIndex else { return false }
         return effectiveEditingSetIndex != activeSetIndex
+    }
+
+    var isInlineEditingOrCommitting: Bool {
+        editingTarget != nil || pendingInlineCommitCount > 0
     }
 
     private var activeSetEntryState: SetEntryState {
@@ -761,13 +767,32 @@ final class WorkoutPlayerViewModel {
         nextLoggableSetIndex != nil
     }
 
-    private var primaryActionMode: PrimaryActionMode {
-        if isEditingNonLoggableSet {
-            return .done
-        }
+    private var calculatedPrimaryActionMode: PrimaryActionMode {
         guard hasUncompletedSetsInCurrentExercise else {
             return .advance
         }
+
+        if let inlineEditingSetIndex {
+            if inlineEditingSetIndex != activeSetIndex {
+                return .done
+            }
+
+            if isInlineEditingOrCommitting {
+                return .done
+            }
+
+            switch entryState(for: inlineEditingSetIndex) {
+            case .complete:
+                return .log
+            case .partial, .empty, .unavailable:
+                return .done
+            }
+        }
+
+        if isInlineEditingOrCommitting {
+            return .done
+        }
+
         switch activeSetEntryState {
         case .complete:
             return .log
@@ -778,8 +803,12 @@ final class WorkoutPlayerViewModel {
         }
     }
 
+    private var resolvedPrimaryActionMode: PrimaryActionMode {
+        primaryActionHoldMode ?? calculatedPrimaryActionMode
+    }
+
     var primaryActionTitle: String {
-        switch primaryActionMode {
+        switch resolvedPrimaryActionMode {
         case .done:
             return "Готово"
         case .log:
@@ -798,7 +827,7 @@ final class WorkoutPlayerViewModel {
 
     var isPrimaryBottomActionEnabled: Bool {
         guard !isSubmittingFinish, !isFinished else { return false }
-        switch primaryActionMode {
+        switch resolvedPrimaryActionMode {
         case .done:
             return true
         case .advance:
@@ -1154,6 +1183,14 @@ final class WorkoutPlayerViewModel {
         editingTarget = nil
     }
 
+    func beginPrimaryActionInteraction() {
+        primaryActionHoldMode = calculatedPrimaryActionMode
+    }
+
+    func endPrimaryActionInteraction() {
+        primaryActionHoldMode = nil
+    }
+
     func toggleWarmup(setIndex: Int) async {
         guard let currentExercise, let session else { return }
         beginSecondaryEditingModeIfNeeded(for: setIndex)
@@ -1183,6 +1220,7 @@ final class WorkoutPlayerViewModel {
         toastMessage = duplicateLast
             ? "Добавлен дубликат последнего подхода"
             : "Добавлен новый подход"
+        inlineEditingSetIndex = nil
         await ensureCurrentExerciseContext()
         await syncCanonicalWorkoutIfNeeded()
         await refreshSyncStatusIndicator()
@@ -1206,6 +1244,11 @@ final class WorkoutPlayerViewModel {
             secondaryEditingSetIndex = nil
         } else if let secondaryEditingSetIndex, secondaryEditingSetIndex > setIndex {
             self.secondaryEditingSetIndex = secondaryEditingSetIndex - 1
+        }
+        if inlineEditingSetIndex == setIndex {
+            inlineEditingSetIndex = nil
+        } else if let inlineEditingSetIndex, inlineEditingSetIndex > setIndex {
+            self.inlineEditingSetIndex = inlineEditingSetIndex - 1
         }
         toastMessage = "Подход удалён"
         await ensureCurrentExerciseContext()
@@ -1294,6 +1337,7 @@ final class WorkoutPlayerViewModel {
     func nextExercise() async {
         guard let session else { return }
         restTimer.dismissCompletionMessage()
+        clearInlineEditingState()
         self.session = await sessionManager.moveExercise(session, to: currentExerciseIndex + 1)
         focusedSetIndex = firstUncompletedSetIndex(in: currentExerciseState) ?? 0
         await ensureCurrentExerciseContext()
@@ -1302,6 +1346,7 @@ final class WorkoutPlayerViewModel {
     func prevExercise() async {
         guard let session else { return }
         restTimer.dismissCompletionMessage()
+        clearInlineEditingState()
         self.session = await sessionManager.moveExercise(session, to: currentExerciseIndex - 1)
         focusedSetIndex = firstUncompletedSetIndex(in: currentExerciseState) ?? 0
         await ensureCurrentExerciseContext()
@@ -1316,6 +1361,7 @@ final class WorkoutPlayerViewModel {
             updatedSession = await sessionManager.moveExercise(updatedSession, to: currentExerciseIndex + 1)
         }
         restTimer.dismissCompletionMessage()
+        clearInlineEditingState()
         self.session = updatedSession
         toastMessage = shouldAdvance ? "Упражнение пропущено, открыто следующее" : "Упражнение пропущено"
         focusedSetIndex = firstUncompletedSetIndex(in: currentExerciseState) ?? 0
@@ -1332,6 +1378,7 @@ final class WorkoutPlayerViewModel {
         autoAdvanceUndoTask?.cancel()
         autoAdvanceUndoTask = nil
         autoAdvanceUndoState = nil
+        clearInlineEditingState()
         toastMessage = "Последнее действие отменено"
         await ensureCurrentExerciseContext()
     }
@@ -1352,6 +1399,7 @@ final class WorkoutPlayerViewModel {
         autoAdvanceUndoTask?.cancel()
         autoAdvanceUndoTask = nil
         autoAdvanceUndoState = nil
+        clearInlineEditingState()
         toastMessage = "Изменение отменено"
         await ensureCurrentExerciseContext()
     }
@@ -1363,6 +1411,7 @@ final class WorkoutPlayerViewModel {
             return
         }
         restTimer.dismissCompletionMessage()
+        clearInlineEditingState()
         self.session = await sessionManager.moveExercise(session, to: targetIndex)
         focusedSetIndex = firstUncompletedSetIndex(in: currentExerciseState) ?? 0
         await ensureCurrentExerciseContext()
@@ -1514,6 +1563,7 @@ final class WorkoutPlayerViewModel {
         }
 
         await toggleSetComplete(setIndex: targetIndex)
+        clearInlineEditingState()
         startRestTimerForCurrentExerciseIfEnabled()
     }
 
@@ -1560,6 +1610,7 @@ final class WorkoutPlayerViewModel {
             await syncCurrentSetIfNeeded(exerciseId: currentExercise.id, setIndex: index)
         }
 
+        clearInlineEditingState()
         focusedSetIndex = firstUncompletedSetIndex(in: currentExerciseState)
         toastMessage = incompleteIndexes.count == 1
             ? "Подход отмечен"
@@ -1603,11 +1654,11 @@ final class WorkoutPlayerViewModel {
     }
 
     func primaryBottomAction() async {
+        let mode = resolvedPrimaryActionMode
         restTimer.dismissCompletionMessage()
-        switch primaryActionMode {
+        switch mode {
         case .done:
-            secondaryEditingSetIndex = nil
-            editingTarget = nil
+            clearInlineEditingState()
         case .log:
             await completeFocusedSet()
         case .advance:
@@ -1705,6 +1756,11 @@ final class WorkoutPlayerViewModel {
                (!currentExerciseState.sets.indices.contains(secondaryEditingSetIndex) || secondaryEditingSetIndex == activeSetIndex)
             {
                 self.secondaryEditingSetIndex = nil
+            }
+            if let inlineEditingSetIndex,
+               !currentExerciseState.sets.indices.contains(inlineEditingSetIndex)
+            {
+                self.inlineEditingSetIndex = nil
             }
         }
         trackExerciseStartedIfNeeded(exerciseId: exercise.id)
@@ -2445,11 +2501,18 @@ final class WorkoutPlayerViewModel {
     }
 
     private func beginSecondaryEditingModeIfNeeded(for setIndex: Int) {
+        inlineEditingSetIndex = setIndex
         if setIndex == activeSetIndex {
             secondaryEditingSetIndex = nil
         } else {
             secondaryEditingSetIndex = setIndex
         }
+    }
+
+    private func clearInlineEditingState() {
+        editingTarget = nil
+        inlineEditingSetIndex = nil
+        secondaryEditingSetIndex = nil
     }
 
     private enum LoggingValidationScope {
@@ -3137,9 +3200,7 @@ struct WorkoutPlayerViewV2: View {
                 }
             },
             onPrimary: {
-                performLoggingAction {
-                    await viewModel.primaryBottomAction()
-                }
+                performPrimaryLoggingAction()
             },
         )
         .padding(.horizontal, FFSpacing.sm)
@@ -3215,6 +3276,21 @@ struct WorkoutPlayerViewV2: View {
                 try? await Task.sleep(for: .milliseconds(20))
             }
             await action()
+        }
+    }
+
+    private func performPrimaryLoggingAction() {
+        viewModel.beginPrimaryActionInteraction()
+        dismissKeyboard()
+        Task {
+            try? await Task.sleep(for: .milliseconds(80))
+            while await MainActor.run(body: { viewModel.pendingInlineCommitCount > 0 }) {
+                try? await Task.sleep(for: .milliseconds(20))
+            }
+            await viewModel.primaryBottomAction()
+            await MainActor.run {
+                viewModel.endPrimaryActionInteraction()
+            }
         }
     }
 
@@ -3925,7 +4001,7 @@ struct WorkoutCompletionViewV2: View {
         }
         .padding(.horizontal, FFSpacing.md)
         .padding(.vertical, FFSpacing.md)
-        .background(FFColors.background)
+        .ffScreenBackground()
     }
 }
 

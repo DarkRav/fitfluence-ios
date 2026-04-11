@@ -4,6 +4,7 @@ struct RecentWorkoutDetailsView: View {
     let record: CompletedWorkoutRecord
     let onRepeat: (WorkoutDetailsModel?) -> Void
     private let progressStore: WorkoutProgressStore
+    private let athleteTrainingClient: AthleteTrainingClientProtocol?
 
     @State private var snapshot: WorkoutProgressSnapshot?
     @State private var isLoadingDetails = false
@@ -12,10 +13,12 @@ struct RecentWorkoutDetailsView: View {
         record: CompletedWorkoutRecord,
         onRepeat: @escaping (WorkoutDetailsModel?) -> Void,
         progressStore: WorkoutProgressStore = LocalWorkoutProgressStore(),
+        athleteTrainingClient: AthleteTrainingClientProtocol? = nil,
     ) {
         self.record = record
         self.onRepeat = onRepeat
         self.progressStore = progressStore
+        self.athleteTrainingClient = athleteTrainingClient
     }
 
     var body: some View {
@@ -40,11 +43,11 @@ struct RecentWorkoutDetailsView: View {
                             .font(FFTypography.h2)
                             .foregroundStyle(FFColors.textPrimary)
 
-                        metricRow(title: "Длительность", value: formattedDuration(record.durationSeconds))
-                        metricRow(title: "Подходы", value: "\(record.completedSets) из \(max(record.totalSets, record.completedSets))")
-                        metricRow(title: "Общий объём", value: "\(formattedVolume(record.volume)) кг")
+                        metricRow(title: "Длительность", value: formattedDuration(resolvedDurationSeconds))
+                        metricRow(title: "Подходы", value: "\(resolvedSummary.completedSets) из \(resolvedSummary.totalSets)")
+                        metricRow(title: "Общий объём", value: "\(formattedVolume(resolvedSummary.volume)) кг")
 
-                        if let overallRPE = record.overallRPE {
+                        if let overallRPE = resolvedSummary.overallRPE {
                             metricRow(title: "Субъективная нагрузка", value: "\(overallRPE)")
                         }
                     }
@@ -65,8 +68,8 @@ struct RecentWorkoutDetailsView: View {
                                     .font(FFTypography.caption)
                                     .foregroundStyle(FFColors.textSecondary)
                             }
-                        } else if !hasAccurateSnapshot {
-                            Text("Подробные подходы доступны только для последнего сохранённого выполнения этой тренировки")
+                        } else if !hasMatchingSnapshot {
+                            Text("Подробные подходы не найдены для этого выполнения тренировки")
                                 .font(FFTypography.caption)
                                 .foregroundStyle(FFColors.textSecondary)
                         } else if detailedExercises.isEmpty {
@@ -129,7 +132,7 @@ struct RecentWorkoutDetailsView: View {
             .padding(.horizontal, FFSpacing.md)
             .padding(.vertical, FFSpacing.md)
         }
-        .background(FFColors.background)
+        .ffScreenBackground()
         .navigationTitle("Тренировка")
         .navigationBarTitleDisplayMode(.inline)
         .task(id: record.id) {
@@ -189,8 +192,66 @@ struct RecentWorkoutDetailsView: View {
         return String(format: "%.1f", volume)
     }
 
+    private var resolvedDurationSeconds: Int {
+        if record.durationSeconds > 0 {
+            return record.durationSeconds
+        }
+
+        guard let snapshot, let startedAt = snapshot.startedAt else {
+            return 0
+        }
+        return max(0, Int(snapshot.lastUpdated.timeIntervalSince(startedAt)))
+    }
+
+    private var resolvedSummary: SummaryMetrics {
+        let fallback = SummaryMetrics(
+            completedSets: record.completedSets,
+            totalSets: max(record.totalSets, record.completedSets),
+            volume: record.volume,
+            overallRPE: record.overallRPE,
+        )
+
+        guard let derived = derivedSummary else {
+            return fallback
+        }
+
+        return SummaryMetrics(
+            completedSets: fallback.totalSets > 0 || fallback.completedSets > 0 ? fallback.completedSets : derived.completedSets,
+            totalSets: fallback.totalSets > 0 || fallback.completedSets > 0 ? fallback.totalSets : derived.totalSets,
+            volume: fallback.volume > 0 ? fallback.volume : derived.volume,
+            overallRPE: fallback.overallRPE ?? derived.overallRPE,
+        )
+    }
+
+    private var derivedSummary: SummaryMetrics? {
+        guard hasMatchingSnapshot, let snapshot, !snapshot.exercises.isEmpty else { return nil }
+
+        let completedSets = snapshot.exercises.values
+            .flatMap(\.sets)
+            .filter(\.isCompleted)
+        let totalSets = snapshot.workoutDetails?.exercises.reduce(0) { partial, exercise in
+            partial + max(1, exercise.sets)
+        } ?? snapshot.exercises.values.reduce(0) { partial, exercise in
+            partial + exercise.sets.count
+        }
+        let volume = completedSets.reduce(0.0) { partial, set in
+            let reps = Double(set.repsText) ?? 0
+            let weight = Double(set.weightText) ?? 0
+            return partial + reps * weight
+        }
+        let rpeValues = completedSets.compactMap { Int($0.rpeText) }
+        let overallRPE = rpeValues.isEmpty ? nil : Int(round(Double(rpeValues.reduce(0, +)) / Double(rpeValues.count)))
+
+        return SummaryMetrics(
+            completedSets: completedSets.count,
+            totalSets: max(totalSets, completedSets.count),
+            volume: volume,
+            overallRPE: overallRPE,
+        )
+    }
+
     private var detailedExercises: [ExerciseSetDetails] {
-        guard hasAccurateSnapshot, let workoutDetails = snapshot?.workoutDetails else { return [] }
+        guard hasMatchingSnapshot, let workoutDetails = snapshot?.workoutDetails else { return [] }
         let stored = snapshot?.exercises ?? [:]
 
         return workoutDetails.exercises
@@ -222,14 +283,33 @@ struct RecentWorkoutDetailsView: View {
 
     private func loadSnapshot() async {
         isLoadingDetails = true
-        let loadedSnapshot = await progressStore.load(
+        defer { isLoadingDetails = false }
+
+        if let loadedSnapshot = await progressStore.load(
             userSub: record.userSub,
             programId: record.programId,
             workoutId: record.workoutId,
-        )
-        if let loadedSnapshot {
+        ) {
             snapshot = loadedSnapshot
-        } else if let workoutDetails = record.workoutDetails {
+            return
+        }
+
+        if record.source != .template,
+           let athleteTrainingClient,
+           case let .success(detailsResponse) = await athleteTrainingClient.getWorkoutDetails(workoutInstanceId: record.workoutId)
+        {
+            let remoteSnapshot = detailsResponse.asWorkoutProgressSnapshot(
+                userSub: record.userSub,
+                fallbackProgramId: record.programId,
+                fallbackStartedAt: record.startedAt,
+                fallbackFinishedAt: record.finishedAt,
+            )
+            snapshot = remoteSnapshot
+            await progressStore.save(remoteSnapshot)
+            return
+        }
+
+        if let workoutDetails = record.workoutDetails {
             snapshot = WorkoutProgressSnapshot(
                 userSub: record.userSub,
                 programId: record.programId,
@@ -243,16 +323,25 @@ struct RecentWorkoutDetailsView: View {
                 lastUpdated: record.finishedAt,
                 exercises: [:]
             )
-        } else {
-            snapshot = nil
+            return
         }
-        isLoadingDetails = false
+
+        snapshot = nil
     }
 
-    private var hasAccurateSnapshot: Bool {
+    private var hasMatchingSnapshot: Bool {
         guard let snapshot else { return false }
-        let delta = abs(snapshot.lastUpdated.timeIntervalSince(record.finishedAt))
-        return delta <= 60 * 60 * 6
+        guard snapshot.isFinished else { return false }
+
+        if let snapshotStartedAt = snapshot.startedAt {
+            let startedDelta = abs(snapshotStartedAt.timeIntervalSince(record.startedAt))
+            if startedDelta <= 60 * 10 {
+                return true
+            }
+        }
+
+        let finishedDelta = abs(snapshot.lastUpdated.timeIntervalSince(record.finishedAt))
+        return finishedDelta <= 60 * 15
     }
 
     private func trimmed(_ value: String) -> String? {
@@ -263,6 +352,13 @@ struct RecentWorkoutDetailsView: View {
     private var canRepeatWorkout: Bool {
         record.source != .program && (record.workoutDetails != nil || snapshot?.workoutDetails != nil)
     }
+}
+
+private struct SummaryMetrics {
+    let completedSets: Int
+    let totalSets: Int
+    let volume: Double
+    let overallRPE: Int?
 }
 
 private struct ExerciseSetDetails: Identifiable {

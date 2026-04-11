@@ -72,7 +72,7 @@ struct WorkoutHomeScreen: View {
             .padding(.top, 4)
             .padding(.bottom, 16)
         }
-        .background(FFColors.background)
+        .ffScreenBackground()
         .refreshable {
             await viewModel.reload()
         }

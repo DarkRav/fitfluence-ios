@@ -18,6 +18,10 @@ enum TrainingDayStatus: String, Codable, Equatable, Sendable {
     }
 }
 
+enum TrainingDayPendingSyncState: String, Codable, Equatable, Sendable {
+    case createCustomWorkout
+}
+
 struct CompletedWorkoutRecord: Codable, Equatable, Sendable, Identifiable {
     let id: String
     let userSub: String
@@ -47,6 +51,40 @@ struct TrainingDayPlan: Codable, Equatable, Sendable, Identifiable {
     let title: String
     let source: WorkoutSource
     let workoutDetails: WorkoutDetailsModel?
+    let pendingSyncState: TrainingDayPendingSyncState?
+    let pendingSyncOperationId: UUID?
+
+    init(
+        id: String,
+        userSub: String,
+        day: Date,
+        status: TrainingDayStatus,
+        programId: String?,
+        programTitle: String?,
+        workoutId: String?,
+        title: String,
+        source: WorkoutSource,
+        workoutDetails: WorkoutDetailsModel?,
+        pendingSyncState: TrainingDayPendingSyncState? = nil,
+        pendingSyncOperationId: UUID? = nil,
+    ) {
+        self.id = id
+        self.userSub = userSub
+        self.day = day
+        self.status = status
+        self.programId = programId
+        self.programTitle = programTitle
+        self.workoutId = workoutId
+        self.title = title
+        self.source = source
+        self.workoutDetails = workoutDetails
+        self.pendingSyncState = pendingSyncState
+        self.pendingSyncOperationId = pendingSyncOperationId
+    }
+
+    var isPendingCustomWorkoutCreation: Bool {
+        pendingSyncState == .createCustomWorkout
+    }
 }
 
 struct TemplateExerciseDraft: Codable, Equatable, Sendable, Identifiable {
@@ -506,7 +544,7 @@ actor LocalTrainingStore: TrainingStore {
             workoutId: record.workoutId,
             title: record.workoutTitle,
             source: record.source,
-            workoutDetails: nil,
+            workoutDetails: record.workoutDetails,
         )
         await schedule(plan)
     }
@@ -629,6 +667,12 @@ actor LocalTrainingStore: TrainingStore {
             .sorted { $0.day < $1.day }
     }
 
+    func plan(userSub: String, planId: String) async -> TrainingDayPlan? {
+        (loadArray([TrainingDayPlan].self, key: planKey(userSub: userSub)) ?? []).first { item in
+            item.userSub == userSub && item.id == planId
+        }
+    }
+
     func deleteProgramPlans(
         userSub: String,
         programId: String,
@@ -729,6 +773,16 @@ extension WorkoutDetailsModel {
             title: title,
             dayOrder: 0,
             coachNote: "Быстрая тренировка",
+            exercises: exercises,
+        )
+    }
+
+    func asRepeatableCopy(prefix: String) -> WorkoutDetailsModel {
+        WorkoutDetailsModel(
+            id: "\(prefix)-\(UUID().uuidString)",
+            title: title,
+            dayOrder: dayOrder,
+            coachNote: coachNote,
             exercises: exercises,
         )
     }

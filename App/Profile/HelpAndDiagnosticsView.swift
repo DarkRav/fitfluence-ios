@@ -85,7 +85,7 @@ struct HelpAndDiagnosticsView: View {
             .padding(.horizontal, FFSpacing.md)
             .padding(.bottom, FFSpacing.md)
         }
-        .background(FFColors.background)
+        .ffScreenBackground()
         .navigationTitle("Помощь и диагностика")
         .navigationBarBackButtonHidden(false)
         .sheet(isPresented: $isMailComposerPresented) {

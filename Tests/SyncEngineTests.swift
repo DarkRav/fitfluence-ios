@@ -205,14 +205,148 @@ final class SyncEngineTests: XCTestCase {
         XCTAssertEqual(op?.status, .dead)
     }
 
+    func testCreateCustomWorkoutOperationMaterializesPendingPlan() async throws {
+        let namespace = "athlete-pending-create"
+        let outboxStore = SyncOutboxStore(baseURL: temporaryDirectory())
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: "fitfluence.tests.sync.pending-create.\(UUID().uuidString)"))
+        let calendar = Calendar.current
+        let targetDay = calendar.startOfDay(for: Date())
+        let trainingStore = LocalTrainingStore(defaults: defaults, calendar: calendar)
+        let reconciler = PendingCustomWorkoutReconciler(
+            trainingStore: trainingStore,
+            cacheStore: MemoryCacheStore(),
+        )
+        let worker = SyncWorker(
+            outboxStore: outboxStore,
+            pendingCustomWorkoutReconciler: reconciler,
+        )
+        let client = MockAthleteTrainingClient()
+        let localWorkout = makeWorkout(id: "quick-repeat-local", title: "Повтор")
+        let remoteWorkoutID = "77777777-7777-7777-7777-777777777777"
+
+        await client.setCreateResult(.success(makeWorkoutDetailsResponse(
+            workoutID: remoteWorkoutID,
+            title: "Повтор",
+            source: .custom,
+            scheduledDate: scheduledDayString(targetDay, calendar: calendar),
+        )))
+        await trainingStore.schedule(
+            TrainingDayPlan(
+                id: "pending-custom-plan",
+                userSub: namespace,
+                day: targetDay,
+                status: .planned,
+                programId: nil,
+                programTitle: nil,
+                workoutId: localWorkout.id,
+                title: localWorkout.title,
+                source: .freestyle,
+                workoutDetails: localWorkout,
+                pendingSyncState: .createCustomWorkout,
+            )
+        )
+        _ = await outboxStore.enqueue(
+            .createCustomWorkout(
+                planId: "pending-custom-plan",
+                source: .freestyle,
+                workout: localWorkout,
+                scheduledDay: targetDay,
+            ),
+            namespace: namespace,
+        )
+
+        await worker.process(namespace: namespace, athleteTrainingClient: client, isOnline: true)
+
+        let plans = await trainingStore.plans(userSub: namespace, month: targetDay)
+        let plan = try XCTUnwrap(plans.first)
+        XCTAssertEqual(plan.id, "remote-\(remoteWorkoutID)")
+        XCTAssertEqual(plan.workoutId, remoteWorkoutID)
+        XCTAssertFalse(plan.isPendingCustomWorkoutCreation)
+    }
+
     private func temporaryDirectory() -> URL {
         FileManager.default.temporaryDirectory
             .appendingPathComponent("fitfluence-sync-tests-\(UUID().uuidString)", isDirectory: true)
+    }
+
+    private func makeWorkout(id: String, title: String) -> WorkoutDetailsModel {
+        WorkoutDetailsModel(
+            id: id,
+            title: title,
+            dayOrder: 0,
+            coachNote: "Повтор",
+            exercises: [
+                WorkoutExercise(
+                    id: "ex-1",
+                    name: "Жим лёжа",
+                    sets: 4,
+                    repsMin: 6,
+                    repsMax: 8,
+                    targetRpe: 8,
+                    restSeconds: 120,
+                    notes: "Тяжёлый сет",
+                    orderIndex: 0,
+                ),
+            ],
+        )
+    }
+
+    private func makeWorkoutDetailsResponse(
+        workoutID: String,
+        title: String,
+        source: AthleteWorkoutSource,
+        scheduledDate: String?,
+    ) -> AthleteWorkoutDetailsResponse {
+        AthleteWorkoutDetailsResponse(
+            workout: AthleteWorkoutInstance(
+                id: workoutID,
+                enrollmentId: nil,
+                workoutTemplateId: nil,
+                title: title,
+                status: .planned,
+                source: source,
+                scheduledDate: scheduledDate,
+                startedAt: nil,
+                completedAt: nil,
+                durationSeconds: nil,
+                notes: "Повтор",
+                programId: nil,
+            ),
+            exercises: [
+                AthleteExerciseExecution(
+                    id: "execution-1",
+                    workoutInstanceId: workoutID,
+                    exerciseTemplateId: nil,
+                    workoutPlanId: nil,
+                    exerciseId: "ex-1",
+                    orderIndex: 0,
+                    notes: nil,
+                    plannedSets: 4,
+                    plannedRepsMin: 6,
+                    plannedRepsMax: 8,
+                    plannedTargetRpe: 8,
+                    plannedRestSeconds: 120,
+                    plannedNotes: "Тяжёлый сет",
+                    progressionPolicyId: nil,
+                    exercise: AthleteExerciseBrief(
+                        id: "ex-1",
+                        code: nil,
+                        name: "Жим лёжа",
+                        description: nil,
+                        isBodyweight: false,
+                        equipment: nil,
+                        media: nil,
+                    ),
+                    sets: nil,
+                ),
+            ],
+        )
     }
 }
 
 private actor MockAthleteTrainingClient: AthleteTrainingClientProtocol {
     var calls: [String] = []
+    var createResult: Result<AthleteWorkoutDetailsResponse, APIError> = .failure(.unknown)
 
     var startResult: Result<AthleteWorkoutInstance, APIError> = .success(
         AthleteWorkoutInstance(
@@ -290,6 +424,10 @@ private actor MockAthleteTrainingClient: AthleteTrainingClientProtocol {
         setResult = result
     }
 
+    func setCreateResult(_ result: Result<AthleteWorkoutDetailsResponse, APIError>) {
+        createResult = result
+    }
+
     func activeEnrollmentProgress() async -> Result<ActiveEnrollmentProgressResponse, APIError> {
         .failure(.unknown)
     }
@@ -298,8 +436,12 @@ private actor MockAthleteTrainingClient: AthleteTrainingClientProtocol {
         .failure(.unknown)
     }
 
-    func createCustomWorkout(request _: AthleteCreateCustomWorkoutRequest) async -> Result<AthleteWorkoutDetailsResponse, APIError> {
-        .failure(.unknown)
+    func createCustomWorkout(
+        request _: AthleteCreateCustomWorkoutRequest,
+        idempotencyKey _: String?,
+    ) async -> Result<AthleteWorkoutDetailsResponse, APIError> {
+        calls.append("CREATE_CUSTOM_WORKOUT")
+        return createResult
     }
 
     func updateCustomWorkout(

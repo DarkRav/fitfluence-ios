@@ -1,5 +1,23 @@
 import SwiftUI
 
+private struct FFScreenBackgroundModifier: ViewModifier {
+    let alignment: Alignment
+
+    func body(content: Content) -> some View {
+        ZStack(alignment: alignment) {
+            FFColors.background.ignoresSafeArea()
+            content
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: alignment)
+    }
+}
+
+extension View {
+    func ffScreenBackground(alignment: Alignment = .top) -> some View {
+        modifier(FFScreenBackgroundModifier(alignment: alignment))
+    }
+}
+
 struct FFLoadingState: View {
     var title: String = "Загрузка"
     var fillsAvailableHeight = false
@@ -23,12 +41,9 @@ struct FFLoadingState: View {
 
 struct FFScreenSpinner: View {
     var body: some View {
-        ZStack {
-            FFColors.background
-            ProgressView()
-                .tint(FFColors.accent)
-                .controlSize(.large)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        ProgressView()
+            .tint(FFColors.accent)
+            .controlSize(.large)
+            .ffScreenBackground(alignment: .center)
     }
 }

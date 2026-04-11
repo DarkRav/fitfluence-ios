@@ -742,6 +742,107 @@ final class WorkoutsFeatureAndProgressStoreTests: XCTestCase {
         XCTAssertEqual(viewModel.primaryActionKind, .startToday)
     }
 
+    func testWorkoutHomeViewModelKeepsRicherLocalRecentWorkoutOverRemoteSummaryStub() async throws {
+        let suite = "fitfluence.tests.workout-home.recent.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        let trainingStore = LocalTrainingStore(defaults: defaults)
+        let userSub = "u-recent-rich"
+        let finishedAt = try XCTUnwrap(ISO8601DateFormatter().date(from: "2026-03-18T09:20:00Z"))
+        let localRichRecord = CompletedWorkoutRecord(
+            id: "local-finish",
+            userSub: userSub,
+            programId: "program-1",
+            workoutId: "workout-0",
+            workoutTitle: "Верх A",
+            source: .program,
+            startedAt: finishedAt.addingTimeInterval(-3000),
+            finishedAt: finishedAt,
+            durationSeconds: 3000,
+            completedSets: 12,
+            totalSets: 12,
+            volume: 1640,
+            workoutDetails: sampleWorkoutDetails,
+            notes: nil,
+            overallRPE: 8,
+        )
+        await trainingStore.appendHistory(localRichRecord)
+
+        let client = MockWorkoutHomeAthleteTrainingClient(
+            homeSummaryResult: .success(
+                AthleteHomeSummaryResponse(
+                    generatedAt: "2026-03-19T09:20:00Z",
+                    primaryAction: AthleteHomePrimaryAction(
+                        type: .startTodaysWorkout,
+                        title: "Начать тренировку на сегодня",
+                        workout: nil,
+                        enrollmentId: nil,
+                        programId: nil,
+                    ),
+                    recentActivity: AthleteHomeRecentActivity(
+                        lastCompletedWorkout: AthleteHomeRecentWorkoutSummary(
+                            workoutInstanceId: "workout-0",
+                            programId: "program-1",
+                            title: "Верх A",
+                            source: .program,
+                            completedAt: "2026-03-18T09:20:00Z",
+                            durationSeconds: 3000,
+                        ),
+                        recentWorkouts: [
+                            AthleteHomeRecentWorkoutSummary(
+                                workoutInstanceId: "workout-0",
+                                programId: "program-1",
+                                title: "Верх A",
+                                source: .program,
+                                completedAt: "2026-03-18T09:20:00Z",
+                                durationSeconds: 3000,
+                            ),
+                        ],
+                    ),
+                    progressOverview: AthleteHomeProgressOverview(
+                        streakDays: 1,
+                        workouts7d: 1,
+                        totalWorkouts: 1,
+                        totalMinutes7d: 50,
+                        lastWorkoutAt: "2026-03-18T09:20:00Z",
+                    ),
+                    activeWorkout: nil,
+                    todayWorkout: nil,
+                    activeProgram: nil,
+                ),
+            ),
+            syncStatusResult: .success(
+                AthleteSyncStatusResponse(
+                    status: .synced,
+                    hasPendingLocalChanges: false,
+                    isDelayed: false,
+                    pendingOperations: 0,
+                    lastSyncedAt: "2026-03-19T09:20:00Z",
+                ),
+            ),
+        )
+
+        let viewModel = WorkoutHomeViewModel(
+            userSub: userSub,
+            trainingStore: trainingStore,
+            progressStore: MockWorkoutProgressStore(statuses: [:]),
+            resumeStore: LocalWorkoutResumeStore(),
+            cacheStore: MemoryCacheStore(),
+            networkMonitor: StaticNetworkMonitor(currentStatus: true),
+            athleteTrainingClient: client,
+            syncCoordinator: .shared,
+        )
+
+        await viewModel.reload()
+
+        XCTAssertEqual(viewModel.recentWorkouts.count, 1)
+        XCTAssertEqual(viewModel.recentWorkouts.first?.id, "local-finish")
+        XCTAssertEqual(viewModel.recentWorkouts.first?.completedSets, 12)
+        XCTAssertEqual(viewModel.recentWorkouts.first?.volume, 1640)
+        XCTAssertEqual(viewModel.recentWorkouts.first?.workoutDetails?.id, "w1")
+    }
+
     func testHomeViewModelUsesHomeSummaryAsPrimaryRemoteSourceOfTruth() async {
         let programId = "11111111-1111-1111-1111-111111111111"
         let client = MockWorkoutHomeAthleteTrainingClient(
@@ -2692,7 +2793,10 @@ private actor MockWorkoutHomeAthleteTrainingClient: AthleteTrainingClientProtoco
         .failure(.unknown)
     }
 
-    func createCustomWorkout(request _: AthleteCreateCustomWorkoutRequest) async -> Result<AthleteWorkoutDetailsResponse, APIError> {
+    func createCustomWorkout(
+        request _: AthleteCreateCustomWorkoutRequest,
+        idempotencyKey _: String?,
+    ) async -> Result<AthleteWorkoutDetailsResponse, APIError> {
         .failure(.unknown)
     }
 

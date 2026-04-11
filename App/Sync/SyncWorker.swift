@@ -1,5 +1,105 @@
 import Foundation
 
+actor PendingCustomWorkoutReconciler {
+    private let trainingStore: LocalTrainingStore
+    private let cacheStore: CacheStore
+
+    init(
+        trainingStore: LocalTrainingStore = LocalTrainingStore(),
+        cacheStore: CacheStore = CompositeCacheStore(),
+    ) {
+        self.trainingStore = trainingStore
+        self.cacheStore = cacheStore
+    }
+
+    func materialize(
+        namespace: String,
+        payload: SyncCustomWorkoutCreationPayload,
+        response: AthleteWorkoutDetailsResponse,
+    ) async {
+        guard let existingPlan = await trainingStore.plan(userSub: namespace, planId: payload.planId) else {
+            let details = response.asWorkoutDetailsModel()
+            await cacheStore.set(
+                workoutCacheKey(source: .freestyle, workoutId: details.id),
+                value: details,
+                namespace: namespace,
+                ttl: 60 * 60 * 24,
+            )
+            return
+        }
+
+        let details = response.asWorkoutDetailsModel()
+        let remotePlan = TrainingDayPlan(
+            id: "remote-\(details.id)",
+            userSub: namespace,
+            day: existingPlan.day,
+            status: .planned,
+            programId: nil,
+            programTitle: nil,
+            workoutId: details.id,
+            title: details.title,
+            source: .freestyle,
+            workoutDetails: details,
+        )
+
+        await trainingStore.deletePlan(
+            userSub: namespace,
+            day: existingPlan.day,
+            planId: existingPlan.id,
+            workoutId: existingPlan.workoutId,
+            title: existingPlan.title,
+            source: existingPlan.source,
+        )
+        await trainingStore.schedule(remotePlan)
+        await cacheStore.set(
+            workoutCacheKey(source: .freestyle, workoutId: details.id),
+            value: details,
+            namespace: namespace,
+            ttl: 60 * 60 * 24,
+        )
+    }
+
+    private func workoutCacheKey(source: WorkoutSource, workoutId: String?) -> String {
+        let resolvedWorkoutID = workoutId?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+            ? workoutId!
+            : "unknown"
+        return "workout.details:\(source.rawValue):\(resolvedWorkoutID)"
+    }
+}
+
+extension AthleteWorkoutDetailsResponse {
+    func isValidFreshCustomWorkout(expectedScheduledDate: String?) -> Bool {
+        if workout.source != .custom {
+            return false
+        }
+
+        switch workout.status {
+        case .completed, .abandoned:
+            return false
+        case .planned, .inProgress, .missed, .none:
+            break
+        }
+
+        if workout.completedAt?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false {
+            return false
+        }
+
+        if workout.startedAt?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false {
+            return false
+        }
+
+        if let expectedScheduledDate,
+           let scheduledDate = workout.scheduledDate?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !scheduledDate.isEmpty,
+           scheduledDate != expectedScheduledDate
+        {
+            return false
+        }
+
+        return true
+    }
+}
+
 actor SyncWorker {
     private enum ExecutionOutcome {
         case success
@@ -9,10 +109,15 @@ actor SyncWorker {
     }
 
     private let outboxStore: SyncOutboxStore
+    private let pendingCustomWorkoutReconciler: PendingCustomWorkoutReconciler
     private var isRunning = false
 
-    init(outboxStore: SyncOutboxStore) {
+    init(
+        outboxStore: SyncOutboxStore,
+        pendingCustomWorkoutReconciler: PendingCustomWorkoutReconciler = PendingCustomWorkoutReconciler(),
+    ) {
         self.outboxStore = outboxStore
+        self.pendingCustomWorkoutReconciler = pendingCustomWorkoutReconciler
     }
 
     func process(
@@ -41,7 +146,11 @@ actor SyncWorker {
 
             await outboxStore.markInFlight(operationId: operation.id, namespace: namespace)
 
-            let outcome = await execute(operation: operation, client: athleteTrainingClient)
+            let outcome = await execute(
+                namespace: namespace,
+                operation: operation,
+                client: athleteTrainingClient,
+            )
             switch outcome {
             case .success:
                 await outboxStore.markSent(operationId: operation.id, namespace: namespace)
@@ -83,6 +192,7 @@ actor SyncWorker {
     }
 
     private func execute(
+        namespace: String,
         operation: SyncOperation,
         client: AthleteTrainingClientProtocol,
     ) async -> ExecutionOutcome {
@@ -107,6 +217,36 @@ actor SyncWorker {
                 restSecondsActual: operation.payload.restSecondsActual,
             )
             result = response.map { _ in () }
+
+        case .createCustomWorkout:
+            guard let payload = operation.payload.customWorkoutCreation else {
+                return .dead(error: "Invalid CREATE_CUSTOM_WORKOUT payload")
+            }
+
+            let response = await client.createCustomWorkout(
+                request: AthleteCreateCustomWorkoutRequest(
+                    title: payload.title,
+                    scheduledDate: payload.scheduledDate,
+                    notes: payload.notes,
+                    exercises: payload.exercises,
+                ),
+                idempotencyKey: payload.idempotencyKey,
+            )
+            switch response {
+            case let .success(detailsResponse):
+                guard detailsResponse.isValidFreshCustomWorkout(expectedScheduledDate: payload.scheduledDate) else {
+                    return .dead(error: "Invalid CREATE_CUSTOM_WORKOUT response")
+                }
+                await pendingCustomWorkoutReconciler.materialize(
+                    namespace: namespace,
+                    payload: payload,
+                    response: detailsResponse,
+                )
+                result = .success(())
+
+            case let .failure(error):
+                result = .failure(error)
+            }
 
         case .startWorkout:
             guard let workoutInstanceId = operation.workoutInstanceId else {
@@ -255,7 +395,7 @@ actor SyncWorker {
             })
             return !hasUnsentStart
 
-        case .startWorkout, .abandonWorkout:
+        case .createCustomWorkout, .startWorkout, .abandonWorkout:
             return true
         }
     }

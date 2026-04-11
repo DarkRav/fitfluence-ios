@@ -23,6 +23,8 @@ final class PlanScheduleViewModel {
         let workoutId: String?
         let workoutDetails: WorkoutDetailsModel?
         let scheduledTimeText: String?
+        let isPendingRemoteCreation: Bool
+        let pendingRemoteCreationOperationId: UUID?
     }
 
     struct UpcomingDayItem: Identifiable, Equatable {
@@ -65,6 +67,7 @@ final class PlanScheduleViewModel {
     var weekCounts: WeekCounts = .empty
     var lastCompletedRecord: CompletedWorkoutRecord?
     var lastRepeatableRecord: CompletedWorkoutRecord?
+    var repeatSchedulingErrorMessage: String?
     private var suppressedPlanSignatures: Set<String> = []
 
     init(
@@ -242,6 +245,8 @@ final class PlanScheduleViewModel {
             workoutId: plan.workoutId,
             workoutDetails: plan.workoutDetails,
             scheduledTimeText: scheduledTimeText(for: plan.day),
+            isPendingRemoteCreation: plan.isPendingCustomWorkoutCreation,
+            pendingRemoteCreationOperationId: plan.pendingSyncOperationId,
         )
     }
 
@@ -299,22 +304,28 @@ final class PlanScheduleViewModel {
     }
 
     private func sourceTitle(for plan: TrainingDayPlan, kind: SourceKind) -> String {
+        let baseTitle: String
         switch kind {
         case .program:
             if let programTitle = plan.programTitle?.trimmedNilIfEmpty {
-                return "Программа: \(programTitle)"
+                baseTitle = "Программа: \(programTitle)"
+            } else {
+                baseTitle = "Программа"
             }
-            return "Программа"
         case .manual:
             switch plan.source {
             case .template:
-                return "Ручная: шаблон"
+                baseTitle = "Ручная: шаблон"
             case .freestyle:
-                return "Ручная: одноразовая"
+                baseTitle = "Ручная: одноразовая"
             case .program:
-                return "Ручная"
+                baseTitle = "Ручная"
             }
         }
+        if plan.isPendingCustomWorkoutCreation {
+            return "\(baseTitle) • ждёт синхронизации"
+        }
+        return baseTitle
     }
 
     func scheduleQuickWorkout(on day: Date) async {
@@ -357,6 +368,176 @@ final class PlanScheduleViewModel {
         )
     }
 
+    @discardableResult
+    func scheduleRepeatedWorkout(
+        _ workout: WorkoutDetailsModel,
+        source: WorkoutSource,
+        on day: Date,
+    ) async -> Bool {
+        let scheduledDay = normalizedScheduledDate(day)
+        guard canSchedule(on: scheduledDay) else { return false }
+        repeatSchedulingErrorMessage = nil
+
+        if source == .program {
+            await schedulePlan(
+                day: scheduledDay,
+                title: workout.title,
+                source: .program,
+                programId: nil,
+                programTitle: nil,
+                workoutId: workout.id,
+                status: .planned,
+                workoutDetails: workout,
+            )
+            return true
+        }
+
+        let pendingPlanId = "pending-custom-\(UUID().uuidString)"
+
+        if !networkMonitor.currentStatus {
+            return await enqueuePendingRepeatedWorkout(
+                workout,
+                source: source,
+                planId: pendingPlanId,
+                on: scheduledDay,
+            )
+        }
+
+        guard let athleteTrainingClient else {
+            repeatSchedulingErrorMessage = "Не удалось отправить запрос на сервер. Повторите попытку позже."
+            return false
+        }
+
+        let result = await athleteTrainingClient.createCustomWorkout(
+            request: workout.asCreateCustomWorkoutRequest(scheduledDate: scheduledDay),
+            idempotencyKey: SyncOperation.customWorkoutCreationIdempotencyKey(planId: pendingPlanId),
+        )
+        switch result {
+        case let .success(detailsResponse):
+            guard detailsResponse.isValidFreshCustomWorkout(
+                expectedScheduledDate: scheduledDayString(scheduledDay)
+            ) else {
+                repeatSchedulingErrorMessage = "Сервер вернул некорректную копию тренировки. Новая тренировка не создана."
+                return false
+            }
+            await storeRemoteRepeatedWorkout(detailsResponse, scheduledDay: scheduledDay)
+            return true
+
+        case let .failure(error):
+            if shouldQueuePendingRepeatedWorkout(for: error) {
+                return await enqueuePendingRepeatedWorkout(
+                    workout,
+                    source: source,
+                    planId: pendingPlanId,
+                    on: scheduledDay,
+                )
+            }
+            repeatSchedulingErrorMessage = repeatSchedulingErrorMessage(for: error)
+            return false
+        }
+    }
+
+    private func shouldQueuePendingRepeatedWorkout(for error: APIError) -> Bool {
+        switch error {
+        case .offline:
+            return true
+        case .timeout, .cancelled, .transportError, .serverError, .decodingError, .unknown, .httpError, .unauthorized, .forbidden, .invalidURL:
+            return false
+        }
+    }
+
+    private func repeatSchedulingErrorMessage(for error: APIError) -> String {
+        switch error {
+        case .timeout, .transportError, .serverError, .decodingError, .unknown:
+            return "Не удалось создать тренировку на сервере. Проверьте план и повторите попытку."
+        case .httpError(let statusCode, _):
+            return "Сервер не создал тренировку. Код ответа: \(statusCode)."
+        case .unauthorized, .forbidden:
+            return "Сессия устарела. Войдите снова и повторите попытку."
+        case .invalidURL:
+            return "Не удалось сформировать запрос на сервер."
+        case .offline:
+            return "Нет интернета. Тренировка сохранена локально и будет создана после синхронизации."
+        case .cancelled:
+            return "Создание тренировки было отменено."
+        }
+    }
+
+    private func storeRemoteRepeatedWorkout(
+        _ detailsResponse: AthleteWorkoutDetailsResponse,
+        scheduledDay: Date,
+    ) async {
+        let details = detailsResponse.asWorkoutDetailsModel()
+        let remoteMirror = TrainingDayPlan(
+            id: "remote-\(details.id)",
+            userSub: userSub,
+            day: scheduledDay,
+            status: .planned,
+            programId: nil,
+            programTitle: nil,
+            workoutId: details.id,
+            title: details.title,
+            source: .freestyle,
+            workoutDetails: details,
+        )
+        await trainingStore.schedule(remoteMirror)
+        await cacheStore.set(
+            workoutCacheKey(programId: nil, source: .freestyle, workoutId: details.id),
+            value: details,
+            namespace: userSub,
+            ttl: 60 * 60 * 24,
+        )
+        selectedDay = calendar.startOfDay(for: scheduledDay)
+        selectedMonth = calendar.dateInterval(of: .month, for: scheduledDay)?.start ?? selectedDay
+        await reload()
+    }
+
+    private func enqueuePendingRepeatedWorkout(
+        _ workout: WorkoutDetailsModel,
+        source: WorkoutSource,
+        planId: String,
+        on scheduledDay: Date,
+    ) async -> Bool {
+        let normalizedSource: WorkoutSource = source == .template ? .template : .freestyle
+        let queueResult = await SyncCoordinator.shared.enqueueCreateCustomWorkout(
+            namespace: userSub,
+            planId: planId,
+            source: normalizedSource,
+            workout: workout,
+            scheduledDay: scheduledDay,
+            processImmediately: false,
+        )
+        let pendingPlan = TrainingDayPlan(
+            id: planId,
+            userSub: userSub,
+            day: scheduledDay,
+            status: .planned,
+            programId: nil,
+            programTitle: nil,
+            workoutId: workout.id,
+            title: workout.title,
+            source: normalizedSource,
+            workoutDetails: workout,
+            pendingSyncState: .createCustomWorkout,
+            pendingSyncOperationId: queueResult.operation?.id,
+        )
+        await trainingStore.schedule(pendingPlan)
+        await cacheStore.set(
+            workoutCacheKey(programId: nil, source: normalizedSource, workoutId: workout.id),
+            value: workout,
+            namespace: userSub,
+            ttl: 60 * 60 * 24,
+        )
+        selectedDay = calendar.startOfDay(for: scheduledDay)
+        selectedMonth = calendar.dateInterval(of: .month, for: scheduledDay)?.start ?? selectedDay
+        await reload()
+        if networkMonitor.currentStatus {
+            await SyncCoordinator.shared.retryNow(namespace: userSub)
+            await reload()
+        }
+        return true
+    }
+
     func scheduleRepeatLastWorkout(on day: Date) async {
         let resolvedRecord: CompletedWorkoutRecord?
         if let lastRepeatableRecord {
@@ -369,25 +550,78 @@ final class PlanScheduleViewModel {
         }
         guard let resolvedRecord else { return }
         guard resolvedRecord.source != .program else { return }
-        let cachedDetails = await cacheStore.get(
-            workoutCacheKey(
-                programId: resolvedRecord.programId.trimmedNilIfEmpty,
-                source: resolvedRecord.source,
-                workoutId: resolvedRecord.workoutId.trimmedNilIfEmpty,
-            ),
+        guard let resolvedWorkout = await resolveRepeatableWorkout(for: resolvedRecord) else {
+            repeatSchedulingErrorMessage = "Не удалось загрузить последнюю тренировку для повтора."
+            return
+        }
+        let repeatPrefix = resolvedRecord.source == .template ? "template-repeat" : "quick-repeat"
+        let repeatedWorkout = resolvedWorkout.asRepeatableCopy(prefix: repeatPrefix)
+        _ = await scheduleRepeatedWorkout(
+            repeatedWorkout,
+            source: resolvedRecord.source,
+            on: day,
+        )
+    }
+
+    private func resolveRepeatableWorkout(for record: CompletedWorkoutRecord) async -> WorkoutDetailsModel? {
+        let cacheKey = workoutCacheKey(
+            programId: record.programId.trimmedNilIfEmpty,
+            source: record.source,
+            workoutId: record.workoutId.trimmedNilIfEmpty,
+        )
+
+        if let cachedDetails = await cacheStore.get(
+            cacheKey,
             as: WorkoutDetailsModel.self,
             namespace: userSub,
-        )
-        await schedulePlan(
-            day: day,
-            title: resolvedRecord.workoutTitle,
-            source: resolvedRecord.source,
-            programId: resolvedRecord.programId,
-            programTitle: nil,
-            workoutId: resolvedRecord.workoutId,
-            status: .planned,
-            workoutDetails: cachedDetails,
-        )
+        ) {
+            return cachedDetails
+        }
+
+        if let workoutDetails = record.workoutDetails {
+            await cacheStore.set(
+                cacheKey,
+                value: workoutDetails,
+                namespace: userSub,
+                ttl: 60 * 60 * 24,
+            )
+            return workoutDetails
+        }
+
+        if record.source == .template,
+           let templateID = record.workoutId.trimmedNilIfEmpty,
+           let templateDetails = await templateWorkoutDetails(templateID: templateID)
+        {
+            await cacheStore.set(
+                cacheKey,
+                value: templateDetails,
+                namespace: userSub,
+                ttl: 60 * 60 * 24,
+            )
+            return templateDetails
+        }
+
+        if record.source != .template,
+           let workoutInstanceId = record.workoutId.trimmedNilIfEmpty,
+           UUID(uuidString: workoutInstanceId) != nil,
+           let athleteTrainingClient,
+           case let .success(detailsResponse) = await athleteTrainingClient.getWorkoutDetails(workoutInstanceId: workoutInstanceId)
+        {
+            let details = detailsResponse.asWorkoutDetailsModel()
+            await cacheStore.set(
+                cacheKey,
+                value: details,
+                namespace: userSub,
+                ttl: 60 * 60 * 24,
+            )
+            return details
+        }
+
+        return nil
+    }
+
+    func dismissRepeatSchedulingError() {
+        repeatSchedulingErrorMessage = nil
     }
 
     func ensureLastCompletedRecordLoaded() async {
@@ -581,15 +815,13 @@ final class PlanScheduleViewModel {
 
     func repeatCompleted(_ item: DayScheduleItem, on targetDay: Date) async {
         guard canRepeat(item) else { return }
-        await schedulePlan(
-            day: targetDay,
-            title: item.title,
+        guard let resolvedWorkout = await resolveWorkoutDetails(for: item) ?? item.workoutDetails else { return }
+        let repeatPrefix = item.source == .template ? "template-repeat" : "quick-repeat"
+        let repeatedWorkout = resolvedWorkout.asRepeatableCopy(prefix: repeatPrefix)
+        await scheduleRepeatedWorkout(
+            repeatedWorkout,
             source: item.source,
-            programId: item.programId,
-            programTitle: item.programTitle,
-            workoutId: item.workoutId,
-            status: .planned,
-            workoutDetails: item.workoutDetails,
+            on: targetDay,
         )
     }
 
@@ -633,6 +865,15 @@ final class PlanScheduleViewModel {
         let normalizedTarget = calendar.startOfDay(for: targetDay)
         guard normalizedCurrent != normalizedTarget else { return }
         guard canSchedule(on: normalizedTarget) else { return }
+        if item.isPendingRemoteCreation {
+            let workout = await resolveWorkoutDetails(for: item) ?? item.workoutDetails ?? editableDraft(for: item)
+            await updatePendingCustomWorkoutPlan(
+                item,
+                workout: workout,
+                scheduledDay: targetDay,
+            )
+            return
+        }
         if isRemoteCustomWorkout(item),
            let workoutId = item.workoutId?.trimmedNilIfEmpty,
            let athleteTrainingClient
@@ -694,6 +935,12 @@ final class PlanScheduleViewModel {
         if isRemoteCustomWorkout(item) {
             return
         }
+        if item.isPendingRemoteCreation {
+            await SyncCoordinator.shared.cancelPendingCreateCustomWorkout(
+                namespace: userSub,
+                planId: item.planId,
+            )
+        }
         if let suppression = suppressionSignature(day: item.day, workoutId: item.workoutId, planId: item.planId) {
             suppressedPlanSignatures.insert(suppression)
         }
@@ -706,6 +953,51 @@ final class PlanScheduleViewModel {
             source: item.source,
         )
         await reload()
+    }
+
+    private func updatePendingCustomWorkoutPlan(
+        _ item: DayScheduleItem,
+        workout: WorkoutDetailsModel,
+        scheduledDay: Date,
+    ) async {
+        let normalizedDay = normalizedScheduledDate(scheduledDay)
+        let resolvedTitle = workout.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let queueResult = await SyncCoordinator.shared.enqueueCreateCustomWorkout(
+            namespace: userSub,
+            planId: item.planId,
+            source: item.source,
+            workout: workout,
+            scheduledDay: normalizedDay,
+            processImmediately: false,
+        )
+        let updatedPlan = TrainingDayPlan(
+            id: item.planId,
+            userSub: userSub,
+            day: normalizedDay,
+            status: .planned,
+            programId: item.programId,
+            programTitle: item.programTitle,
+            workoutId: workout.id,
+            title: resolvedTitle.isEmpty ? item.title : resolvedTitle,
+            source: item.source,
+            workoutDetails: workout,
+            pendingSyncState: .createCustomWorkout,
+            pendingSyncOperationId: queueResult.operation?.id ?? item.pendingRemoteCreationOperationId,
+        )
+        await trainingStore.schedule(updatedPlan)
+        await cacheStore.set(
+            workoutCacheKey(programId: item.programId, source: item.source, workoutId: workout.id),
+            value: workout,
+            namespace: userSub,
+            ttl: 60 * 60 * 24,
+        )
+        selectedDay = calendar.startOfDay(for: normalizedDay)
+        selectedMonth = calendar.dateInterval(of: .month, for: normalizedDay)?.start ?? selectedDay
+        await reload()
+        if networkMonitor.currentStatus {
+            await SyncCoordinator.shared.retryNow(namespace: userSub)
+            await reload()
+        }
     }
 
     private func schedulePlan(
@@ -888,6 +1180,14 @@ final class PlanScheduleViewModel {
 
     func updatePlannedManualWorkout(_ item: DayScheduleItem, with workout: WorkoutDetailsModel) async {
         guard canEditPlannedWorkout(item, details: workout) else { return }
+        if item.isPendingRemoteCreation {
+            await updatePendingCustomWorkoutPlan(
+                item,
+                workout: workout,
+                scheduledDay: item.day,
+            )
+            return
+        }
         if isRemoteCustomWorkout(item),
            let workoutId = item.workoutId?.trimmedNilIfEmpty,
            let athleteTrainingClient
@@ -1484,7 +1784,7 @@ struct PlanScheduleScreen: View {
             .padding(.horizontal, FFSpacing.md)
             .padding(.vertical, FFSpacing.md)
         }
-        .background(FFColors.background)
+        .ffScreenBackground()
         .refreshable {
             await viewModel.reload()
         }
@@ -1576,12 +1876,15 @@ struct PlanScheduleScreen: View {
                 },
             )
         }
-        .sheet(item: $workoutDetailsFlow) { flow in
+        .fullScreenCover(item: $workoutDetailsFlow) { flow in
             PlanWorkoutDetailsSheet(
                 item: flow.item,
                 statusTitle: viewModel.statusTitle(flow.item.status),
                 workoutDetails: flow.workoutDetails,
                 canEdit: viewModel.canEditPlannedWorkout(flow.item, details: flow.workoutDetails),
+                pendingSyncMessage: flow.item.isPendingRemoteCreation
+                    ? "Тренировка сохранена локально и будет создана на сервере после синхронизации. Запуск станет доступен после этого."
+                    : nil,
                 onEdit: {
                     let workoutDetails = flow.workoutDetails ?? viewModel.editableDraft(for: flow.item)
                     workoutDetailsFlow = nil
@@ -1641,6 +1944,23 @@ struct PlanScheduleScreen: View {
                 )
             }
         }
+        .alert(
+            "Не удалось запланировать тренировку",
+            isPresented: Binding(
+                get: { viewModel.repeatSchedulingErrorMessage != nil },
+                set: { isPresented in
+                    if !isPresented {
+                        viewModel.dismissRepeatSchedulingError()
+                    }
+                }
+            )
+        ) {
+            Button("Понятно") {
+                viewModel.dismissRepeatSchedulingError()
+            }
+        } message: {
+            Text(viewModel.repeatSchedulingErrorMessage ?? "")
+        }
     }
 
     private var calendarCard: some View {
@@ -1695,52 +2015,44 @@ struct PlanScheduleScreen: View {
         let isSelected = Calendar.current.isDate(day, inSameDayAs: viewModel.selectedDay)
         let isToday = viewModel.isToday(day)
         let status = viewModel.dayStatus(day)
+        let isSchedulable = viewModel.canSchedule(on: day)
 
-        return Button {
-            Task {
-                if viewModel.isInCurrentMonth(day) {
-                    await viewModel.selectDay(day)
-                } else {
-                    await viewModel.selectDayFromAdjacentMonth(day)
-                }
-            }
-        } label: {
-            VStack(spacing: 4) {
-                Text(day.formatted(.dateTime.day()))
-                    .font(FFTypography.caption.weight(.semibold))
-                    .foregroundStyle(viewModel.isInCurrentMonth(day) ? FFColors.textPrimary : FFColors.gray500)
-                Circle()
-                    .fill(calendarStatusColor(status))
-                    .frame(width: 8, height: 8)
-                    .opacity(status == nil ? 0 : 1)
-            }
-            .frame(maxWidth: .infinity, minHeight: 44)
-            .padding(.vertical, 4)
-            .background(cellBackgroundColor(isSelected: isSelected, isToday: isToday))
-            .clipShape(RoundedRectangle(cornerRadius: FFTheme.Radius.control))
-            .overlay {
-                RoundedRectangle(cornerRadius: FFTheme.Radius.control)
-                    .stroke(cellBorderColor(isSelected: isSelected, isToday: isToday), lineWidth: isSelected ? 1.5 : 1)
-            }
-            .opacity(viewModel.isInCurrentMonth(day) ? 1 : 0.45)
+        return VStack(spacing: 4) {
+            Text(day.formatted(.dateTime.day()))
+                .font(FFTypography.caption.weight(.semibold))
+                .foregroundStyle(viewModel.isInCurrentMonth(day) ? FFColors.textPrimary : FFColors.gray500)
+            Circle()
+                .fill(calendarStatusColor(status))
+                .frame(width: 8, height: 8)
+                .opacity(status == nil ? 0 : 1)
         }
-        .buttonStyle(.plain)
-        .contextMenu {
-            if viewModel.canSchedule(on: day) {
-                Button("Запланировать тренировку") {
-                    Task {
-                        if viewModel.isInCurrentMonth(day) {
-                            await viewModel.selectDay(day)
-                        } else {
-                            await viewModel.selectDayFromAdjacentMonth(day)
-                        }
-                        openScheduleDialog(for: day)
-                    }
-                }
-            }
+        .frame(maxWidth: .infinity, minHeight: 44)
+        .padding(.vertical, 4)
+        .background(cellBackgroundColor(isSelected: isSelected, isToday: isToday))
+        .clipShape(RoundedRectangle(cornerRadius: FFTheme.Radius.control))
+        .overlay {
+            RoundedRectangle(cornerRadius: FFTheme.Radius.control)
+                .stroke(cellBorderColor(isSelected: isSelected, isToday: isToday), lineWidth: isSelected ? 1.5 : 1)
+        }
+        .opacity(viewModel.isInCurrentMonth(day) ? 1 : 0.45)
+        .contentShape(RoundedRectangle(cornerRadius: FFTheme.Radius.control))
+        .onTapGesture {
+            handleCalendarDayTap(day)
+        }
+        .onLongPressGesture(minimumDuration: 0.3, maximumDistance: 20) {
+            guard isSchedulable else { return }
+            handleCalendarDayLongPress(day)
         }
         .accessibilityLabel(day.formatted(date: .abbreviated, time: .omitted))
-        .accessibilityHint(viewModel.statusTitle(status))
+        .accessibilityHint(calendarDayAccessibilityHint(status: status, isSchedulable: isSchedulable))
+        .accessibilityAddTraits(.isButton)
+        .accessibilityAction {
+            handleCalendarDayTap(day)
+        }
+        .accessibilityAction(named: Text("Запланировать тренировку")) {
+            guard isSchedulable else { return }
+            handleCalendarDayLongPress(day)
+        }
     }
 
     private func calendarStatusColor(_ status: TrainingDayStatus?) -> Color {
@@ -2021,7 +2333,9 @@ struct PlanScheduleScreen: View {
     private func primaryActionButton(for item: PlanScheduleViewModel.DayScheduleItem) -> some View {
         switch item.status {
         case .planned:
-            if viewModel.isToday(item.day) {
+            if item.isPendingRemoteCreation, viewModel.isToday(item.day) {
+                FFButton(title: "Ждёт синхронизации", variant: .disabled) {}
+            } else if viewModel.isToday(item.day) {
                 FFButton(title: "Начать тренировку", variant: .primary) {
                     handleOpenWorkout(item, preferDetailsForFutureDate: false)
                 }
@@ -2173,6 +2487,33 @@ struct PlanScheduleScreen: View {
         }
     }
 
+    private func handleCalendarDayTap(_ day: Date) {
+        Task { @MainActor in
+            await selectCalendarDay(day)
+        }
+    }
+
+    private func handleCalendarDayLongPress(_ day: Date) {
+        Task { @MainActor in
+            await selectCalendarDay(day)
+            openScheduleDialog(for: day)
+        }
+    }
+
+    private func selectCalendarDay(_ day: Date) async {
+        if viewModel.isInCurrentMonth(day) {
+            await viewModel.selectDay(day)
+        } else {
+            await viewModel.selectDayFromAdjacentMonth(day)
+        }
+    }
+
+    private func calendarDayAccessibilityHint(status: TrainingDayStatus?, isSchedulable: Bool) -> String {
+        let statusTitle = viewModel.statusTitle(status)
+        guard isSchedulable else { return statusTitle }
+        return "\(statusTitle). Нажмите и удерживайте, чтобы запланировать тренировку."
+    }
+
     private func defaultScheduleDate(for day: Date) -> Date {
         let calendar = Calendar.current
         let normalizedDay = calendar.startOfDay(for: day)
@@ -2309,6 +2650,10 @@ struct PlanScheduleScreen: View {
         _ item: PlanScheduleViewModel.DayScheduleItem,
         preferDetailsForFutureDate: Bool,
     ) {
+        if item.isPendingRemoteCreation {
+            presentDetails(item)
+            return
+        }
         if preferDetailsForFutureDate, viewModel.isFutureDay(item.day) {
             presentDetails(item)
             return
@@ -2607,7 +2952,7 @@ private struct PlanScheduleConfigurationSheet: View {
                                 .datePickerStyle(.wheel)
                                 .frame(maxHeight: 140)
                                 .clipped()
-                                .colorScheme(.dark)
+                                .colorScheme(.light)
                             }
                         }
                     }
@@ -2878,6 +3223,7 @@ private struct PlanMoveWorkoutSheet: View {
                             .datePickerStyle(.wheel)
                             .labelsHidden()
                             .frame(maxHeight: 110)
+                            .colorScheme(.light)
                         }
 
                         let conflicts = conflictsCount(targetDay)
@@ -2941,6 +3287,7 @@ private struct PlanWorkoutDetailsSheet: View {
     let statusTitle: String
     let workoutDetails: WorkoutDetailsModel?
     let canEdit: Bool
+    let pendingSyncMessage: String?
     let onEdit: () -> Void
     @Environment(\.dismiss) private var dismiss
 
@@ -2969,6 +3316,14 @@ private struct PlanWorkoutDetailsSheet: View {
                                 Text("Статус: \(statusTitle.lowercased())")
                                     .font(FFTypography.body.weight(.semibold))
                                     .foregroundStyle(FFColors.textPrimary)
+                            }
+                        }
+
+                        if let pendingSyncMessage {
+                            FFCard {
+                                Text(pendingSyncMessage)
+                                    .font(FFTypography.body)
+                                    .foregroundStyle(FFColors.textSecondary)
                             }
                         }
 

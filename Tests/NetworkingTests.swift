@@ -495,6 +495,91 @@ final class NetworkingTests: XCTestCase {
         XCTAssertEqual(json["restSecondsActual"] as? Int, 90)
     }
 
+    func testWorkoutDetailsResponseBuildsFinishedSnapshotWithCompletedSets() {
+        let response = AthleteWorkoutDetailsResponse(
+            workout: AthleteWorkoutInstance(
+                id: "workout-instance-1",
+                enrollmentId: nil,
+                workoutTemplateId: "template-1",
+                title: "Низ A",
+                status: .completed,
+                source: .program,
+                scheduledDate: nil,
+                startedAt: "2026-03-18T09:00:00Z",
+                completedAt: "2026-03-18T10:05:00Z",
+                durationSeconds: 3900,
+                notes: "Заметка",
+                programId: "program-1",
+            ),
+            exercises: [
+                AthleteExerciseExecution(
+                    id: "exec-1",
+                    workoutInstanceId: "workout-instance-1",
+                    exerciseTemplateId: nil,
+                    workoutPlanId: nil,
+                    exerciseId: "exercise-1",
+                    orderIndex: 0,
+                    notes: nil,
+                    plannedSets: 2,
+                    plannedRepsMin: 8,
+                    plannedRepsMax: 10,
+                    plannedTargetRpe: 8,
+                    plannedRestSeconds: 120,
+                    plannedNotes: nil,
+                    progressionPolicyId: nil,
+                    exercise: AthleteExerciseBrief(
+                        id: "exercise-1",
+                        code: nil,
+                        name: "Присед",
+                        description: nil,
+                        isBodyweight: false,
+                        equipment: nil,
+                        media: nil,
+                    ),
+                    sets: [
+                        AthleteSetExecution(
+                            id: "set-2",
+                            setNumber: 2,
+                            weight: 100,
+                            reps: 8,
+                            rpe: 9,
+                            isCompleted: true,
+                            isWarmup: false,
+                            restSecondsActual: 150,
+                        ),
+                        AthleteSetExecution(
+                            id: "set-1",
+                            setNumber: 1,
+                            weight: 90,
+                            reps: 10,
+                            rpe: 8,
+                            isCompleted: true,
+                            isWarmup: false,
+                            restSecondsActual: 120,
+                        ),
+                    ],
+                ),
+            ],
+        )
+
+        let snapshot = response.asWorkoutProgressSnapshot(
+            userSub: "user-1",
+            fallbackProgramId: "fallback-program",
+        )
+
+        XCTAssertEqual(snapshot.userSub, "user-1")
+        XCTAssertEqual(snapshot.programId, "program-1")
+        XCTAssertEqual(snapshot.workoutId, "workout-instance-1")
+        XCTAssertEqual(snapshot.source, .program)
+        XCTAssertTrue(snapshot.isFinished)
+        XCTAssertEqual(snapshot.workoutDetails?.id, "workout-instance-1")
+        XCTAssertEqual(snapshot.workoutDetails?.title, "Низ A")
+        XCTAssertEqual(snapshot.exercises["exercise-1"]?.sets.count, 2)
+        XCTAssertEqual(snapshot.exercises["exercise-1"]?.sets.first?.repsText, "10")
+        XCTAssertEqual(snapshot.exercises["exercise-1"]?.sets.first?.weightText, "90")
+        XCTAssertEqual(snapshot.exercises["exercise-1"]?.sets.last?.rpeText, "9")
+    }
+
     private func requestBody(from request: URLRequest) throws -> Data? {
         if let body = request.httpBody {
             return body

@@ -104,7 +104,7 @@ struct RootView: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(FFColors.background)
+            .ffScreenBackground()
             .onAppear {
                 viewStore.send(.onAppear)
             }
@@ -536,6 +536,15 @@ private struct RecentWorkoutDetailsRoute: Identifiable {
     }
 }
 
+private struct RepeatWorkoutPlanningRoute: Identifiable, Equatable {
+    let workout: WorkoutDetailsModel
+    let source: WorkoutSource
+
+    var id: String {
+        "\(source.rawValue)::\(workout.id)"
+    }
+}
+
 enum RepeatWorkoutTemplateFallback {
     case quickBuilder
     case templateLibrary
@@ -607,13 +616,7 @@ func resolveRepeatWorkoutTarget(
 }
 
 private func makeRepeatableWorkoutCopy(from workout: WorkoutDetailsModel, prefix: String) -> WorkoutDetailsModel {
-    WorkoutDetailsModel(
-        id: "\(prefix)-\(UUID().uuidString)",
-        title: workout.title,
-        dayOrder: workout.dayOrder,
-        coachNote: workout.coachNote,
-        exercises: workout.exercises,
-    )
+    workout.asRepeatableCopy(prefix: prefix)
 }
 
 private struct PlanTabContent: View {
@@ -628,6 +631,7 @@ private struct PlanTabContent: View {
     @State private var programWorkoutRoute: ProgramWorkoutRoute?
     @State private var presetWorkoutRoute: PresetWorkoutRoute?
     @State private var recentWorkoutDetailsRoute: RecentWorkoutDetailsRoute?
+    @State private var repeatWorkoutPlanningRoute: RepeatWorkoutPlanningRoute?
     @State private var isQuickBuilderPresented = false
 
     init(
@@ -708,9 +712,28 @@ private struct PlanTabContent: View {
                     Task {
                         await openRepeatWorkout(route.record, preferredWorkout: workout)
                     }
-                }
+                },
+                athleteTrainingClient: apiClient as? AthleteTrainingClientProtocol,
             )
             .navigationBarBackButtonHidden(false)
+        }
+        .sheet(item: $repeatWorkoutPlanningRoute) { route in
+            RepeatWorkoutPlanningSheet(
+                userSub: userSub,
+                workout: route.workout,
+                source: route.source,
+                athleteTrainingClient: apiClient as? AthleteTrainingClientProtocol,
+                onClose: {
+                    repeatWorkoutPlanningRoute = nil
+                },
+                onSaved: { day in
+                    repeatWorkoutPlanningRoute = nil
+                    recentWorkoutDetailsRoute = nil
+                    Task {
+                        await planViewModel.focus(on: day)
+                    }
+                }
+            )
         }
         .fullScreenCover(isPresented: $isQuickBuilderPresented) {
             NavigationStack {
@@ -735,7 +758,10 @@ private struct PlanTabContent: View {
         case let .program(route):
             programWorkoutRoute = route
         case let .preset(route):
-            presetWorkoutRoute = route
+            repeatWorkoutPlanningRoute = RepeatWorkoutPlanningRoute(
+                workout: route.workout,
+                source: route.source,
+            )
         case .quickBuilder:
             isQuickBuilderPresented = true
         case .templateLibrary:
@@ -1080,7 +1106,7 @@ struct WorkoutLaunchView: View {
                     .padding(.horizontal, FFSpacing.md)
             }
         }
-        .background(FFColors.background)
+        .ffScreenBackground()
         .sheet(isPresented: $isWorkoutDatePlanningPresented) {
             if let details {
                 WorkoutDatePlanningSheet(
@@ -1966,6 +1992,157 @@ private struct WorkoutDatePlanningSheet: View {
     }
 }
 
+private struct RepeatWorkoutPlanningSheet: View {
+    let userSub: String
+    let workout: WorkoutDetailsModel
+    let source: WorkoutSource
+    let athleteTrainingClient: AthleteTrainingClientProtocol?
+    let onClose: () -> Void
+    let onSaved: (Date) -> Void
+
+    @State private var viewModel: PlanScheduleViewModel
+    @State private var targetDay: Date
+    @State private var isConflictAlertPresented = false
+
+    init(
+        userSub: String,
+        workout: WorkoutDetailsModel,
+        source: WorkoutSource,
+        athleteTrainingClient: AthleteTrainingClientProtocol?,
+        onClose: @escaping () -> Void,
+        onSaved: @escaping (Date) -> Void,
+    ) {
+        self.userSub = userSub
+        self.workout = workout
+        self.source = source
+        self.athleteTrainingClient = athleteTrainingClient
+        self.onClose = onClose
+        self.onSaved = onSaved
+
+        let today = Calendar.current.startOfDay(for: Date())
+        _viewModel = State(
+            initialValue: PlanScheduleViewModel(
+                userSub: userSub,
+                athleteTrainingClient: athleteTrainingClient,
+            ),
+        )
+        _targetDay = State(initialValue: today)
+    }
+
+    var body: some View {
+        NavigationStack {
+            ZStack {
+                FFColors.background.ignoresSafeArea()
+
+                VStack(spacing: FFSpacing.md) {
+                    FFCard {
+                        VStack(alignment: .leading, spacing: FFSpacing.xs) {
+                            Text(workout.title)
+                                .font(FFTypography.body.weight(.semibold))
+                                .foregroundStyle(FFColors.textPrimary)
+                            Text(helperText)
+                                .font(FFTypography.body)
+                                .foregroundStyle(FFColors.textSecondary)
+                        }
+                    }
+
+                    FFCard {
+                        VStack(alignment: .leading, spacing: FFSpacing.sm) {
+                            DatePicker(
+                                "Дата тренировки",
+                                selection: $targetDay,
+                                in: minimumSelectableDay...,
+                                displayedComponents: .date
+                            )
+                            .datePickerStyle(.graphical)
+                            .tint(FFColors.accent)
+
+                            let conflicts = viewModel.conflictCount(on: targetDay, excluding: nil)
+                            if conflicts > 0 {
+                                Text("На выбранную дату уже есть \(conflicts) тренировок.")
+                                    .font(FFTypography.caption)
+                                    .foregroundStyle(FFColors.danger)
+                            }
+                        }
+                    }
+
+                    HStack(spacing: FFSpacing.sm) {
+                        FFButton(title: "Отмена", variant: .secondary, action: onClose)
+                        FFButton(title: "Запланировать", variant: .primary) {
+                            let conflicts = viewModel.conflictCount(on: targetDay, excluding: nil)
+                            if conflicts > 0 {
+                                isConflictAlertPresented = true
+                            } else {
+                                applyDateChange()
+                            }
+                        }
+                    }
+                }
+                .padding(.horizontal, FFSpacing.md)
+                .padding(.vertical, FFSpacing.md)
+            }
+            .navigationTitle("Повторить тренировку")
+            .navigationBarTitleDisplayMode(.inline)
+            .task {
+                await viewModel.onAppear()
+            }
+            .alert("Конфликт по дате", isPresented: $isConflictAlertPresented) {
+                Button("Отмена", role: .cancel) {}
+                Button("Продолжить") {
+                    applyDateChange()
+                }
+            } message: {
+                let conflicts = viewModel.conflictCount(on: targetDay, excluding: nil)
+                Text("На выбранную дату уже есть \(conflicts) тренировок. Продолжить?")
+            }
+            .alert(
+                "Не удалось запланировать тренировку",
+                isPresented: Binding(
+                    get: { viewModel.repeatSchedulingErrorMessage != nil },
+                    set: { isPresented in
+                        if !isPresented {
+                            viewModel.dismissRepeatSchedulingError()
+                        }
+                    }
+                )
+            ) {
+                Button("Понятно") {
+                    viewModel.dismissRepeatSchedulingError()
+                }
+            } message: {
+                Text(viewModel.repeatSchedulingErrorMessage ?? "")
+            }
+        }
+    }
+
+    private var helperText: String {
+        switch source {
+        case .program:
+            return "Выберите дату для копии этой тренировки."
+        case .freestyle:
+            return "Выберите дату, и тренировка появится в календаре и плане."
+        case .template:
+            return "Выберите дату, и копия тренировки из шаблона появится в календаре и плане."
+        }
+    }
+
+    private var minimumSelectableDay: Date {
+        Calendar.current.startOfDay(for: Date())
+    }
+
+    private func applyDateChange() {
+        Task {
+            let didSchedule = await viewModel.scheduleRepeatedWorkout(
+                workout,
+                source: source,
+                on: targetDay,
+            )
+            guard didSchedule else { return }
+            onSaved(Calendar.current.startOfDay(for: targetDay))
+        }
+    }
+}
+
 extension WorkoutPlayerViewModel.CompletionSummary: Identifiable {
     var id: String {
         "\(workoutTitle)-\(completedSets)-\(totalSets)-\(durationSeconds)"
@@ -2054,7 +2231,7 @@ struct WorkoutSummaryView: View {
             .padding(.horizontal, FFSpacing.md)
             .padding(.vertical, FFSpacing.md)
         }
-        .background(FFColors.background)
+        .ffScreenBackground()
         .task {
             ClientAnalytics.track(
                 .workoutSummaryScreenOpened,
@@ -2130,6 +2307,7 @@ private struct TrainingTabContent: View {
     @State private var programHistoryRoute: ProgramHistoryRoute?
     @State private var presetWorkoutRoute: PresetWorkoutRoute?
     @State private var recentWorkoutDetailsRoute: RecentWorkoutDetailsRoute?
+    @State private var repeatWorkoutPlanningRoute: RepeatWorkoutPlanningRoute?
     @State private var modalRoute: TrainingModalRoute?
     @State private var activePresentationMarkers: Set<String> = []
 
@@ -2324,6 +2502,7 @@ private struct TrainingTabContent: View {
                         await openRepeatWorkout(route.record, preferredWorkout: workout)
                     }
                 },
+                athleteTrainingClient: apiClient as? AthleteTrainingClientProtocol,
             )
             .navigationBarBackButtonHidden(false)
             .onAppear {
@@ -2332,6 +2511,23 @@ private struct TrainingTabContent: View {
             .onDisappear {
                 updatePresentationMarker("recent:\(route.id)", isPresented: false)
             }
+        }
+        .sheet(item: $repeatWorkoutPlanningRoute) { route in
+            RepeatWorkoutPlanningSheet(
+                userSub: userSub,
+                workout: route.workout,
+                source: route.source,
+                athleteTrainingClient: apiClient as? AthleteTrainingClientProtocol,
+                onClose: {
+                    repeatWorkoutPlanningRoute = nil
+                },
+                onSaved: { day in
+                    repeatWorkoutPlanningRoute = nil
+                    recentWorkoutDetailsRoute = nil
+                    PlanNavigationCoordinator.shared.request(day: day)
+                    onOpenPlan()
+                }
+            )
         }
         .fullScreenCover(item: $modalRoute) { route in
             trainingModal(route)
@@ -2361,6 +2557,7 @@ private struct TrainingTabContent: View {
             || programHistoryRoute != nil
             || presetWorkoutRoute != nil
             || recentWorkoutDetailsRoute != nil
+            || repeatWorkoutPlanningRoute != nil
             || modalRoute != nil
     }
 
@@ -2388,7 +2585,10 @@ private struct TrainingTabContent: View {
         case let .program(route):
             programWorkoutRoute = route
         case let .preset(route):
-            presetWorkoutRoute = route
+            repeatWorkoutPlanningRoute = RepeatWorkoutPlanningRoute(
+                workout: route.workout,
+                source: route.source,
+            )
         case .quickBuilder:
             modalRoute = .quickBuilder
         case .templateLibrary:
