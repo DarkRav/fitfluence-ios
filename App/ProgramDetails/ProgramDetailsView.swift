@@ -976,7 +976,8 @@ final class ProgramDetailsViewModel {
 
         return response.workouts.compactMap { workout in
             guard workout.programId?.trimmedNilIfEmpty == programId else { return nil }
-            guard let rawDate = workout.scheduledDate?.trimmedNilIfEmpty
+            guard let rawDate = workout.scheduledAt?.trimmedNilIfEmpty
+                    ?? workout.scheduledDate?.trimmedNilIfEmpty
                     ?? workout.startedAt?.trimmedNilIfEmpty
                     ?? workout.completedAt?.trimmedNilIfEmpty,
                   let day = Self.scheduleDateFormatter.date(from: rawDate)
@@ -992,7 +993,7 @@ final class ProgramDetailsViewModel {
             return TrainingDayPlan(
                 id: "remote-schedule-\(workout.id)",
                 userSub: userSub,
-                day: Calendar.current.startOfDay(for: day),
+                day: day,
                 status: mapWorkoutInstanceStatus(workout.status),
                 programId: programId,
                 programTitle: details.title.trimmedNilIfEmpty,
@@ -1483,8 +1484,10 @@ final class ProgramDetailsViewModel {
 
         return response.workouts
             .compactMap { workout in
-                guard let rawDate = workout.scheduledDate?.trimmedNilIfEmpty else { return nil }
+                guard let rawDate = workout.scheduledAt?.trimmedNilIfEmpty
+                    ?? workout.scheduledDate?.trimmedNilIfEmpty else { return nil }
                 return Self.scheduleDateFormatter.date(from: rawDate)
+                    ?? ISO8601DateFormatter().date(from: rawDate)
             }
             .sorted()
             .first
@@ -1756,7 +1759,7 @@ final class ProgramDetailsViewModel {
 
     private func hasScheduledWorkout(in workouts: [AthleteWorkoutInstance]) -> Bool {
         workouts.contains { workout in
-            workout.scheduledDate?.trimmedNilIfEmpty != nil
+            workout.scheduledAt?.trimmedNilIfEmpty != nil || workout.scheduledDate?.trimmedNilIfEmpty != nil
         }
     }
 

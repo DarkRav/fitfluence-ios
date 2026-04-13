@@ -537,7 +537,7 @@ actor LocalTrainingStore: TrainingStore {
         let plan = TrainingDayPlan(
             id: record.id,
             userSub: record.userSub,
-            day: startOfDay(record.finishedAt),
+            day: record.finishedAt,
             status: .completed,
             programId: record.programId,
             programTitle: nil,
@@ -780,7 +780,7 @@ extension WorkoutDetailsModel {
     func asRepeatableCopy(prefix: String) -> WorkoutDetailsModel {
         WorkoutDetailsModel(
             id: "\(prefix)-\(UUID().uuidString)",
-            title: title,
+            title: repeatableTitle,
             dayOrder: dayOrder,
             coachNote: coachNote,
             exercises: exercises,
@@ -791,6 +791,7 @@ extension WorkoutDetailsModel {
         AthleteCreateCustomWorkoutRequest(
             title: title.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty ?? "Тренировка",
             scheduledDate: scheduledDate.map { scheduledDayString($0) },
+            scheduledAt: scheduledDate.map { scheduledDateTimeString($0) },
             notes: coachNote?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty,
             exercises: exercises
                 .sorted(by: { $0.orderIndex < $1.orderIndex })
@@ -815,10 +816,63 @@ extension WorkoutDetailsModel {
         AthleteUpdateCustomWorkoutRequest(
             title: title.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty,
             scheduledDate: scheduledDate.map { scheduledDayString($0) },
+            scheduledAt: scheduledDate.map { scheduledDateTimeString($0) },
             notes: coachNote?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty,
+            exercises: exercises
+                .sorted(by: { $0.orderIndex < $1.orderIndex })
+                .enumerated()
+                .map { index, exercise in
+                    AthleteCustomWorkoutExerciseDraftRequest(
+                        exerciseId: exercise.id,
+                        orderIndex: index,
+                        sets: max(1, exercise.sets),
+                        repsMin: exercise.repsMin,
+                        repsMax: exercise.repsMax,
+                        targetRpe: exercise.targetRpe,
+                        restSeconds: exercise.restSeconds,
+                        notes: exercise.notes?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty,
+                        progressionPolicyId: nil,
+                    )
+                },
         )
     }
+
+    private var repeatableTitle: String {
+        let trimmedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmedTitle.hasPrefix("Быстрая тренировка") else {
+            return trimmedTitle
+        }
+
+        let suffix = trimmedTitle.replacingOccurrences(of: "Быстрая тренировка", with: "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard suffix.first == "•" else {
+            return trimmedTitle
+        }
+
+        let candidate = suffix.dropFirst().trimmingCharacters(in: .whitespacesAndNewlines)
+        let parts = candidate.split(separator: ":", omittingEmptySubsequences: false)
+        guard parts.count == 2,
+              let hour = Int(parts[0]),
+              let minute = Int(parts[1]),
+              (0 ... 23).contains(hour),
+              (0 ... 59).contains(minute)
+        else {
+            return trimmedTitle
+        }
+
+        return "Быстрая тренировка"
+    }
 }
+
+func scheduledDateTimeString(_ date: Date) -> String {
+    scheduledDateTimeFormatter.string(from: date)
+}
+
+private let scheduledDateTimeFormatter: ISO8601DateFormatter = {
+    let formatter = ISO8601DateFormatter()
+    formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    return formatter
+}()
 
 private extension String {
     var nilIfEmpty: String? {

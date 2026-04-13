@@ -294,6 +294,7 @@ struct AthleteWorkoutInstance: Codable, Equatable, Sendable {
     let status: AthleteWorkoutInstanceStatus?
     let source: AthleteWorkoutSource
     let scheduledDate: String?
+    let scheduledAt: String?
     let startedAt: String?
     let completedAt: String?
     let durationSeconds: Int?
@@ -308,6 +309,7 @@ struct AthleteWorkoutInstance: Codable, Equatable, Sendable {
         case status
         case source
         case scheduledDate
+        case scheduledAt
         case startedAt
         case completedAt
         case durationSeconds
@@ -324,6 +326,7 @@ struct AthleteWorkoutInstance: Codable, Equatable, Sendable {
         case status
         case source
         case scheduledDate
+        case scheduledAt
         case startedAt
         case completedAt
         case durationSeconds
@@ -339,6 +342,7 @@ struct AthleteWorkoutInstance: Codable, Equatable, Sendable {
         status: AthleteWorkoutInstanceStatus?,
         source: AthleteWorkoutSource,
         scheduledDate: String?,
+        scheduledAt: String? = nil,
         startedAt: String?,
         completedAt: String?,
         durationSeconds: Int?,
@@ -352,6 +356,7 @@ struct AthleteWorkoutInstance: Codable, Equatable, Sendable {
         self.status = status
         self.source = source
         self.scheduledDate = scheduledDate
+        self.scheduledAt = scheduledAt
         self.startedAt = startedAt
         self.completedAt = completedAt
         self.durationSeconds = durationSeconds
@@ -371,6 +376,7 @@ struct AthleteWorkoutInstance: Codable, Equatable, Sendable {
         status = try? container.decodeIfPresent(AthleteWorkoutInstanceStatus.self, forKey: .status)
         source = resolvedSource
         scheduledDate = container.decodeLossyString(forKeys: [.scheduledDate])
+        scheduledAt = container.decodeLossyString(forKeys: [.scheduledAt])
         startedAt = container.decodeLossyString(forKeys: [.startedAt])
         completedAt = container.decodeLossyString(forKeys: [.completedAt])
         durationSeconds = container.decodeLossyInt(forKeys: [.durationSeconds])
@@ -387,6 +393,7 @@ struct AthleteWorkoutInstance: Codable, Equatable, Sendable {
         try container.encodeIfPresent(status, forKey: .status)
         try container.encode(source, forKey: .source)
         try container.encodeIfPresent(scheduledDate, forKey: .scheduledDate)
+        try container.encodeIfPresent(scheduledAt, forKey: .scheduledAt)
         try container.encodeIfPresent(startedAt, forKey: .startedAt)
         try container.encodeIfPresent(completedAt, forKey: .completedAt)
         try container.encodeIfPresent(durationSeconds, forKey: .durationSeconds)
@@ -1215,14 +1222,45 @@ struct AthleteCustomWorkoutExerciseDraftRequest: Codable, Equatable, Sendable {
 struct AthleteCreateCustomWorkoutRequest: Codable, Equatable, Sendable {
     let title: String
     let scheduledDate: String?
+    let scheduledAt: String?
     let notes: String?
     let exercises: [AthleteCustomWorkoutExerciseDraftRequest]?
+
+    init(
+        title: String,
+        scheduledDate: String?,
+        scheduledAt: String? = nil,
+        notes: String?,
+        exercises: [AthleteCustomWorkoutExerciseDraftRequest]?,
+    ) {
+        self.title = title
+        self.scheduledDate = scheduledDate
+        self.scheduledAt = scheduledAt
+        self.notes = notes
+        self.exercises = exercises
+    }
 }
 
 struct AthleteUpdateCustomWorkoutRequest: Codable, Equatable, Sendable {
     let title: String?
     let scheduledDate: String?
+    let scheduledAt: String?
     let notes: String?
+    let exercises: [AthleteCustomWorkoutExerciseDraftRequest]?
+
+    init(
+        title: String?,
+        scheduledDate: String?,
+        scheduledAt: String? = nil,
+        notes: String?,
+        exercises: [AthleteCustomWorkoutExerciseDraftRequest]? = nil,
+    ) {
+        self.title = title
+        self.scheduledDate = scheduledDate
+        self.scheduledAt = scheduledAt
+        self.notes = notes
+        self.exercises = exercises
+    }
 }
 
 protocol AthleteTrainingClientProtocol: Sendable {
@@ -1256,6 +1294,7 @@ protocol AthleteTrainingClientProtocol: Sendable {
         workoutInstanceId: String,
         request: AthleteUpdateCustomWorkoutRequest,
     ) async -> Result<AthleteWorkoutDetailsResponse, APIError>
+    func deleteCustomWorkout(workoutInstanceId: String) async -> Result<Void, APIError>
     func syncActiveWorkout(
         workoutInstanceId: String,
         request: ActiveWorkoutSyncRequest,
@@ -1364,6 +1403,10 @@ extension AthleteTrainingClientProtocol {
         workoutInstanceId _: String,
         request _: AthleteUpdateCustomWorkoutRequest,
     ) async -> Result<AthleteWorkoutDetailsResponse, APIError> {
+        .failure(.unknown)
+    }
+
+    func deleteCustomWorkout(workoutInstanceId _: String) async -> Result<Void, APIError> {
         .failure(.unknown)
     }
 
@@ -1497,6 +1540,13 @@ extension AthleteWorkoutDetailsResponse {
         return iso8601.date(from: value)
     }
 
+    static func parseScheduledDateValue(_ value: String) -> Date? {
+        if let date = parseISO8601(value) {
+            return date
+        }
+        return dateOnly.date(from: value)
+    }
+
     private static let iso8601WithFractions: ISO8601DateFormatter = {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
@@ -1506,6 +1556,14 @@ extension AthleteWorkoutDetailsResponse {
     private static let iso8601: ISO8601DateFormatter = {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime]
+        return formatter
+    }()
+
+    private static let dateOnly: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(secondsFromGMT: 0)
+        formatter.dateFormat = "yyyy-MM-dd"
         return formatter
     }()
 }
@@ -1717,6 +1775,15 @@ extension APIClient: AthleteTrainingClientProtocol {
         } catch {
             return .failure(.unknown)
         }
+    }
+
+    func deleteCustomWorkout(workoutInstanceId: String) async -> Result<Void, APIError> {
+        let request = APIRequest(
+            path: "/v1/athlete/workouts/custom/\(workoutInstanceId)",
+            method: .delete,
+            requiresAuthorization: true,
+        )
+        return await performWithRetry(request, allowRetryAfterRefresh: true)
     }
 
     func syncActiveWorkout(

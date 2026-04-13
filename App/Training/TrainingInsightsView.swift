@@ -1151,6 +1151,12 @@ final class TrainingInsightsViewModel {
     }
 
     private func dateForWorkout(_ workout: AthleteWorkoutInstance) -> Date? {
+        if let scheduledAt = workout.scheduledAt,
+           let parsed = ProgressDateParser.parse(scheduledAt)
+        {
+            return parsed
+        }
+
         if let scheduled = workout.scheduledDate,
            let parsed = Self.dayOnlyFormatter.date(from: scheduled)
         {

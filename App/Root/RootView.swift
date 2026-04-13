@@ -3,6 +3,7 @@ import SwiftUI
 
 extension Notification.Name {
     static let fitfluenceWorkoutDidComplete = Notification.Name("fitfluence.workout.didComplete")
+    static let fitfluenceTrainingPlanDidChange = Notification.Name("fitfluence.trainingPlan.didChange")
 }
 
 enum AthleteShellTab: String, CaseIterable, Hashable, Sendable {
@@ -1012,6 +1013,10 @@ struct WorkoutLaunchView: View {
     @State private var resolvedSource: WorkoutSource?
     @State private var isWorkoutDatePlanningPresented = false
     @State private var plannedDateOverride: PlannedDateOverride?
+    @State private var remoteScheduledDay: Date?
+    @State private var isDeleteConfirmationPresented = false
+    @State private var isDeletingPlannedWorkout = false
+    @State private var deleteError: UserFacingError?
     @Environment(\.dismiss) private var dismiss
 
     private struct NextWorkoutRoute: Identifiable, Hashable {
@@ -1127,6 +1132,20 @@ struct WorkoutLaunchView: View {
         }
         .navigationTitle("Тренировка")
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            if canDeletePlannedCustomWorkout {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Menu {
+                        Button("Удалить тренировку", role: .destructive) {
+                            isDeleteConfirmationPresented = true
+                        }
+                    } label: {
+                        Image(systemName: "ellipsis.circle")
+                    }
+                    .accessibilityLabel("Действия с тренировкой")
+                }
+            }
+        }
         .task {
             await load()
         }
@@ -1159,11 +1178,42 @@ struct WorkoutLaunchView: View {
         } message: {
             Text("Прогресс сохранён на устройстве.")
         }
+        .alert("Удалить тренировку?", isPresented: $isDeleteConfirmationPresented) {
+            Button("Отмена", role: .cancel) {}
+            Button("Удалить", role: .destructive) {
+                Task { await deletePlannedWorkout() }
+            }
+        } message: {
+            Text("Тренировка будет удалена из плана.")
+        }
+        .alert(
+            deleteError?.title ?? "Не удалось удалить тренировку",
+            isPresented: Binding(
+                get: { deleteError != nil },
+                set: { isPresented in
+                    if !isPresented {
+                        deleteError = nil
+                    }
+                }
+            )
+        ) {
+            Button("Понятно") {
+                deleteError = nil
+            }
+        } message: {
+            Text(deleteError?.message ?? "")
+        }
         .overlay {
             if isCompletingWorkout {
                 ZStack {
                     FFColors.background.opacity(0.72).ignoresSafeArea()
                     FFLoadingState(title: "Сохраняем тренировку")
+                        .padding(.horizontal, FFSpacing.md)
+                }
+            } else if isDeletingPlannedWorkout {
+                ZStack {
+                    FFColors.background.opacity(0.72).ignoresSafeArea()
+                    FFLoadingState(title: "Удаляем тренировку")
                         .padding(.horizontal, FFSpacing.md)
                 }
             } else if isStartingPlannedWorkout {
@@ -1492,6 +1542,63 @@ struct WorkoutLaunchView: View {
         routeState = .resume
     }
 
+    private func deletePlannedWorkout() async {
+        guard canDeletePlannedCustomWorkout else { return }
+        guard let athleteTrainingClient = apiClient as? AthleteTrainingClientProtocol else {
+            deleteError = UserFacingError(
+                kind: .server,
+                title: "Удаление недоступно",
+                message: "Не удалось удалить тренировку без соединения с сервером.",
+            )
+            return
+        }
+
+        isDeletingPlannedWorkout = true
+        defer { isDeletingPlannedWorkout = false }
+
+        let deleteResult = await athleteTrainingClient.deleteCustomWorkout(workoutInstanceId: workoutId)
+        switch deleteResult {
+        case .success:
+            break
+        case let .failure(apiError):
+            if case let .httpError(statusCode, _) = apiError, statusCode == 404 {
+                break
+            }
+            deleteError = deleteError(for: apiError)
+            return
+        }
+
+        let progressStore = LocalWorkoutProgressStore()
+        let cacheStore = CompositeCacheStore()
+        await progressStore.remove(
+            userSub: userSub,
+            programId: programId,
+            workoutId: workoutId,
+        )
+        await cacheStore.remove("workout.details:\(programId):\(workoutId)", namespace: userSub)
+        await cacheStore.remove("workout.execution.context:\(programId):\(workoutId)", namespace: userSub)
+        if currentSource == .freestyle {
+            await cacheStore.remove("workout.details:\(WorkoutSource.freestyle.rawValue):\(workoutId)", namespace: userSub)
+        }
+        RestTimerModel.shared.clearIfMatches(workoutId: workoutId)
+
+        if let scheduledDay = effectivePlannedDay {
+            await LocalTrainingStore().deletePlan(
+                userSub: userSub,
+                day: scheduledDay,
+                planId: "remote-\(workoutId)",
+                workoutId: workoutId,
+                title: details?.title ?? "Тренировка",
+                source: .freestyle,
+            )
+            NotificationCenter.default.post(name: .fitfluenceTrainingPlanDidChange, object: scheduledDay)
+        } else {
+            NotificationCenter.default.post(name: .fitfluenceTrainingPlanDidChange, object: nil)
+        }
+
+        dismiss()
+    }
+
     private func abandonWorkoutAndExit() async {
         ClientAnalytics.track(
             .workoutCancelled,
@@ -1528,6 +1635,49 @@ struct WorkoutLaunchView: View {
 
         dismiss()
         onBackToWorkoutHub?()
+    }
+
+    private func deleteError(for apiError: APIError) -> UserFacingError {
+        switch apiError {
+        case .offline:
+            return UserFacingError(
+                kind: .offline,
+                title: "Нет подключения к интернету",
+                message: "Удалить уже созданную тренировку можно только после восстановления соединения.",
+            )
+        case .httpError(let statusCode, _):
+            return UserFacingError(
+                kind: .server,
+                title: "Не удалось удалить тренировку",
+                message: "Сервер вернул код \(statusCode). Повторите попытку позже.",
+            )
+        case .unauthorized, .forbidden:
+            return apiError.userFacing(context: .workoutPlayer)
+        case .timeout, .transportError, .serverError, .decodingError, .invalidURL, .cancelled, .unknown:
+            return UserFacingError(
+                kind: .server,
+                title: "Не удалось удалить тренировку",
+                message: "Повторите попытку позже.",
+            )
+        }
+    }
+
+    private func scheduledDay(from workout: AthleteWorkoutInstance) -> Date? {
+        if let scheduledAt = workout.scheduledAt?.trimmingCharacters(in: .whitespacesAndNewlines),
+           let date = AthleteWorkoutDetailsResponse.parseScheduledDateValue(scheduledAt)
+        {
+            return date
+        }
+        if let scheduledDate = workout.scheduledDate?.trimmingCharacters(in: .whitespacesAndNewlines),
+           let date = AthleteWorkoutDetailsResponse.parseScheduledDateValue(scheduledDate)
+        {
+            return date
+        }
+        return nil
+    }
+
+    private func formattedPlannedDateText(_ date: Date) -> String {
+        date.formatted(date: .abbreviated, time: .shortened)
     }
 
     private func buildReadOnlySummary(
@@ -1652,6 +1802,7 @@ struct WorkoutLaunchView: View {
         error = nil
         routeState = resolveWorkoutInstanceRouteState(workoutDetails.workout.status)
         resolvedSource = workoutDetails.workout.source == .custom ? .freestyle : .program
+        remoteScheduledDay = scheduledDay(from: workoutDetails.workout)
         executionContext = WorkoutExecutionContext(
             workoutInstanceId: workoutDetails.workout.id,
             exerciseExecutionIDsByExerciseID: Dictionary(
@@ -1779,11 +1930,15 @@ struct WorkoutLaunchView: View {
     }
 
     private var effectivePlannedDay: Date? {
-        plannedDateOverride?.day ?? plannedDay
+        plannedDateOverride?.day ?? plannedDay ?? remoteScheduledDay
     }
 
     private var effectivePlannedDateText: String? {
-        plannedDateOverride?.dateText ?? plannedDateText
+        plannedDateOverride?.dateText ?? plannedDateText ?? remoteScheduledDay.map(formattedPlannedDateText)
+    }
+
+    private var canDeletePlannedCustomWorkout: Bool {
+        routeState == .requiresStart && currentSource == .freestyle && UUID(uuidString: workoutId) != nil
     }
 
     @ViewBuilder
@@ -1835,7 +1990,7 @@ private struct WorkoutDatePlanningSheet: View {
         self.onClose = onClose
         self.onSaved = onSaved
 
-        let today = Calendar.current.startOfDay(for: Date())
+        let today = Date()
         let initialDay = max(plannedDay ?? today, today)
         _viewModel = State(initialValue: PlanScheduleViewModel(userSub: userSub))
         _targetDay = State(initialValue: initialDay)
@@ -2019,14 +2174,14 @@ private struct RepeatWorkoutPlanningSheet: View {
         self.onClose = onClose
         self.onSaved = onSaved
 
-        let today = Calendar.current.startOfDay(for: Date())
+        let now = Date()
         _viewModel = State(
             initialValue: PlanScheduleViewModel(
                 userSub: userSub,
                 athleteTrainingClient: athleteTrainingClient,
             ),
         )
-        _targetDay = State(initialValue: today)
+        _targetDay = State(initialValue: now)
     }
 
     var body: some View {
@@ -2056,6 +2211,16 @@ private struct RepeatWorkoutPlanningSheet: View {
                             )
                             .datePickerStyle(.graphical)
                             .tint(FFColors.accent)
+
+                            DatePicker(
+                                "Время",
+                                selection: $targetDay,
+                                displayedComponents: .hourAndMinute
+                            )
+                            .datePickerStyle(.wheel)
+                            .labelsHidden()
+                            .frame(maxHeight: 110)
+                            .colorScheme(.light)
 
                             let conflicts = viewModel.conflictCount(on: targetDay, excluding: nil)
                             if conflicts > 0 {
@@ -2138,7 +2303,7 @@ private struct RepeatWorkoutPlanningSheet: View {
                 on: targetDay,
             )
             guard didSchedule else { return }
-            onSaved(Calendar.current.startOfDay(for: targetDay))
+            onSaved(targetDay)
         }
     }
 }

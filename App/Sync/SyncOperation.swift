@@ -31,6 +31,7 @@ struct SyncCustomWorkoutCreationPayload: Codable, Equatable, Sendable {
     let source: WorkoutSource
     let title: String
     let scheduledDate: String?
+    let scheduledAt: String?
     let notes: String?
     let exercises: [AthleteCustomWorkoutExerciseDraftRequest]
 }
@@ -238,6 +239,7 @@ struct SyncOperation: Codable, Equatable, Sendable, Identifiable {
                     source: source,
                     title: request.title,
                     scheduledDate: request.scheduledDate,
+                    scheduledAt: request.scheduledAt,
                     notes: request.notes,
                     exercises: request.exercises ?? [],
                 )

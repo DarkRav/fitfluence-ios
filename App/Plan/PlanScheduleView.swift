@@ -68,6 +68,8 @@ final class PlanScheduleViewModel {
     var lastCompletedRecord: CompletedWorkoutRecord?
     var lastRepeatableRecord: CompletedWorkoutRecord?
     var repeatSchedulingErrorMessage: String?
+    var deleteErrorMessage: String?
+    var plannedWorkoutUpdateErrorMessage: String?
     private var suppressedPlanSignatures: Set<String> = []
 
     init(
@@ -414,9 +416,21 @@ final class PlanScheduleViewModel {
         )
         switch result {
         case let .success(detailsResponse):
+            let expectedScheduledDate = scheduledDateTimeString(scheduledDay)
             guard detailsResponse.isValidFreshCustomWorkout(
-                expectedScheduledDate: scheduledDayString(scheduledDay)
+                expectedScheduledDate: expectedScheduledDate
             ) else {
+                let validationReason = detailsResponse.validationErrorForFreshCustomWorkout(
+                    expectedScheduledDate: expectedScheduledDate
+                ) ?? "unknown"
+                print(
+                    "[app] repeat-create-invalid-response workoutId=\(detailsResponse.workout.id) " +
+                        "status=\(detailsResponse.workout.status?.rawValue ?? "nil") " +
+                        "source=\(detailsResponse.workout.source.rawValue) " +
+                        "scheduledDate=\(detailsResponse.workout.scheduledDate ?? "nil") " +
+                        "scheduledAt=\(detailsResponse.workout.scheduledAt ?? "nil") " +
+                        "reason=\(validationReason)"
+                )
                 repeatSchedulingErrorMessage = "Сервер вернул некорректную копию тренировки. Новая тренировка не создана."
                 return false
             }
@@ -622,6 +636,48 @@ final class PlanScheduleViewModel {
 
     func dismissRepeatSchedulingError() {
         repeatSchedulingErrorMessage = nil
+    }
+
+    func dismissDeleteError() {
+        deleteErrorMessage = nil
+    }
+
+    func dismissPlannedWorkoutUpdateError() {
+        plannedWorkoutUpdateErrorMessage = nil
+    }
+
+    private func deleteErrorMessage(for error: APIError) -> String {
+        switch error {
+        case .offline:
+            return "Нет интернета. Удалить уже созданную тренировку можно только после восстановления соединения."
+        case .timeout, .transportError, .serverError, .decodingError, .unknown:
+            return "Не удалось удалить тренировку на сервере. Повторите попытку позже."
+        case .httpError(let statusCode, _):
+            return "Сервер не удалил тренировку. Код ответа: \(statusCode)."
+        case .unauthorized, .forbidden:
+            return "Сессия устарела. Войдите снова и повторите попытку."
+        case .invalidURL:
+            return "Не удалось сформировать запрос на удаление."
+        case .cancelled:
+            return "Удаление тренировки было отменено."
+        }
+    }
+
+    private func plannedWorkoutUpdateErrorMessage(for error: APIError) -> String {
+        switch error {
+        case .offline:
+            return "Нет интернета. Изменения в уже созданной тренировке можно сохранить только после восстановления соединения."
+        case .timeout, .transportError, .serverError, .decodingError, .unknown:
+            return "Не удалось сохранить изменения тренировки на сервере. Повторите попытку позже."
+        case .httpError(let statusCode, _):
+            return "Сервер не сохранил изменения тренировки. Код ответа: \(statusCode)."
+        case .unauthorized, .forbidden:
+            return "Сессия устарела. Войдите снова и повторите попытку."
+        case .invalidURL:
+            return "Не удалось сформировать запрос на сохранение."
+        case .cancelled:
+            return "Сохранение изменений было отменено."
+        }
     }
 
     func ensureLastCompletedRecordLoaded() async {
@@ -883,6 +939,7 @@ final class PlanScheduleViewModel {
                 request: AthleteUpdateCustomWorkoutRequest(
                     title: nil,
                     scheduledDate: scheduledDayString(targetDay),
+                    scheduledAt: scheduledDateTimeString(targetDay),
                     notes: item.workoutDetails?.coachNote?.trimmedNilIfEmpty,
                 ),
             )
@@ -932,8 +989,29 @@ final class PlanScheduleViewModel {
     }
 
     func deletePlan(_ item: DayScheduleItem) async {
+        deleteErrorMessage = nil
+
         if isRemoteCustomWorkout(item) {
-            return
+            guard let workoutId = item.workoutId?.trimmedNilIfEmpty else {
+                deleteErrorMessage = "Не удалось определить тренировку для удаления."
+                return
+            }
+            guard let athleteTrainingClient else {
+                deleteErrorMessage = "Не удалось удалить тренировку без соединения с сервером."
+                return
+            }
+
+            let deleteResult = await athleteTrainingClient.deleteCustomWorkout(workoutInstanceId: workoutId)
+            switch deleteResult {
+            case .success:
+                break
+            case let .failure(error):
+                if case let .httpError(statusCode, _) = error, statusCode == 404 {
+                    break
+                }
+                deleteErrorMessage = deleteErrorMessage(for: error)
+                return
+            }
         }
         if item.isPendingRemoteCreation {
             await SyncCoordinator.shared.cancelPendingCreateCustomWorkout(
@@ -944,6 +1022,7 @@ final class PlanScheduleViewModel {
         if let suppression = suppressionSignature(day: item.day, workoutId: item.workoutId, planId: item.planId) {
             suppressedPlanSignatures.insert(suppression)
         }
+        await clearLocalWorkoutSession(for: item)
         await trainingStore.deletePlan(
             userSub: userSub,
             day: item.day,
@@ -953,6 +1032,7 @@ final class PlanScheduleViewModel {
             source: item.source,
         )
         await reload()
+        NotificationCenter.default.post(name: .fitfluenceTrainingPlanDidChange, object: item.day)
     }
 
     private func updatePendingCustomWorkoutPlan(
@@ -1156,7 +1236,6 @@ final class PlanScheduleViewModel {
 
     func canDeletePlannedWorkout(_ item: DayScheduleItem) -> Bool {
         guard item.status == .planned else { return false }
-        guard !isRemoteCustomWorkout(item) else { return false }
         return item.sourceKind == .manual
     }
 
@@ -1180,6 +1259,7 @@ final class PlanScheduleViewModel {
 
     func updatePlannedManualWorkout(_ item: DayScheduleItem, with workout: WorkoutDetailsModel) async {
         guard canEditPlannedWorkout(item, details: workout) else { return }
+        plannedWorkoutUpdateErrorMessage = nil
         if item.isPendingRemoteCreation {
             await updatePendingCustomWorkoutPlan(
                 item,
@@ -1192,55 +1272,37 @@ final class PlanScheduleViewModel {
            let workoutId = item.workoutId?.trimmedNilIfEmpty,
            let athleteTrainingClient
         {
-            let metadataResult = await athleteTrainingClient.updateCustomWorkout(
+            let updateResult = await athleteTrainingClient.updateCustomWorkout(
                 workoutInstanceId: workoutId,
                 request: workout.asUpdateCustomWorkoutRequest(scheduledDate: item.day),
             )
-            if case .success = metadataResult {
-                let syncRequest = ActiveWorkoutSyncRequest(
-                    exercises: workout.exercises
-                        .sorted(by: { $0.orderIndex < $1.orderIndex })
-                        .enumerated()
-                        .map { index, exercise in
-                            ActiveWorkoutSyncExerciseRequest(
-                                id: nil,
-                                exerciseId: exercise.id,
-                                repsMin: exercise.repsMin,
-                                repsMax: exercise.repsMax,
-                                targetRpe: exercise.targetRpe,
-                                restSeconds: exercise.restSeconds,
-                                notes: exercise.notes?.trimmedNilIfEmpty,
-                                progressionPolicyId: nil,
-                                sets: Array(
-                                    repeating: ActiveWorkoutSyncSetRequest(
-                                        id: nil,
-                                        weight: nil,
-                                        reps: nil,
-                                        rpe: nil,
-                                        isCompleted: false,
-                                        isWarmup: false,
-                                        restSecondsActual: nil,
-                                    ),
-                                    count: max(1, exercise.sets),
-                                ),
-                            )
-                        },
+            switch updateResult {
+            case let .success(detailsResponse):
+                let details = detailsResponse.asWorkoutDetailsModel()
+                let updatedPlan = TrainingDayPlan(
+                    id: item.planId,
+                    userSub: userSub,
+                    day: item.day,
+                    status: item.status,
+                    programId: item.programId,
+                    programTitle: item.programTitle,
+                    workoutId: workoutId,
+                    title: details.title,
+                    source: item.source,
+                    workoutDetails: details,
                 )
-                let syncResult = await athleteTrainingClient.syncActiveWorkout(
-                    workoutInstanceId: workoutId,
-                    request: syncRequest,
+                await trainingStore.schedule(updatedPlan)
+                await cacheStore.set(
+                    workoutCacheKey(programId: item.programId, source: item.source, workoutId: workoutId),
+                    value: details,
+                    namespace: userSub,
+                    ttl: 60 * 60 * 24,
                 )
-                if case let .success(detailsResponse) = syncResult {
-                    let details = detailsResponse.asWorkoutDetailsModel()
-                    await cacheStore.set(
-                        workoutCacheKey(programId: item.programId, source: item.source, workoutId: workoutId),
-                        value: details,
-                        namespace: userSub,
-                        ttl: 60 * 60 * 24,
-                    )
-                    await reload()
-                    return
-                }
+                await reload()
+                return
+            case let .failure(error):
+                plannedWorkoutUpdateErrorMessage = plannedWorkoutUpdateErrorMessage(for: error)
+                return
             }
         }
 
@@ -1407,7 +1469,7 @@ final class PlanScheduleViewModel {
         }
 
         return workouts.compactMap { workout in
-            guard let date = parseDate(workout.scheduledDate ?? workout.startedAt ?? workout.completedAt),
+            guard let date = parseDate(workout.scheduledAt ?? workout.scheduledDate ?? workout.startedAt ?? workout.completedAt),
                   monthInterval.contains(date)
             else {
                 return nil
@@ -1416,7 +1478,7 @@ final class PlanScheduleViewModel {
             return TrainingDayPlan(
                 id: "remote-\(workout.id)",
                 userSub: userSub,
-                day: calendar.startOfDay(for: date),
+                day: date,
                 status: mapStatus(workout.status),
                 programId: workout.programId?.trimmedNilIfEmpty,
                 programTitle: resolvedProgramTitle(for: workout, activeEnrollment: activeEnrollment),
@@ -1456,11 +1518,22 @@ final class PlanScheduleViewModel {
             return !suppressedPlanSignatures.contains(signature)
         }
         var merged = filteredRemote
-        var existing = Set(filteredRemote.map(planSignature))
+
+        for item in local {
+            guard let remoteIndex = merged.firstIndex(where: { remotePlan in
+                remotePlan.id == item.id &&
+                    calendar.startOfDay(for: remotePlan.day) == calendar.startOfDay(for: item.day)
+            }) else {
+                continue
+            }
+            merged[remoteIndex] = mergedRemotePlanPreservingLocalSchedule(remote: merged[remoteIndex], local: item)
+        }
+
+        var existing = Set(merged.map(planSignature))
 
         for item in local {
             if item.source == .program,
-               filteredRemote.contains(where: { remote in
+               merged.contains(where: { remote in
                    isRemoteEquivalent(remote: remote, toLocalProgramPlan: item)
                })
             {
@@ -1473,6 +1546,29 @@ final class PlanScheduleViewModel {
         }
 
         return merged.sorted { $0.day < $1.day }
+    }
+
+    private func mergedRemotePlanPreservingLocalSchedule(remote: TrainingDayPlan, local: TrainingDayPlan) -> TrainingDayPlan {
+        guard remote.id == local.id else { return remote }
+        guard calendar.startOfDay(for: remote.day) == calendar.startOfDay(for: local.day) else { return remote }
+
+        let remoteHasExplicitTime = scheduledTimeText(for: remote.day) != nil
+        let localHasExplicitTime = scheduledTimeText(for: local.day) != nil
+
+        return TrainingDayPlan(
+            id: remote.id,
+            userSub: remote.userSub,
+            day: !remoteHasExplicitTime && localHasExplicitTime ? local.day : remote.day,
+            status: remote.status,
+            programId: remote.programId,
+            programTitle: remote.programTitle,
+            workoutId: remote.workoutId,
+            title: remote.title,
+            source: remote.source,
+            workoutDetails: remote.workoutDetails ?? local.workoutDetails,
+            pendingSyncState: local.pendingSyncState,
+            pendingSyncOperationId: local.pendingSyncOperationId,
+        )
     }
 
     private func isRemoteEquivalent(remote: TrainingDayPlan, toLocalProgramPlan local: TrainingDayPlan) -> Bool {
@@ -1797,6 +1893,15 @@ struct PlanScheduleScreen: View {
                 await applyPendingPlanFocusIfNeeded()
             }
         }
+        .onReceive(NotificationCenter.default.publisher(for: .fitfluenceTrainingPlanDidChange)) { notification in
+            Task {
+                if let day = notification.object as? Date {
+                    await viewModel.focus(on: day)
+                } else {
+                    await viewModel.reload()
+                }
+            }
+        }
         .sheet(isPresented: $isScheduleDialogPresented) {
             PlanScheduleConfigurationSheet(
                 scheduledAt: Binding(
@@ -1882,6 +1987,7 @@ struct PlanScheduleScreen: View {
                 statusTitle: viewModel.statusTitle(flow.item.status),
                 workoutDetails: flow.workoutDetails,
                 canEdit: viewModel.canEditPlannedWorkout(flow.item, details: flow.workoutDetails),
+                canDelete: viewModel.canDeletePlannedWorkout(flow.item),
                 pendingSyncMessage: flow.item.isPendingRemoteCreation
                     ? "Тренировка сохранена локально и будет создана на сервере после синхронизации. Запуск станет доступен после этого."
                     : nil,
@@ -1893,6 +1999,10 @@ struct PlanScheduleScreen: View {
                         item: flow.item,
                         workoutDetails: workoutDetails,
                     )
+                },
+                onDelete: {
+                    workoutDetailsFlow = nil
+                    presentDeleteConfirmation(for: flow.item)
                 },
             )
         }
@@ -1960,6 +2070,40 @@ struct PlanScheduleScreen: View {
             }
         } message: {
             Text(viewModel.repeatSchedulingErrorMessage ?? "")
+        }
+        .alert(
+            "Не удалось удалить тренировку",
+            isPresented: Binding(
+                get: { viewModel.deleteErrorMessage != nil },
+                set: { isPresented in
+                    if !isPresented {
+                        viewModel.dismissDeleteError()
+                    }
+                }
+            )
+        ) {
+            Button("Понятно") {
+                viewModel.dismissDeleteError()
+            }
+        } message: {
+            Text(viewModel.deleteErrorMessage ?? "")
+        }
+        .alert(
+            "Не удалось сохранить изменения",
+            isPresented: Binding(
+                get: { viewModel.plannedWorkoutUpdateErrorMessage != nil },
+                set: { isPresented in
+                    if !isPresented {
+                        viewModel.dismissPlannedWorkoutUpdateError()
+                    }
+                }
+            )
+        ) {
+            Button("Понятно") {
+                viewModel.dismissPlannedWorkoutUpdateError()
+            }
+        } message: {
+            Text(viewModel.plannedWorkoutUpdateErrorMessage ?? "")
         }
     }
 
@@ -3287,8 +3431,10 @@ private struct PlanWorkoutDetailsSheet: View {
     let statusTitle: String
     let workoutDetails: WorkoutDetailsModel?
     let canEdit: Bool
+    let canDelete: Bool
     let pendingSyncMessage: String?
     let onEdit: () -> Void
+    let onDelete: () -> Void
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -3365,8 +3511,23 @@ private struct PlanWorkoutDetailsSheet: View {
                             }
                         }
 
-                        if canEdit {
-                            FFButton(title: "Редактировать тренировку", variant: .primary, action: onEdit)
+                        if canEdit || canDelete {
+                            VStack(spacing: FFSpacing.sm) {
+                                if canEdit {
+                                    FFButton(title: "Редактировать тренировку", variant: .primary, action: onEdit)
+                                }
+                                if canDelete {
+                                    Button("Удалить тренировку", role: .destructive, action: onDelete)
+                                        .font(FFTypography.body.weight(.semibold))
+                                        .frame(maxWidth: .infinity, minHeight: 52)
+                                        .background(FFColors.surface)
+                                        .clipShape(RoundedRectangle(cornerRadius: FFTheme.Radius.control))
+                                        .overlay {
+                                            RoundedRectangle(cornerRadius: FFTheme.Radius.control)
+                                                .stroke(FFColors.gray700, lineWidth: 1)
+                                        }
+                                }
+                            }
                         }
                     }
                     .padding(.horizontal, FFSpacing.md)

@@ -69,35 +69,73 @@ actor PendingCustomWorkoutReconciler {
 
 extension AthleteWorkoutDetailsResponse {
     func isValidFreshCustomWorkout(expectedScheduledDate: String?) -> Bool {
-        if workout.source != .custom {
-            return false
+        validationErrorForFreshCustomWorkout(expectedScheduledDate: expectedScheduledDate) == nil
+    }
+
+    func validationErrorForFreshCustomWorkout(expectedScheduledDate: String?) -> String? {
+        if workout.id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return "empty_workout_id"
         }
 
         switch workout.status {
         case .completed, .abandoned:
-            return false
+            return "invalid_status:\(workout.status?.rawValue ?? "nil")"
         case .planned, .inProgress, .missed, .none:
             break
         }
 
         if workout.completedAt?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false {
-            return false
+            return "completed_at_present"
         }
 
         if workout.startedAt?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false {
-            return false
+            return "started_at_present"
         }
+
+        let scheduledValue = workout.scheduledAt?.trimmingCharacters(in: .whitespacesAndNewlines)
+            .nilIfEmpty ?? workout.scheduledDate?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
 
         if let expectedScheduledDate,
-           let scheduledDate = workout.scheduledDate?.trimmingCharacters(in: .whitespacesAndNewlines),
-           !scheduledDate.isEmpty,
-           scheduledDate != expectedScheduledDate
+           let scheduledValue,
+           !Self.matchesScheduledDate(actual: scheduledValue, expected: expectedScheduledDate)
         {
-            return false
+            return "scheduled_date_mismatch:\(scheduledValue)"
         }
 
-        return true
+        return nil
     }
+
+    private static func matchesScheduledDate(actual: String, expected: String) -> Bool {
+        if actual == expected {
+            return true
+        }
+
+        if let actualDate = parseScheduledDate(actual),
+           let expectedDate = parseScheduledDate(expected)
+        {
+            let calendar = Calendar.autoupdatingCurrent
+            let actualDay = calendar.dateComponents([.year, .month, .day], from: actualDate)
+            let expectedDay = calendar.dateComponents([.year, .month, .day], from: expectedDate)
+            return actualDay == expectedDay
+        }
+
+        return false
+    }
+
+    private static func parseScheduledDate(_ value: String) -> Date? {
+        if let date = SyncOperation.parseISO8601(value) {
+            return date
+        }
+        return dateOnly.date(from: value)
+    }
+
+    private static let dateOnly: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(secondsFromGMT: 0)
+        formatter.dateFormat = "yyyy-MM-dd"
+        return formatter
+    }()
 }
 
 actor SyncWorker {
@@ -227,6 +265,7 @@ actor SyncWorker {
                 request: AthleteCreateCustomWorkoutRequest(
                     title: payload.title,
                     scheduledDate: payload.scheduledDate,
+                    scheduledAt: payload.scheduledAt,
                     notes: payload.notes,
                     exercises: payload.exercises,
                 ),
@@ -234,7 +273,9 @@ actor SyncWorker {
             )
             switch response {
             case let .success(detailsResponse):
-                guard detailsResponse.isValidFreshCustomWorkout(expectedScheduledDate: payload.scheduledDate) else {
+                guard detailsResponse.isValidFreshCustomWorkout(
+                    expectedScheduledDate: payload.scheduledAt ?? payload.scheduledDate
+                ) else {
                     return .dead(error: "Invalid CREATE_CUSTOM_WORKOUT response")
                 }
                 await pendingCustomWorkoutReconciler.materialize(
@@ -440,5 +481,11 @@ actor SyncWorker {
         case .unknown:
             return "Unknown"
         }
+    }
+}
+
+private extension String {
+    var nilIfEmpty: String? {
+        isEmpty ? nil : self
     }
 }

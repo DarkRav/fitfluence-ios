@@ -228,7 +228,7 @@ final class SyncEngineTests: XCTestCase {
             workoutID: remoteWorkoutID,
             title: "Повтор",
             source: .custom,
-            scheduledDate: scheduledDayString(targetDay, calendar: calendar),
+            scheduledDate: scheduledDateTimeString(targetDay),
         )))
         await trainingStore.schedule(
             TrainingDayPlan(
