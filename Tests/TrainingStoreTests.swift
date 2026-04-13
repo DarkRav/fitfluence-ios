@@ -346,6 +346,297 @@ final class TrainingStoreTests: XCTestCase {
     }
 
     @MainActor
+    func testPlanReloadPreservesHydratedManualWorkoutDetailsAgainstCalendarSummary() async throws {
+        let suite = "fitfluence.tests.training.plan.reload-preserves-details.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        let calendar = Calendar.current
+        let today = calendar.startOfDay(for: Date())
+        let targetDay = calendar.date(byAdding: .day, value: 1, to: today) ?? today
+        let remoteWorkoutID = "22222222-2222-2222-2222-222222222222"
+        let store = LocalTrainingStore(defaults: defaults, calendar: calendar)
+
+        await store.schedule(
+            TrainingDayPlan(
+                id: "remote-\(remoteWorkoutID)",
+                userSub: "u1",
+                day: targetDay,
+                status: .planned,
+                programId: nil,
+                programTitle: nil,
+                workoutId: remoteWorkoutID,
+                title: "Ручная A",
+                source: .freestyle,
+                workoutDetails: WorkoutDetailsModel.quickWorkout(
+                    title: "Ручная A",
+                    exercises: [
+                        WorkoutExercise(
+                            id: "exercise-a",
+                            name: "Присед",
+                            sets: 4,
+                            repsMin: 6,
+                            repsMax: 8,
+                            targetRpe: nil,
+                            restSeconds: nil,
+                            notes: nil,
+                            orderIndex: 0
+                        ),
+                        WorkoutExercise(
+                            id: "exercise-b",
+                            name: "Жим",
+                            sets: 3,
+                            repsMin: 8,
+                            repsMax: 10,
+                            targetRpe: nil,
+                            restSeconds: nil,
+                            notes: nil,
+                            orderIndex: 1
+                        ),
+                    ]
+                ),
+            )
+        )
+
+        let client = MockRepeatWorkoutAthleteTrainingClient(
+            createResult: .failure(.unknown),
+            calendarResult: .success(
+                AthleteCalendarResponse(
+                    workouts: [
+                        AthleteWorkoutInstance(
+                            id: remoteWorkoutID,
+                            enrollmentId: nil,
+                            workoutTemplateId: nil,
+                            title: "Ручная A",
+                            status: .planned,
+                            source: .custom,
+                            scheduledDate: scheduledDayString(targetDay, calendar: calendar),
+                            scheduledAt: scheduledDateTimeString(targetDay),
+                            startedAt: nil,
+                            completedAt: nil,
+                            durationSeconds: nil,
+                            notes: nil,
+                            programId: nil
+                        ),
+                    ]
+                )
+            )
+        )
+
+        let viewModel = PlanScheduleViewModel(
+            userSub: "u1",
+            trainingStore: store,
+            athleteTrainingClient: client,
+            cacheStore: MemoryCacheStore(),
+            networkMonitor: StaticNetworkMonitor(currentStatus: true),
+            calendar: calendar,
+        )
+
+        await viewModel.onAppear()
+
+        let item = try XCTUnwrap(viewModel.dayItems(for: targetDay).first)
+        XCTAssertEqual(item.workoutDetails?.exercises.count, 2)
+        XCTAssertEqual(item.workoutDetails?.exercises.first?.name, "Присед")
+    }
+
+    @MainActor
+    func testResolveWorkoutDetailsFetchesRemoteWhenStoredPlanContainsLegacySummaryPlaceholder() async throws {
+        let suite = "fitfluence.tests.training.plan.resolve-legacy-placeholder.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        let calendar = Calendar.current
+        let today = calendar.startOfDay(for: Date())
+        let targetDay = calendar.date(byAdding: .day, value: 1, to: today) ?? today
+        let remoteWorkoutID = "33333333-3333-3333-3333-333333333333"
+        let store = LocalTrainingStore(defaults: defaults, calendar: calendar)
+
+        await store.schedule(
+            TrainingDayPlan(
+                id: "remote-\(remoteWorkoutID)",
+                userSub: "u1",
+                day: targetDay,
+                status: .planned,
+                programId: nil,
+                programTitle: nil,
+                workoutId: remoteWorkoutID,
+                title: "Пустой placeholder",
+                source: .freestyle,
+                workoutDetails: WorkoutDetailsModel(
+                    id: remoteWorkoutID,
+                    title: "Пустой placeholder",
+                    dayOrder: 0,
+                    coachNote: nil,
+                    exercises: []
+                ),
+            )
+        )
+
+        let client = MockRepeatWorkoutAthleteTrainingClient(
+            createResult: .failure(.unknown),
+            getDetailsResult: .success(
+                makeWorkoutDetailsResponse(
+                    workoutID: remoteWorkoutID,
+                    title: "Пустой placeholder",
+                    source: .custom,
+                    scheduledDate: scheduledDayString(targetDay, calendar: calendar),
+                    scheduledAt: scheduledDateTimeString(targetDay),
+                    exercises: [
+                        makeExerciseExecutionResponse(
+                            id: "execution-rich",
+                            exerciseId: "exercise-rich",
+                            name: "Тяга верхнего блока",
+                            orderIndex: 0,
+                            plannedSets: 3
+                        ),
+                    ]
+                )
+            )
+        )
+
+        let viewModel = PlanScheduleViewModel(
+            userSub: "u1",
+            trainingStore: store,
+            athleteTrainingClient: client,
+            cacheStore: MemoryCacheStore(),
+            networkMonitor: StaticNetworkMonitor(currentStatus: true),
+            calendar: calendar,
+        )
+
+        await viewModel.onAppear()
+        let item = try XCTUnwrap(viewModel.dayItems(for: targetDay).first)
+
+        let resolved = await viewModel.resolveWorkoutDetails(for: item)
+        let fetchedWorkoutID = await client.fetchedWorkoutID()
+
+        XCTAssertEqual(fetchedWorkoutID, remoteWorkoutID)
+        XCTAssertEqual(resolved?.exercises.count, 1)
+        XCTAssertEqual(resolved?.exercises.first?.name, "Тяга верхнего блока")
+    }
+
+    @MainActor
+    func testReplanMissedMovesOriginalPlanInsteadOfCreatingDuplicate() async throws {
+        let suite = "fitfluence.tests.training.plan.replan-move.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        let calendar = Calendar.current
+        let today = calendar.startOfDay(for: Date())
+        let missedDay = calendar.date(byAdding: .day, value: -1, to: today) ?? today
+        let targetDay = calendar.date(byAdding: .day, value: 2, to: today) ?? today
+        let store = LocalTrainingStore(defaults: defaults, calendar: calendar)
+
+        await store.schedule(
+            TrainingDayPlan(
+                id: "missed-plan-1",
+                userSub: "u1",
+                day: missedDay,
+                status: .missed,
+                programId: nil,
+                programTitle: nil,
+                workoutId: "missed-workout-1",
+                title: "Пропущенная тренировка",
+                source: .freestyle,
+                workoutDetails: WorkoutDetailsModel.quickWorkout(
+                    title: "Пропущенная тренировка",
+                    exercises: []
+                ),
+            )
+        )
+
+        let viewModel = PlanScheduleViewModel(
+            userSub: "u1",
+            trainingStore: store,
+            athleteTrainingClient: nil,
+            cacheStore: MemoryCacheStore(),
+            networkMonitor: StaticNetworkMonitor(currentStatus: false),
+            calendar: calendar,
+        )
+
+        await viewModel.onAppear()
+        let missedItem = try XCTUnwrap(viewModel.dayItems(for: missedDay).first)
+
+        await viewModel.replanMissed(missedItem, on: targetDay)
+
+        XCTAssertTrue(viewModel.dayItems(for: missedDay).isEmpty)
+        let replannedItems = viewModel.dayItems(for: targetDay)
+        XCTAssertEqual(replannedItems.count, 1)
+        XCTAssertEqual(replannedItems.first?.planId, "missed-plan-1")
+        XCTAssertEqual(replannedItems.first?.status, .planned)
+    }
+
+    @MainActor
+    func testMergedPlansPreferLocalRescheduledRemotePlanOverOldRemoteDay() async throws {
+        let suite = "fitfluence.tests.training.plan.remote-overlay.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        let calendar = Calendar.current
+        let today = calendar.startOfDay(for: Date())
+        let missedDay = calendar.date(byAdding: .day, value: -1, to: today) ?? today
+        let targetDay = calendar.date(byAdding: .day, value: 3, to: today) ?? today
+        let remoteWorkoutID = "44444444-4444-4444-4444-444444444444"
+        let store = LocalTrainingStore(defaults: defaults, calendar: calendar)
+
+        await store.schedule(
+            TrainingDayPlan(
+                id: "remote-\(remoteWorkoutID)",
+                userSub: "u1",
+                day: targetDay,
+                status: .planned,
+                programId: "program-1",
+                programTitle: "Сила",
+                workoutId: remoteWorkoutID,
+                title: "День A",
+                source: .program,
+                workoutDetails: nil,
+            )
+        )
+
+        let client = MockRepeatWorkoutAthleteTrainingClient(
+            createResult: .failure(.unknown),
+            calendarResult: .success(
+                AthleteCalendarResponse(
+                    workouts: [
+                        AthleteWorkoutInstance(
+                            id: remoteWorkoutID,
+                            enrollmentId: nil,
+                            workoutTemplateId: "template-1",
+                            title: "День A",
+                            status: .missed,
+                            source: .program,
+                            scheduledDate: scheduledDayString(missedDay, calendar: calendar),
+                            scheduledAt: nil,
+                            startedAt: nil,
+                            completedAt: nil,
+                            durationSeconds: nil,
+                            notes: nil,
+                            programId: "program-1"
+                        ),
+                    ]
+                )
+            )
+        )
+
+        let viewModel = PlanScheduleViewModel(
+            userSub: "u1",
+            trainingStore: store,
+            athleteTrainingClient: client,
+            cacheStore: MemoryCacheStore(),
+            networkMonitor: StaticNetworkMonitor(currentStatus: true),
+            calendar: calendar,
+        )
+
+        await viewModel.onAppear()
+
+        XCTAssertTrue(viewModel.dayItems(for: missedDay).isEmpty)
+        let futureItems = viewModel.dayItems(for: targetDay)
+        XCTAssertEqual(futureItems.count, 1)
+        XCTAssertEqual(futureItems.first?.planId, "remote-\(remoteWorkoutID)")
+        XCTAssertEqual(futureItems.first?.status, .planned)
+    }
+
+    @MainActor
     func testPlanViewModelShowsRealProgramTitleForLocalProgramPlan() async throws {
         let suite = "fitfluence.tests.training.plan.program-title.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
@@ -1631,17 +1922,24 @@ private actor MockRepeatWorkoutAthleteTrainingClient: AthleteTrainingClientProto
     private let getDetailsResult: Result<AthleteWorkoutDetailsResponse, APIError>
     private let deleteResult: Result<Void, APIError>
     private let updateResult: Result<AthleteWorkoutDetailsResponse, APIError>
+    private let calendarResult: Result<AthleteCalendarResponse, APIError>
 
     init(
         createResult: Result<AthleteWorkoutDetailsResponse, APIError>,
         getDetailsResult: Result<AthleteWorkoutDetailsResponse, APIError> = .failure(.unknown),
         deleteResult: Result<Void, APIError> = .failure(.unknown),
         updateResult: Result<AthleteWorkoutDetailsResponse, APIError> = .failure(.unknown),
+        calendarResult: Result<AthleteCalendarResponse, APIError> = .failure(.unknown),
     ) {
         self.createResult = createResult
         self.getDetailsResult = getDetailsResult
         self.deleteResult = deleteResult
         self.updateResult = updateResult
+        self.calendarResult = calendarResult
+    }
+
+    func calendar(month _: String) async -> Result<AthleteCalendarResponse, APIError> {
+        calendarResult
     }
 
     func createCustomWorkout(
@@ -1682,6 +1980,10 @@ private actor MockRepeatWorkoutAthleteTrainingClient: AthleteTrainingClientProto
 
     func deletedWorkoutID() -> String? {
         lastDeletedWorkoutID
+    }
+
+    func fetchedWorkoutID() -> String? {
+        lastFetchedWorkoutID
     }
 
     func updatedWorkoutRequest() -> AthleteUpdateCustomWorkoutRequest? {

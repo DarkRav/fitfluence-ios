@@ -885,19 +885,12 @@ final class PlanScheduleViewModel {
         guard canSchedule(on: targetDay) else { return }
 
         if let existingReplacement = existingReplannedCopy(for: item) {
-            await movePlan(existingReplacement, to: targetDay)
-            return
+            await deletePlan(existingReplacement)
         }
-
-        await schedulePlan(
-            day: targetDay,
-            title: item.title,
-            source: item.source,
-            programId: item.programId,
-            programTitle: item.programTitle,
-            workoutId: item.workoutId,
-            status: .planned,
-            workoutDetails: item.workoutDetails,
+        await movePlan(
+            item,
+            to: targetDay,
+            statusOverride: .planned,
         )
     }
 
@@ -916,11 +909,16 @@ final class PlanScheduleViewModel {
             .first
     }
 
-    func movePlan(_ item: DayScheduleItem, to targetDay: Date) async {
+    func movePlan(
+        _ item: DayScheduleItem,
+        to targetDay: Date,
+        statusOverride: TrainingDayStatus? = nil,
+    ) async {
         let normalizedCurrent = calendar.startOfDay(for: item.day)
         let normalizedTarget = calendar.startOfDay(for: targetDay)
         guard normalizedCurrent != normalizedTarget else { return }
         guard canSchedule(on: normalizedTarget) else { return }
+        let resolvedStatus = statusOverride ?? item.status
         if item.isPendingRemoteCreation {
             let workout = await resolveWorkoutDetails(for: item) ?? item.workoutDetails ?? editableDraft(for: item)
             await updatePendingCustomWorkoutPlan(
@@ -959,7 +957,7 @@ final class PlanScheduleViewModel {
             workoutId: item.workoutId,
             title: item.title,
             source: item.source,
-            status: item.status,
+            status: resolvedStatus,
             programId: item.programId,
             programTitle: item.programTitle,
             workoutDetails: item.workoutDetails,
@@ -1152,7 +1150,8 @@ final class PlanScheduleViewModel {
     }
 
     func resolveWorkoutDetails(for item: DayScheduleItem) async -> WorkoutDetailsModel? {
-        if let workoutDetails = item.workoutDetails {
+        if hasHydratedWorkoutDetails(item.workoutDetails, for: item) {
+            let workoutDetails = item.workoutDetails!
             await cacheStore.set(
                 workoutCacheKey(programId: item.programId, source: item.source, workoutId: item.workoutId),
                 value: workoutDetails,
@@ -1178,7 +1177,7 @@ final class PlanScheduleViewModel {
             workoutCacheKey(programId: item.programId, source: item.source, workoutId: item.workoutId),
             as: WorkoutDetailsModel.self,
             namespace: userSub,
-        ) {
+        ), hasHydratedWorkoutDetails(cached, for: item) {
             return cached
         }
 
@@ -1244,7 +1243,8 @@ final class PlanScheduleViewModel {
     }
 
     func editableDraft(for item: DayScheduleItem) -> WorkoutDetailsModel {
-        if let workoutDetails = item.workoutDetails {
+        if hasHydratedWorkoutDetails(item.workoutDetails, for: item) {
+            let workoutDetails = item.workoutDetails!
             return workoutDetails
         }
 
@@ -1485,15 +1485,7 @@ final class PlanScheduleViewModel {
                 workoutId: workout.id,
                 title: workout.title?.trimmedNilIfEmpty ?? "Тренировка",
                 source: mapSource(workout.source),
-                workoutDetails: WorkoutDetailsModel(
-                    id: workout.workoutTemplateId?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
-                        ? workout.workoutTemplateId!.trimmingCharacters(in: .whitespacesAndNewlines)
-                        : workout.id,
-                    title: workout.title?.trimmedNilIfEmpty ?? "Тренировка",
-                    dayOrder: 0,
-                    coachNote: nil,
-                    exercises: []
-                ),
+                workoutDetails: nil,
             )
         }
     }
@@ -1521,8 +1513,7 @@ final class PlanScheduleViewModel {
 
         for item in local {
             guard let remoteIndex = merged.firstIndex(where: { remotePlan in
-                remotePlan.id == item.id &&
-                    calendar.startOfDay(for: remotePlan.day) == calendar.startOfDay(for: item.day)
+                remotePlan.id == item.id
             }) else {
                 continue
             }
@@ -1550,25 +1541,71 @@ final class PlanScheduleViewModel {
 
     private func mergedRemotePlanPreservingLocalSchedule(remote: TrainingDayPlan, local: TrainingDayPlan) -> TrainingDayPlan {
         guard remote.id == local.id else { return remote }
-        guard calendar.startOfDay(for: remote.day) == calendar.startOfDay(for: local.day) else { return remote }
 
-        let remoteHasExplicitTime = scheduledTimeText(for: remote.day) != nil
+        let sameDay = calendar.startOfDay(for: remote.day) == calendar.startOfDay(for: local.day)
+        let remoteHasExplicitTime = sameDay && scheduledTimeText(for: remote.day) != nil
         let localHasExplicitTime = scheduledTimeText(for: local.day) != nil
+        let resolvedDay: Date
+        if sameDay {
+            resolvedDay = !remoteHasExplicitTime && localHasExplicitTime ? local.day : remote.day
+        } else {
+            resolvedDay = local.day
+        }
 
         return TrainingDayPlan(
             id: remote.id,
             userSub: remote.userSub,
-            day: !remoteHasExplicitTime && localHasExplicitTime ? local.day : remote.day,
-            status: remote.status,
-            programId: remote.programId,
-            programTitle: remote.programTitle,
-            workoutId: remote.workoutId,
-            title: remote.title,
+            day: resolvedDay,
+            status: sameDay ? remote.status : local.status,
+            programId: remote.programId ?? local.programId,
+            programTitle: local.programTitle ?? remote.programTitle,
+            workoutId: remote.workoutId ?? local.workoutId,
+            title: local.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? remote.title : local.title,
             source: remote.source,
-            workoutDetails: remote.workoutDetails ?? local.workoutDetails,
+            workoutDetails: preferredWorkoutDetails(remote: remote, local: local),
             pendingSyncState: local.pendingSyncState,
             pendingSyncOperationId: local.pendingSyncOperationId,
         )
+    }
+
+    private func preferredWorkoutDetails(remote: TrainingDayPlan, local: TrainingDayPlan) -> WorkoutDetailsModel? {
+        if hasHydratedWorkoutDetails(remote.workoutDetails, source: remote.source, fallbackTitle: remote.title) {
+            return remote.workoutDetails
+        }
+        if hasHydratedWorkoutDetails(local.workoutDetails, source: local.source, fallbackTitle: local.title) {
+            return local.workoutDetails
+        }
+        return nil
+    }
+
+    private func hasHydratedWorkoutDetails(_ workoutDetails: WorkoutDetailsModel?, for item: DayScheduleItem) -> Bool {
+        hasHydratedWorkoutDetails(
+            workoutDetails,
+            source: item.source,
+            fallbackTitle: item.title,
+        )
+    }
+
+    private func hasHydratedWorkoutDetails(
+        _ workoutDetails: WorkoutDetailsModel?,
+        source: WorkoutSource,
+        fallbackTitle: String,
+    ) -> Bool {
+        guard let workoutDetails else { return false }
+        if !workoutDetails.exercises.isEmpty {
+            return true
+        }
+        let trimmedCoachNote = workoutDetails.coachNote?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !trimmedCoachNote.isEmpty {
+            return true
+        }
+        if source == .program && workoutDetails.dayOrder > 0 {
+            return true
+        }
+
+        let normalizedTitle = workoutDetails.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalizedFallbackTitle = fallbackTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        return !normalizedTitle.isEmpty && normalizedTitle.caseInsensitiveCompare(normalizedFallbackTitle) != .orderedSame
     }
 
     private func isRemoteEquivalent(remote: TrainingDayPlan, toLocalProgramPlan local: TrainingDayPlan) -> Bool {
