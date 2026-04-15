@@ -42,8 +42,6 @@ targets:
               NSExceptionAllowsInsecureHTTPLoads: true
             127.0.0.1:
               NSExceptionAllowsInsecureHTTPLoads: true
-            176.108.251.89:
-              NSExceptionAllowsInsecureHTTPLoads: true
         NSLocalNetworkUsageDescription: Приложению нужен доступ к локальной сети для подключения к вашему dev-серверу.
         NSBonjourServices:
           - _http._tcp

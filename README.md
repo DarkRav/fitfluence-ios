@@ -74,7 +74,7 @@
 - Не открывается callback:
   - проверьте `KEYCLOAK_REDIRECT_URI` и URL scheme `fitfluence`
 - Постоянный `401`:
-  - проверьте доступность backend URL из `Dev.xcconfig` (для телефона это должен быть IP, не `localhost`)
+  - проверьте доступность backend URL из `Dev.xcconfig` (для телефона это должен быть домен или IP, доступный с устройства, не `localhost`)
   - проверьте `spring.security.oauth2.resourceserver.jwt.issuer-uri` в backend: issuer должен совпадать с `iss` в access token
   - если backend запущен с локальным профилем и IP-хостом Keycloak, задайте `KEYCLOAK_ISSUER_URI=http://<ваш-ip>:9990/realms/fitfluence`
 - Не работает регистрация из кнопки:

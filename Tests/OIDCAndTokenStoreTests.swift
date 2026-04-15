@@ -136,10 +136,10 @@ final class OIDCAndTokenStoreTests: XCTestCase {
             if url.path == "/auth/realms/fitfluence/.well-known/openid-configuration" {
                 let json = """
                 {
-                  "issuer": "https://176.108.251.89/auth/realms/fitfluence",
-                  "authorization_endpoint": "https://176.108.251.89/auth/realms/fitfluence/protocol/openid-connect/auth",
-                  "token_endpoint": "https://176.108.251.89/auth/realms/fitfluence/protocol/openid-connect/token",
-                  "end_session_endpoint": "https://176.108.251.89/auth/realms/fitfluence/protocol/openid-connect/logout"
+                  "issuer": "https://fitfluence.ru/auth/realms/fitfluence",
+                  "authorization_endpoint": "https://fitfluence.ru/auth/realms/fitfluence/protocol/openid-connect/auth",
+                  "token_endpoint": "https://fitfluence.ru/auth/realms/fitfluence/protocol/openid-connect/token",
+                  "end_session_endpoint": "https://fitfluence.ru/auth/realms/fitfluence/protocol/openid-connect/logout"
                 }
                 """
                 let response = try HTTPURLResponse(
@@ -162,20 +162,20 @@ final class OIDCAndTokenStoreTests: XCTestCase {
         }
 
         let service = try OIDCDiscoveryService(
-            baseURL: XCTUnwrap(URL(string: "https://176.108.251.89")),
+            baseURL: XCTUnwrap(URL(string: "https://fitfluence.ru")),
             realm: "fitfluence",
             session: testSession,
         )
         let document = try await service.discover()
 
-        XCTAssertEqual(document.issuer.absoluteString, "https://176.108.251.89/auth/realms/fitfluence")
+        XCTAssertEqual(document.issuer.absoluteString, "https://fitfluence.ru/auth/realms/fitfluence")
         XCTAssertEqual(
             document.authorizationEndpoint.absoluteString,
-            "https://176.108.251.89/auth/realms/fitfluence/protocol/openid-connect/auth",
+            "https://fitfluence.ru/auth/realms/fitfluence/protocol/openid-connect/auth",
         )
         XCTAssertEqual(
             document.tokenEndpoint.absoluteString,
-            "https://176.108.251.89/auth/realms/fitfluence/protocol/openid-connect/token",
+            "https://fitfluence.ru/auth/realms/fitfluence/protocol/openid-connect/token",
         )
     }
 
