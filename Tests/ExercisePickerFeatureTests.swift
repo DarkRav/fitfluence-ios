@@ -452,10 +452,82 @@ final class ExercisePickerFeatureTests: XCTestCase {
         XCTAssertTrue(viewModel.isContextualBrowsing)
         XCTAssertEqual(viewModel.contextChips, ["Грудь", "Плечи", "Штанга", "Скамья"])
     }
+
+    @MainActor
+    func testViewModelLoadsNextCatalogPageWhenLastVisibleItemAppears() async {
+        let repository = StubExerciseCatalogRepository(
+            results: [
+                .content(
+                    items: [
+                        makeCatalogItem(id: "ex-1", name: "Жим лёжа"),
+                        makeCatalogItem(id: "ex-2", name: "Тяга блока"),
+                    ],
+                    metadata: PageMetadata(page: 0, size: 2, totalElements: 4, totalPages: 2)
+                ),
+                .content(
+                    items: [
+                        makeCatalogItem(id: "ex-3", name: "Присед"),
+                        makeCatalogItem(id: "ex-4", name: "Выпады"),
+                    ],
+                    metadata: PageMetadata(page: 1, size: 2, totalElements: 4, totalPages: 2)
+                ),
+            ],
+        )
+        let viewModel = ExercisePickerViewModel(repository: repository)
+
+        await viewModel.onAppear()
+        await viewModel.loadNextCatalogPageIfNeeded(currentItemID: "ex-2")
+
+        XCTAssertEqual(viewModel.visibleSections.first?.items.map(\.id), ["ex-1", "ex-2", "ex-3", "ex-4"])
+        XCTAssertEqual(viewModel.catalogResultsBadgeCount, 4)
+
+        let queries = await repository.queries
+        XCTAssertEqual(queries.map(\.page), [0, 1])
+    }
+
+    @MainActor
+    func testViewModelContinuesPaginationAcrossNonMatchingPagesForClientSideFilters() async {
+        let repository = StubExerciseCatalogRepository(
+            results: [
+                .content(
+                    items: [
+                        makeCatalogItem(id: "ex-push", name: "Жим лёжа", movementPattern: .push),
+                    ],
+                    metadata: PageMetadata(page: 0, size: 1, totalElements: 3, totalPages: 3)
+                ),
+                .content(
+                    items: [
+                        makeCatalogItem(id: "ex-hinge", name: "Румынская тяга", movementPattern: .hinge),
+                    ],
+                    metadata: PageMetadata(page: 1, size: 1, totalElements: 3, totalPages: 3)
+                ),
+                .content(
+                    items: [
+                        makeCatalogItem(id: "ex-pull", name: "Тяга верхнего блока", movementPattern: .pull),
+                    ],
+                    metadata: PageMetadata(page: 2, size: 1, totalElements: 3, totalPages: 3)
+                ),
+            ],
+        )
+        let viewModel = ExercisePickerViewModel(repository: repository)
+
+        await viewModel.onAppear()
+        viewModel.filters = ExercisePickerViewModel.FilterState(
+            movementPatterns: [.push, .pull]
+        )
+
+        await viewModel.loadNextCatalogPageIfNeeded(currentItemID: "ex-push")
+
+        XCTAssertEqual(viewModel.visibleSections.first?.items.map(\.id), ["ex-push", "ex-pull"])
+        XCTAssertEqual(viewModel.catalogResultsBadgeCount, 2)
+
+        let queries = await repository.queries
+        XCTAssertEqual(queries.map(\.page), [0, 1, 2])
+    }
 }
 
 private actor StubExerciseCatalogRepository: ExerciseCatalogRepository {
-    private var queries: [ExerciseCatalogQuery] = []
+    private var recordedQueries: [ExerciseCatalogQuery] = []
     private var queuedResults: [ExerciseCatalogResult]
     private let fallbackResult: ExerciseCatalogResult
     private let metadataResult: ExerciseCatalogMetadata
@@ -467,7 +539,7 @@ private actor StubExerciseCatalogRepository: ExerciseCatalogRepository {
     }
 
     func search(query: ExerciseCatalogQuery) async -> ExerciseCatalogResult {
-        queries.append(query)
+        recordedQueries.append(query)
         if !queuedResults.isEmpty {
             return queuedResults.removeFirst()
         }
@@ -475,7 +547,11 @@ private actor StubExerciseCatalogRepository: ExerciseCatalogRepository {
     }
 
     var lastQuery: ExerciseCatalogQuery? {
-        queries.last
+        recordedQueries.last
+    }
+
+    var queries: [ExerciseCatalogQuery] {
+        recordedQueries
     }
 
     func metadata() async -> ExerciseCatalogMetadata {
@@ -544,10 +620,10 @@ private func makeEquipment(id: String, name: String) -> ExerciseCatalogEquipment
 }
 
 private extension ExerciseCatalogResult {
-    static func content(items: [ExerciseCatalogItem]) -> ExerciseCatalogResult {
+    static func content(items: [ExerciseCatalogItem], metadata: PageMetadata? = nil) -> ExerciseCatalogResult {
         ExerciseCatalogResult(
             items: items,
-            metadata: nil,
+            metadata: metadata,
             state: .content,
             source: .athleteCatalog,
             note: nil,

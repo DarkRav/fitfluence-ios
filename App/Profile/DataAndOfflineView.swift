@@ -116,6 +116,7 @@ struct DataAndOfflineView: View {
                 userSub: "athlete-preview",
                 programId: "program-1",
                 workoutId: "workout-1",
+                planId: nil,
                 source: .program,
                 status: .inProgress,
                 currentExerciseIndex: 2,

@@ -42,6 +42,7 @@ final class HomeViewModel {
     private let isOnline: Bool
     private let calendar: Calendar
     private let syncCoordinator: SyncCoordinator
+    private let planReadModel: PlanReadModelRepository
 
     var isLoading = false
     var activeSession: ActiveWorkoutSession?
@@ -76,6 +77,14 @@ final class HomeViewModel {
         self.isOnline = isOnline
         self.calendar = calendar
         self.syncCoordinator = syncCoordinator
+        planReadModel = PlanReadModelRepository(
+            userSub: userSub,
+            trainingStore: trainingStore,
+            athleteTrainingClient: athleteTrainingClient,
+            cacheStore: cacheStore,
+            networkMonitor: StaticNetworkMonitor(currentStatus: isOnline),
+            calendar: calendar,
+        )
     }
 
     var primaryTitle: String {
@@ -202,6 +211,7 @@ final class HomeViewModel {
                 userSub: userSub,
                 programId: remoteActive.programId?.trimmedNilIfEmpty ?? remoteActive.source.rawValue,
                 workoutId: remoteActive.workoutInstanceId,
+                planId: nil,
                 source: remoteActive.source == .program ? .program : .freestyle,
                 status: .inProgress,
                 currentExerciseIndex: nil,
@@ -221,18 +231,19 @@ final class HomeViewModel {
         }
 
         if let todayWorkout = summary.todayWorkout {
-            let mappedStatus = mapStatus(todayWorkout.status)
+            let mappedStatus = PlanEntry.canonicalStatus(from: todayWorkout.status)
             let isPendingAbandon = await syncCoordinator.hasPendingAbandon(
                 namespace: userSub,
                 workoutInstanceId: todayWorkout.workoutInstanceId
             )
             if !(isPendingAbandon && mappedStatus == .inProgress) {
+                let source = PlanEntry.source(from: todayWorkout.source)
                 plannedWorkoutToday = HomePlannedWorkoutSnapshot(
                     title: todayWorkout.title.trimmedNilIfEmpty ?? "Тренировка",
                     status: mappedStatus,
-                    statusText: statusText(for: mappedStatus),
-                    subtitle: subtitle(for: todayWorkout),
-                    source: mapSource(todayWorkout.source),
+                    statusText: mappedStatus.planStatusTitle,
+                    subtitle: subtitle(for: source),
+                    source: source,
                     programId: todayWorkout.programId?.trimmedNilIfEmpty,
                     workoutId: todayWorkout.workoutInstanceId,
                 )
@@ -335,42 +346,20 @@ final class HomeViewModel {
     }
 
     private func loadTodayPlan() async {
-        let monthPlans = await trainingStore.plans(userSub: userSub, month: Date())
-        let today = calendar.startOfDay(for: Date())
-        guard let plan = monthPlans.first(where: { calendar.isDate($0.day, inSameDayAs: today) }) else {
+        let monthEntries = await planReadModel.localEntries(month: Date())
+        guard let entry = PlanSharedSelectors.firstTodayEntry(from: monthEntries, calendar: calendar) else {
             plannedWorkoutToday = nil
             return
         }
 
-        let statusText = switch plan.status {
-        case .planned:
-            "Запланирована"
-        case .inProgress:
-            "В процессе"
-        case .completed:
-            "Выполнена"
-        case .missed:
-            "Пропущена"
-        case .skipped:
-            "Пропущена намеренно"
-        }
-        let sourceText = switch plan.source {
-        case .program:
-            "По программе"
-        case .freestyle:
-            "Своя тренировка"
-        case .template:
-            "По шаблону"
-        }
-
         plannedWorkoutToday = HomePlannedWorkoutSnapshot(
-            title: plan.title,
-            status: plan.status,
-            statusText: statusText,
-            subtitle: sourceText,
-            source: plan.source,
-            programId: plan.programId,
-            workoutId: plan.workoutId,
+            title: entry.title,
+            status: entry.displayStatus,
+            statusText: entry.displayStatus.planStatusTitle,
+            subtitle: localPlanSubtitle(for: entry),
+            source: entry.source,
+            programId: entry.programId,
+            workoutId: entry.workoutId,
         )
     }
 
@@ -563,49 +552,21 @@ final class HomeViewModel {
         return Self.iso8601.date(from: value)
     }
 
-    private func statusText(for status: TrainingDayStatus) -> String {
-        switch status {
-        case .planned:
-            "Запланирована"
-        case .inProgress:
-            "В процессе"
-        case .completed:
-            "Выполнена"
-        case .missed:
-            "Пропущена"
-        case .skipped:
-            "Пропущена намеренно"
-        }
-    }
-
-    private func mapStatus(_ status: AthleteWorkoutInstanceStatus?) -> TrainingDayStatus {
-        switch status {
-        case .inProgress:
-            .inProgress
-        case .completed:
-            .completed
-        case .missed:
-            .missed
-        case .abandoned:
-            .skipped
-        case .planned, .none:
-            .planned
-        }
-    }
-
-    private func mapSource(_ source: AthleteWorkoutSource) -> WorkoutSource {
+    private func subtitle(for source: WorkoutSource) -> String {
         switch source {
         case .program:
-            .program
-        case .custom:
-            .freestyle
+            return "Активная программа"
+        case .freestyle:
+            return "Своя тренировка"
+        case .template:
+            return "По шаблону"
         }
     }
 
-    private func subtitle(for workout: AthleteHomeWorkoutSummary) -> String {
-        switch mapSource(workout.source) {
+    private func localPlanSubtitle(for entry: PlanEntry) -> String {
+        switch entry.source {
         case .program:
-            return "Активная программа"
+            return "По программе"
         case .freestyle:
             return "Своя тренировка"
         case .template:

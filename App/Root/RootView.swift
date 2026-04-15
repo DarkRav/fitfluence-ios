@@ -180,6 +180,7 @@ private struct AthleteShellView: View {
     let me: MeResponse
     let isOnline: Bool
     let onLogout: () -> Void
+    private let planDependencies: RootPlanDependencies
 
     @State private var selectedTab: AthleteShellTab = .defaultTab
     @State private var resumeSession: ActiveWorkoutSession?
@@ -188,6 +189,23 @@ private struct AthleteShellView: View {
     @State private var isTrainingFlowPresented = false
     @State private var restTimer = RestTimerModel.shared
     @State private var suppressedCompletedSessionIDs: Set<String> = []
+
+    init(
+        store: StoreOf<RootFeature>,
+        environment: AppEnvironment,
+        apiClient: APIClientProtocol?,
+        me: MeResponse,
+        isOnline: Bool,
+        onLogout: @escaping () -> Void,
+    ) {
+        self.store = store
+        self.environment = environment
+        self.apiClient = apiClient
+        self.me = me
+        self.isOnline = isOnline
+        self.onLogout = onLogout
+        planDependencies = RootPlanDependencies(apiClient: apiClient)
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -221,7 +239,12 @@ private struct AthleteShellView: View {
                         environment: environment,
                         userSub: me.subject ?? "anonymous",
                         apiClient: apiClient,
-                        onOpenPlan: { selectedTab = .plan },
+                        planDependencies: planDependencies,
+                        onOpenPlan: {
+                            requestPlanFocusAndOpen(day: Date()) {
+                                selectedTab = .plan
+                            }
+                        },
                         resumeSessionRequest: $pendingResumeRequest,
                         onResumeHandled: {
                             pendingResumeRequest = nil
@@ -268,6 +291,7 @@ private struct AthleteShellView: View {
                     PlanTabContent(
                         apiClient: apiClient,
                         userSub: me.subject ?? "anonymous",
+                        planDependencies: planDependencies,
                     )
                     .navigationTitle(AthleteShellTab.plan.navigationTitle)
                     .navigationBarTitleDisplayMode(.inline)
@@ -523,9 +547,10 @@ struct PresetWorkoutRoute: Identifiable, Equatable {
     let programId: String?
     let workout: WorkoutDetailsModel
     let source: WorkoutSource
+    let planId: String?
 
     var id: String {
-        "\(programId ?? source.rawValue)::\(source.rawValue)::\(workout.id)"
+        "\(programId ?? source.rawValue)::\(source.rawValue)::\(workout.id)::\(planId ?? "none")"
     }
 }
 
@@ -583,7 +608,14 @@ func resolveRepeatWorkoutTarget(
             return .program(ProgramWorkoutRoute(programId: record.programId, workoutId: record.workoutId))
         }
         if let storedWorkout {
-            return .preset(PresetWorkoutRoute(programId: record.programId, workout: storedWorkout, source: .program))
+            return .preset(
+                PresetWorkoutRoute(
+                    programId: record.programId,
+                    workout: storedWorkout,
+                    source: .program,
+                    planId: nil,
+                )
+            )
         }
         return .quickBuilder
     case .template:
@@ -593,6 +625,7 @@ func resolveRepeatWorkoutTarget(
                     programId: nil,
                     workout: makeRepeatableWorkoutCopy(from: storedWorkout, prefix: "template-repeat"),
                     source: .template,
+                    planId: nil,
                 )
             )
         }
@@ -609,6 +642,7 @@ func resolveRepeatWorkoutTarget(
                     programId: nil,
                     workout: makeRepeatableWorkoutCopy(from: storedWorkout, prefix: "quick-repeat"),
                     source: .freestyle,
+                    planId: nil,
                 )
             )
         }
@@ -620,9 +654,44 @@ private func makeRepeatableWorkoutCopy(from workout: WorkoutDetailsModel, prefix
     workout.asRepeatableCopy(prefix: prefix)
 }
 
+struct RootPlanDependencies {
+    let trainingStore: any TrainingStore
+    let athleteTrainingClient: AthleteTrainingClientProtocol?
+    let cacheStore: CacheStore
+    let networkMonitor: NetworkMonitoring
+    let calendar: Calendar
+
+    init(
+        apiClient: APIClientProtocol?,
+        trainingStore: any TrainingStore = LocalTrainingStore(),
+        cacheStore: CacheStore = CompositeCacheStore(),
+        networkMonitor: NetworkMonitoring = StaticNetworkMonitor(currentStatus: true),
+        calendar: Calendar = .current,
+    ) {
+        self.trainingStore = trainingStore
+        athleteTrainingClient = apiClient as? AthleteTrainingClientProtocol
+        self.cacheStore = cacheStore
+        self.networkMonitor = networkMonitor
+        self.calendar = calendar
+    }
+
+    @MainActor
+    func makePlanViewModel(userSub: String) -> PlanScheduleViewModel {
+        PlanScheduleViewModel(
+            userSub: userSub,
+            trainingStore: trainingStore,
+            athleteTrainingClient: athleteTrainingClient,
+            cacheStore: cacheStore,
+            networkMonitor: networkMonitor,
+            calendar: calendar,
+        )
+    }
+}
+
 private struct PlanTabContent: View {
     let apiClient: APIClientProtocol?
     let userSub: String
+    let planDependencies: RootPlanDependencies
     private let trainingStore: any TrainingStore
     private let templateRepository: any WorkoutTemplateRepository
     private let exerciseCatalogRepository: any ExerciseCatalogRepository
@@ -638,10 +707,12 @@ private struct PlanTabContent: View {
     init(
         apiClient: APIClientProtocol?,
         userSub: String,
+        planDependencies: RootPlanDependencies,
     ) {
         self.apiClient = apiClient
         self.userSub = userSub
-        trainingStore = LocalTrainingStore()
+        self.planDependencies = planDependencies
+        trainingStore = planDependencies.trainingStore
         templateRepository = BackendWorkoutTemplateRepository(
             apiClient: apiClient as? AthleteWorkoutTemplatesAPIClientProtocol,
             cacheStore: trainingStore,
@@ -658,11 +729,7 @@ private struct PlanTabContent: View {
             trainingStore: trainingStore,
         )
         _planViewModel = State(
-            initialValue: PlanScheduleViewModel(
-                userSub: userSub,
-                trainingStore: trainingStore,
-                athleteTrainingClient: apiClient as? AthleteTrainingClientProtocol,
-            ),
+            initialValue: planDependencies.makePlanViewModel(userSub: userSub),
         )
     }
 
@@ -674,8 +741,13 @@ private struct PlanTabContent: View {
             onOpenProgramWorkout: { programId, workoutId in
                 programWorkoutRoute = ProgramWorkoutRoute(programId: programId, workoutId: workoutId)
             },
-            onOpenPresetWorkout: { workout, source, programId in
-                presetWorkoutRoute = PresetWorkoutRoute(programId: programId, workout: workout, source: source)
+            onOpenPresetWorkout: { workout, source, programId, planId in
+                presetWorkoutRoute = PresetWorkoutRoute(
+                    programId: programId,
+                    workout: workout,
+                    source: source,
+                    planId: planId,
+                )
             },
             onOpenQuickWorkoutBuilder: {
                 isQuickBuilderPresented = true
@@ -690,6 +762,7 @@ private struct PlanTabContent: View {
                 programId: route.programId,
                 workoutId: route.workoutId,
                 apiClient: apiClient,
+                planDependencies: planDependencies,
                 onOpenPlan: {},
             )
             .navigationBarBackButtonHidden(false)
@@ -700,6 +773,8 @@ private struct PlanTabContent: View {
                 programId: route.programId ?? route.source.rawValue,
                 workoutId: route.workout.id,
                 apiClient: apiClient,
+                originPlanId: route.planId,
+                planDependencies: planDependencies,
                 presetWorkout: route.workout,
                 source: route.source,
                 onOpenPlan: {},
@@ -723,7 +798,7 @@ private struct PlanTabContent: View {
                 userSub: userSub,
                 workout: route.workout,
                 source: route.source,
-                athleteTrainingClient: apiClient as? AthleteTrainingClientProtocol,
+                planDependencies: planDependencies,
                 onClose: {
                     repeatWorkoutPlanningRoute = nil
                 },
@@ -772,7 +847,7 @@ private struct PlanTabContent: View {
 
     @MainActor
     private func presentBuiltWorkout(_ workout: WorkoutDetailsModel) {
-        presetWorkoutRoute = PresetWorkoutRoute(programId: nil, workout: workout, source: .freestyle)
+        presetWorkoutRoute = PresetWorkoutRoute(programId: nil, workout: workout, source: .freestyle, planId: nil)
     }
 
     private func openBuiltCustomWorkout(_ workout: WorkoutDetailsModel) async {
@@ -987,6 +1062,8 @@ struct WorkoutLaunchView: View {
     let programId: String
     let workoutId: String
     let apiClient: APIClientProtocol?
+    var originPlanId: String? = nil
+    var planDependencies: RootPlanDependencies? = nil
     var presetWorkout: WorkoutDetailsModel?
     var source: WorkoutSource = .program
     var displayMode: ProgramDetailsDisplayMode = .active
@@ -1065,6 +1142,7 @@ struct WorkoutLaunchView: View {
                         programId: programId,
                         workout: details,
                         source: currentSource,
+                        originPlanId: originPlanId,
                         athleteTrainingClient: apiClient as? AthleteTrainingClientProtocol,
                         networkMonitor: NetworkMonitor(),
                         executionContext: executionContext,
@@ -1120,6 +1198,7 @@ struct WorkoutLaunchView: View {
                     workoutId: workoutId,
                     workout: details,
                     plannedDay: effectivePlannedDay,
+                    planDependencies: planDependencies ?? RootPlanDependencies(apiClient: apiClient),
                     onClose: {
                         isWorkoutDatePlanningPresented = false
                     },
@@ -1155,6 +1234,7 @@ struct WorkoutLaunchView: View {
                 programId: session.programId,
                 workoutId: session.workoutId,
                 apiClient: apiClient,
+                planDependencies: planDependencies,
                 source: session.source,
                 onBackToWorkoutHub: onBackToWorkoutHub,
                 onOpenPlan: onOpenPlan,
@@ -1254,6 +1334,7 @@ struct WorkoutLaunchView: View {
                 programId: route.programId,
                 workoutId: route.workoutId,
                 apiClient: apiClient,
+                planDependencies: planDependencies,
                 source: .program,
                 isFirstWorkoutInProgramFlow: false,
                 onBackToWorkoutHub: onBackToWorkoutHub,
@@ -1966,6 +2047,7 @@ private struct WorkoutDatePlanningSheet: View {
     let workoutId: String
     let workout: WorkoutDetailsModel
     let plannedDay: Date?
+    let planDependencies: RootPlanDependencies
     let onClose: () -> Void
     let onSaved: (Date, String) -> Void
 
@@ -1979,6 +2061,7 @@ private struct WorkoutDatePlanningSheet: View {
         workoutId: String,
         workout: WorkoutDetailsModel,
         plannedDay: Date?,
+        planDependencies: RootPlanDependencies,
         onClose: @escaping () -> Void,
         onSaved: @escaping (Date, String) -> Void,
     ) {
@@ -1987,12 +2070,13 @@ private struct WorkoutDatePlanningSheet: View {
         self.workoutId = workoutId
         self.workout = workout
         self.plannedDay = plannedDay
+        self.planDependencies = planDependencies
         self.onClose = onClose
         self.onSaved = onSaved
 
         let today = Date()
         let initialDay = max(plannedDay ?? today, today)
-        _viewModel = State(initialValue: PlanScheduleViewModel(userSub: userSub))
+        _viewModel = State(initialValue: planDependencies.makePlanViewModel(userSub: userSub))
         _targetDay = State(initialValue: initialDay)
     }
 
@@ -2151,7 +2235,7 @@ private struct RepeatWorkoutPlanningSheet: View {
     let userSub: String
     let workout: WorkoutDetailsModel
     let source: WorkoutSource
-    let athleteTrainingClient: AthleteTrainingClientProtocol?
+    let planDependencies: RootPlanDependencies
     let onClose: () -> Void
     let onSaved: (Date) -> Void
 
@@ -2163,23 +2247,20 @@ private struct RepeatWorkoutPlanningSheet: View {
         userSub: String,
         workout: WorkoutDetailsModel,
         source: WorkoutSource,
-        athleteTrainingClient: AthleteTrainingClientProtocol?,
+        planDependencies: RootPlanDependencies,
         onClose: @escaping () -> Void,
         onSaved: @escaping (Date) -> Void,
     ) {
         self.userSub = userSub
         self.workout = workout
         self.source = source
-        self.athleteTrainingClient = athleteTrainingClient
+        self.planDependencies = planDependencies
         self.onClose = onClose
         self.onSaved = onSaved
 
         let now = Date()
         _viewModel = State(
-            initialValue: PlanScheduleViewModel(
-                userSub: userSub,
-                athleteTrainingClient: athleteTrainingClient,
-            ),
+            initialValue: planDependencies.makePlanViewModel(userSub: userSub),
         )
         _targetDay = State(initialValue: now)
     }
@@ -2458,6 +2539,7 @@ private struct TrainingTabContent: View {
     let environment: AppEnvironment
     let userSub: String
     let apiClient: APIClientProtocol?
+    let planDependencies: RootPlanDependencies
     let onOpenPlan: () -> Void
     @Binding var resumeSessionRequest: ActiveWorkoutSession?
     let onResumeHandled: () -> Void
@@ -2504,6 +2586,7 @@ private struct TrainingTabContent: View {
         environment: AppEnvironment,
         userSub: String,
         apiClient: APIClientProtocol?,
+        planDependencies: RootPlanDependencies,
         onOpenPlan: @escaping () -> Void,
         resumeSessionRequest: Binding<ActiveWorkoutSession?>,
         onResumeHandled: @escaping () -> Void,
@@ -2513,11 +2596,12 @@ private struct TrainingTabContent: View {
         self.environment = environment
         self.userSub = userSub
         self.apiClient = apiClient
+        self.planDependencies = planDependencies
         self.onOpenPlan = onOpenPlan
         _resumeSessionRequest = resumeSessionRequest
         self.onResumeHandled = onResumeHandled
         self.onRoutePresentationChanged = onRoutePresentationChanged
-        trainingStore = LocalTrainingStore()
+        trainingStore = planDependencies.trainingStore
         templateRepository = BackendWorkoutTemplateRepository(
             apiClient: apiClient as? AthleteWorkoutTemplatesAPIClientProtocol,
             cacheStore: trainingStore,
@@ -2552,6 +2636,7 @@ private struct TrainingTabContent: View {
                     programId: target.programId,
                     workout: target.workout,
                     source: target.source,
+                    planId: target.planId,
                 )
             },
             onStartQuickWorkout: {
@@ -2569,7 +2654,6 @@ private struct TrainingTabContent: View {
                 recentWorkoutDetailsRoute = RecentWorkoutDetailsRoute(record: record)
             },
             onOpenPlan: {
-                PlanNavigationCoordinator.shared.request(day: Date())
                 onOpenPlan()
             },
             onOpenProgramHistory: { programId, programTitle in
@@ -2582,6 +2666,7 @@ private struct TrainingTabContent: View {
                 programId: session.programId,
                 workoutId: session.workoutId,
                 apiClient: apiClient,
+                planDependencies: planDependencies,
                 source: session.source,
                 onOpenPlan: {
                     sessionRoute = nil
@@ -2602,6 +2687,7 @@ private struct TrainingTabContent: View {
                 programId: route.programId,
                 workoutId: route.workoutId,
                 apiClient: apiClient,
+                planDependencies: planDependencies,
                 onOpenPlan: {
                     programWorkoutRoute = nil
                     onOpenPlan()
@@ -2621,6 +2707,8 @@ private struct TrainingTabContent: View {
                 programId: route.programId ?? route.source.rawValue,
                 workoutId: route.workout.id,
                 apiClient: apiClient,
+                originPlanId: route.planId,
+                planDependencies: planDependencies,
                 presetWorkout: route.workout,
                 source: route.source,
                 onOpenPlan: {
@@ -2682,15 +2770,14 @@ private struct TrainingTabContent: View {
                 userSub: userSub,
                 workout: route.workout,
                 source: route.source,
-                athleteTrainingClient: apiClient as? AthleteTrainingClientProtocol,
+                planDependencies: planDependencies,
                 onClose: {
                     repeatWorkoutPlanningRoute = nil
                 },
                 onSaved: { day in
                     repeatWorkoutPlanningRoute = nil
                     recentWorkoutDetailsRoute = nil
-                    PlanNavigationCoordinator.shared.request(day: day)
-                    onOpenPlan()
+                    requestPlanFocusAndOpen(day: day, onOpenPlan: onOpenPlan)
                 }
             )
         }
@@ -2794,7 +2881,7 @@ private struct TrainingTabContent: View {
                     exerciseCatalogRepository: exerciseCatalogRepository,
                     exercisePickerSuggestionsProvider: exercisePickerSuggestionsProvider,
                     onStartTemplate: { workout in
-                        presetWorkoutRoute = PresetWorkoutRoute(programId: nil, workout: workout, source: .template)
+                        presetWorkoutRoute = PresetWorkoutRoute(programId: nil, workout: workout, source: .template, planId: nil)
                     },
                 )
             }
@@ -2819,7 +2906,7 @@ private struct TrainingTabContent: View {
 
     @MainActor
     private func presentBuiltWorkout(_ workout: WorkoutDetailsModel) {
-        presetWorkoutRoute = PresetWorkoutRoute(programId: nil, workout: workout, source: .freestyle)
+        presetWorkoutRoute = PresetWorkoutRoute(programId: nil, workout: workout, source: .freestyle, planId: nil)
     }
 
     private func openBuiltCustomWorkout(_ workout: WorkoutDetailsModel) async {

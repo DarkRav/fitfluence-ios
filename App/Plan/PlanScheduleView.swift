@@ -1,6 +1,1948 @@
 import Observation
 import SwiftUI
 
+enum PlanEntryOwnership: Equatable, Sendable {
+    case remoteProgram
+    case localProgramOverlay
+    case remoteCustom
+    case pendingCustom
+    case localFreestyle
+    case localTemplate
+
+    var isProgram: Bool {
+        switch self {
+        case .remoteProgram, .localProgramOverlay:
+            true
+        case .remoteCustom, .pendingCustom, .localFreestyle, .localTemplate:
+            false
+        }
+    }
+}
+
+enum PlanEntryDetailsState: Equatable, Sendable {
+    case hydrated
+    case placeholder
+    case missing
+
+    var isHydrated: Bool {
+        self == .hydrated
+    }
+
+    static func resolve(
+        workoutDetails: WorkoutDetailsModel?,
+        source: WorkoutSource,
+        fallbackTitle: String,
+    ) -> Self {
+        guard let workoutDetails else { return .missing }
+
+        if !workoutDetails.exercises.isEmpty {
+            return .hydrated
+        }
+
+        let trimmedCoachNote = workoutDetails.coachNote?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !trimmedCoachNote.isEmpty {
+            return .hydrated
+        }
+
+        if source == .program, workoutDetails.dayOrder > 0 {
+            return .hydrated
+        }
+
+        let normalizedTitle = workoutDetails.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalizedFallbackTitle = fallbackTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !normalizedTitle.isEmpty,
+           normalizedTitle.caseInsensitiveCompare(normalizedFallbackTitle) != .orderedSame
+        {
+            return .hydrated
+        }
+
+        return .placeholder
+    }
+}
+
+enum PlanEntrySyncState: Equatable, Sendable {
+    case none
+    case pendingCreateCustomWorkout(operationId: UUID?)
+
+    var pendingOperationId: UUID? {
+        switch self {
+        case .none:
+            nil
+        case .pendingCreateCustomWorkout(let operationId):
+            operationId
+        }
+    }
+
+    var isPendingCreateCustomWorkout: Bool {
+        switch self {
+        case .none:
+            false
+        case .pendingCreateCustomWorkout:
+            true
+        }
+    }
+}
+
+struct PlanEntryStatus: Equatable, Sendable {
+    let canonical: TrainingDayStatus
+    let display: TrainingDayStatus
+}
+
+struct PlanEntry: Equatable, Sendable, Identifiable {
+    let id: String
+    let day: Date
+    let title: String
+    let source: WorkoutSource
+    let programId: String?
+    let programTitle: String?
+    let workoutId: String?
+    let workoutDetails: WorkoutDetailsModel?
+    let ownership: PlanEntryOwnership
+    let detailsState: PlanEntryDetailsState
+    let syncState: PlanEntrySyncState
+    let status: PlanEntryStatus
+
+    var canonicalStatus: TrainingDayStatus {
+        status.canonical
+    }
+
+    var displayStatus: TrainingDayStatus {
+        status.display
+    }
+
+    func refreshingDisplayStatus(
+        calendar: Calendar = .current,
+        now: Date = Date(),
+    ) -> PlanEntry {
+        let refreshedDisplay = Self.resolveDisplayStatus(
+            canonicalStatus,
+            day: day,
+            calendar: calendar,
+            now: now,
+        )
+        guard refreshedDisplay != displayStatus else { return self }
+
+        return PlanEntry(
+            id: id,
+            day: day,
+            title: title,
+            source: source,
+            programId: programId,
+            programTitle: programTitle,
+            workoutId: workoutId,
+            workoutDetails: workoutDetails,
+            ownership: ownership,
+            detailsState: detailsState,
+            syncState: syncState,
+            status: PlanEntryStatus(canonical: canonicalStatus, display: refreshedDisplay),
+        )
+    }
+
+    fileprivate static func resolveDisplayStatus(
+        _ canonicalStatus: TrainingDayStatus,
+        day: Date,
+        calendar: Calendar,
+        now: Date,
+    ) -> TrainingDayStatus {
+        let normalizedDay = calendar.startOfDay(for: day)
+        let today = calendar.startOfDay(for: now)
+        if normalizedDay >= today, canonicalStatus.isMissedLike {
+            return .planned
+        }
+        return canonicalStatus
+    }
+}
+
+extension TrainingDayStatus {
+    var planStatusTitle: String {
+        switch self {
+        case .planned:
+            "Запланирована"
+        case .inProgress:
+            "В процессе"
+        case .completed:
+            "Выполнена"
+        case .missed:
+            "Пропущена"
+        case .skipped:
+            "Пропущена намеренно"
+        }
+    }
+}
+
+extension PlanEntry {
+    static func canonicalStatus(from remoteStatus: AthleteWorkoutInstanceStatus?) -> TrainingDayStatus {
+        switch remoteStatus {
+        case .completed:
+            return .completed
+        case .missed:
+            return .missed
+        case .abandoned:
+            return .skipped
+        case .inProgress:
+            return .inProgress
+        case .planned, .none:
+            return .planned
+        }
+    }
+
+    static func source(from remoteSource: AthleteWorkoutSource) -> WorkoutSource {
+        switch remoteSource {
+        case .program:
+            return .program
+        case .custom:
+            return .freestyle
+        }
+    }
+
+    var scheduleReferenceWorkoutId: String? {
+        workoutDetails?.id.trimmedNilIfEmpty ?? workoutId?.trimmedNilIfEmpty
+    }
+
+    var templateAnchorDayOrder: Int? {
+        guard let dayOrder = workoutDetails?.dayOrder, dayOrder > 0 else { return nil }
+        return dayOrder
+    }
+}
+
+extension TrainingDayPlan {
+    func asPlanEntry(
+        calendar: Calendar = .current,
+        now: Date = Date(),
+    ) -> PlanEntry {
+        let ownership = PlanEntryOwnership.resolve(
+            planId: id,
+            source: source,
+            workoutId: workoutId,
+            pendingSyncState: pendingSyncState,
+        )
+        let syncState = PlanEntrySyncState.resolve(
+            pendingSyncState: pendingSyncState,
+            pendingSyncOperationId: pendingSyncOperationId,
+        )
+        let detailsState = PlanEntryDetailsState.resolve(
+            workoutDetails: workoutDetails,
+            source: source,
+            fallbackTitle: title,
+        )
+        return PlanEntry(
+            id: id,
+            day: day,
+            title: title,
+            source: source,
+            programId: programId,
+            programTitle: programTitle,
+            workoutId: workoutId,
+            workoutDetails: workoutDetails,
+            ownership: ownership,
+            detailsState: detailsState,
+            syncState: syncState,
+            status: PlanEntryStatus(
+                canonical: status,
+                display: PlanEntry.resolveDisplayStatus(
+                    status,
+                    day: day,
+                    calendar: calendar,
+                    now: now,
+                )
+            ),
+        )
+    }
+}
+
+private extension PlanEntryOwnership {
+    static func resolve(
+        planId: String,
+        source: WorkoutSource,
+        workoutId: String?,
+        pendingSyncState: TrainingDayPendingSyncState?,
+    ) -> PlanEntryOwnership {
+        if pendingSyncState == .createCustomWorkout {
+            return .pendingCustom
+        }
+
+        switch source {
+        case .program:
+            return planId.hasPrefix("remote-") ? .remoteProgram : .localProgramOverlay
+        case .template:
+            return .localTemplate
+        case .freestyle:
+            let hasWorkoutId = workoutId?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+            return planId.hasPrefix("remote-") && hasWorkoutId ? .remoteCustom : .localFreestyle
+        }
+    }
+}
+
+private extension PlanEntrySyncState {
+    static func resolve(
+        pendingSyncState: TrainingDayPendingSyncState?,
+        pendingSyncOperationId: UUID?,
+    ) -> PlanEntrySyncState {
+        switch pendingSyncState {
+        case .createCustomWorkout:
+            return .pendingCreateCustomWorkout(operationId: pendingSyncOperationId)
+        case nil:
+            return .none
+        }
+    }
+}
+
+struct PlanReadModelMonthAssembly: Equatable, Sendable {
+    let monthPlans: [PlanEntry]
+    let contextPlans: [PlanEntry]
+}
+
+struct PlanScheduleReferenceSelection: Equatable, Sendable {
+    let workoutId: String
+    let day: Date
+    let status: TrainingDayStatus
+}
+
+struct PlanTemplateAnchorSelection: Equatable, Sendable {
+    let workoutId: String
+    let dayOrder: Int
+    let day: Date
+    let status: TrainingDayStatus
+}
+
+enum PlanSharedSelectors {
+    static func firstTodayEntry(
+        from entries: [PlanEntry],
+        calendar: Calendar = .current,
+        now: Date = Date(),
+    ) -> PlanEntry? {
+        let today = calendar.startOfDay(for: now)
+        return entries.first { calendar.isDate($0.day, inSameDayAs: today) }
+    }
+
+    static func todayEntries(
+        from entries: [PlanEntry],
+        calendar: Calendar = .current,
+        now: Date = Date(),
+    ) -> [PlanEntry] {
+        let today = calendar.startOfDay(for: now)
+        return entries.filter { calendar.isDate($0.day, inSameDayAs: today) }
+    }
+
+    static func workoutHomeStatus(for entry: PlanEntry) -> TrainingDayStatus? {
+        workoutHomeStatus(for: entry.canonicalStatus)
+    }
+
+    static func workoutHomeStatus(for canonicalStatus: TrainingDayStatus) -> TrainingDayStatus? {
+        switch canonicalStatus {
+        case .planned, .inProgress:
+            return canonicalStatus
+        case .completed, .missed, .skipped:
+            return nil
+        }
+    }
+
+    static func scheduleReferences(
+        from entries: [PlanEntry],
+        calendar: Calendar = .current,
+        now: Date = Date(),
+    ) -> [String: PlanScheduleReferenceSelection] {
+        let today = calendar.startOfDay(for: now)
+        var references: [String: PlanScheduleReferenceSelection] = [:]
+        var priorities: [String: Int] = [:]
+
+        for entry in entries {
+            guard let workoutId = entry.scheduleReferenceWorkoutId else { continue }
+            let displayStatus = entry.refreshingDisplayStatus(calendar: calendar, now: now).displayStatus
+            let priority = scheduleReferencePriority(
+                for: displayStatus,
+                day: entry.day,
+                today: today,
+                calendar: calendar,
+            )
+
+            if let existingPriority = priorities[workoutId], existingPriority > priority {
+                continue
+            }
+
+            if let existingPriority = priorities[workoutId],
+               existingPriority == priority,
+               let existing = references[workoutId],
+               existing.day > entry.day
+            {
+                continue
+            }
+
+            priorities[workoutId] = priority
+            references[workoutId] = PlanScheduleReferenceSelection(
+                workoutId: workoutId,
+                day: entry.day,
+                status: displayStatus,
+            )
+        }
+
+        return references
+    }
+
+    static func templatePlanAnchors(
+        from entries: [PlanEntry],
+        calendar: Calendar = .current,
+        now: Date = Date(),
+    ) -> [String: PlanTemplateAnchorSelection] {
+        var anchors: [String: PlanTemplateAnchorSelection] = [:]
+
+        for entry in entries {
+            guard let workoutId = entry.scheduleReferenceWorkoutId else { continue }
+            guard let dayOrder = entry.templateAnchorDayOrder else { continue }
+            let displayStatus = entry.refreshingDisplayStatus(calendar: calendar, now: now).displayStatus
+            let candidate = PlanTemplateAnchorSelection(
+                workoutId: workoutId,
+                dayOrder: dayOrder,
+                day: calendar.startOfDay(for: entry.day),
+                status: displayStatus,
+            )
+
+            if let existing = anchors[workoutId] {
+                if candidate.day > existing.day {
+                    anchors[workoutId] = candidate
+                }
+            } else {
+                anchors[workoutId] = candidate
+            }
+        }
+
+        return anchors
+    }
+
+    private static func scheduleReferencePriority(
+        for status: TrainingDayStatus,
+        day: Date,
+        today: Date,
+        calendar: Calendar,
+    ) -> Int {
+        let normalizedDay = calendar.startOfDay(for: day)
+        switch status {
+        case .inProgress:
+            return 5
+        case .planned:
+            return normalizedDay >= today ? 4 : 3
+        case .completed:
+            return 2
+        case .missed, .skipped:
+            return 1
+        }
+    }
+}
+
+struct PlanReadModelRepository {
+    private let userSub: String
+    private let trainingStore: TrainingStore
+    private let athleteTrainingClient: AthleteTrainingClientProtocol?
+    private let cacheStore: CacheStore
+    private let networkMonitor: NetworkMonitoring
+    private let calendar: Calendar
+
+    init(
+        userSub: String,
+        trainingStore: TrainingStore,
+        athleteTrainingClient: AthleteTrainingClientProtocol?,
+        cacheStore: CacheStore,
+        networkMonitor: NetworkMonitoring,
+        calendar: Calendar,
+    ) {
+        self.userSub = userSub
+        self.trainingStore = trainingStore
+        self.athleteTrainingClient = athleteTrainingClient
+        self.cacheStore = cacheStore
+        self.networkMonitor = networkMonitor
+        self.calendar = calendar
+    }
+
+    func loadMonthAssembly(
+        selectedMonth: Date,
+        suppressedPlanSignatures: Set<String>,
+    ) async -> PlanReadModelMonthAssembly {
+        let previousMonth = calendar.date(byAdding: .month, value: -1, to: selectedMonth) ?? selectedMonth
+        let nextMonth = calendar.date(byAdding: .month, value: 1, to: selectedMonth) ?? selectedMonth
+        let activeEnrollment = await activeEnrollmentProgress()
+
+        async let previousPlans = plansForMonth(
+            previousMonth,
+            activeEnrollment: activeEnrollment,
+            suppressedPlanSignatures: suppressedPlanSignatures,
+        )
+        async let selectedPlans = plansForMonth(
+            selectedMonth,
+            activeEnrollment: activeEnrollment,
+            suppressedPlanSignatures: suppressedPlanSignatures,
+        )
+        async let nextPlans = plansForMonth(
+            nextMonth,
+            activeEnrollment: activeEnrollment,
+            suppressedPlanSignatures: suppressedPlanSignatures,
+        )
+
+        let prevMonthPlans = await previousPlans
+        let monthPlans = await selectedPlans
+        let nextMonthPlans = await nextPlans
+        let now = Date()
+        return PlanReadModelMonthAssembly(
+            monthPlans: monthPlans.map { $0.asPlanEntry(calendar: calendar, now: now) },
+            contextPlans: (prevMonthPlans + monthPlans + nextMonthPlans)
+                .map { $0.asPlanEntry(calendar: calendar, now: now) },
+        )
+    }
+
+    func activeEnrollmentProgress() async -> ActiveEnrollmentProgressResponse? {
+        if let cached = await cacheStore.get(
+            cacheKeys.activeEnrollment,
+            as: ActiveEnrollmentProgressResponse.self,
+            namespace: userSub,
+        ) {
+            return cached
+        }
+
+        guard networkMonitor.currentStatus, let athleteTrainingClient else {
+            return nil
+        }
+
+        let result = await athleteTrainingClient.activeEnrollmentProgress()
+        guard case let .success(progress) = result else {
+            return nil
+        }
+
+        await cacheStore.set(cacheKeys.activeEnrollment, value: progress, namespace: userSub, ttl: 60 * 5)
+        return progress
+    }
+
+    func deduplicateEntries(_ entries: [PlanEntry]) -> [PlanEntry] {
+        var deduped: [PlanEntry] = []
+        var seen = Set<String>()
+        for entry in entries.sorted(by: { $0.day < $1.day }) {
+            let key = entrySignature(entry)
+            guard !seen.contains(key) else { continue }
+            seen.insert(key)
+            deduped.append(entry)
+        }
+        return deduped
+    }
+
+    func localEntries(
+        month: Date,
+        now: Date = Date(),
+    ) async -> [PlanEntry] {
+        await trainingStore.plans(userSub: userSub, month: month)
+            .map { $0.asPlanEntry(calendar: calendar, now: now) }
+    }
+
+    func localEntries(
+        months: [Date],
+        now: Date = Date(),
+    ) async -> [PlanEntry] {
+        var entries: [PlanEntry] = []
+        for month in months {
+            let monthPlans = await trainingStore.plans(userSub: userSub, month: month)
+            entries.append(contentsOf: monthPlans.map { $0.asPlanEntry(calendar: calendar, now: now) })
+        }
+        return deduplicateEntries(entries)
+    }
+
+    private func deduplicatePlans(_ plans: [TrainingDayPlan]) -> [TrainingDayPlan] {
+        var deduped: [TrainingDayPlan] = []
+        var seen = Set<String>()
+        for plan in plans.sorted(by: { $0.day < $1.day }) {
+            let key = planSignature(plan)
+            guard !seen.contains(key) else { continue }
+            seen.insert(key)
+            deduped.append(plan)
+        }
+        return deduped
+    }
+
+    func hasHydratedWorkoutDetails(
+        _ workoutDetails: WorkoutDetailsModel?,
+        source: WorkoutSource,
+        fallbackTitle: String,
+    ) -> Bool {
+        PlanEntryDetailsState.resolve(
+            workoutDetails: workoutDetails,
+            source: source,
+            fallbackTitle: fallbackTitle,
+        ).isHydrated
+    }
+
+    func monthKey(for date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.calendar = calendar
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = calendar.timeZone
+        formatter.dateFormat = "yyyy-MM"
+        return formatter.string(from: date)
+    }
+
+    private func plansForMonth(
+        _ month: Date,
+        activeEnrollment: ActiveEnrollmentProgressResponse?,
+        suppressedPlanSignatures: Set<String>,
+    ) async -> [TrainingDayPlan] {
+        let localPlans = await trainingStore.plans(userSub: userSub, month: month)
+        let cacheKey = cacheKeys.month(monthKey(for: month))
+        var resolved = localPlans
+
+        if let cached = await cacheStore.get(cacheKey, as: [TrainingDayPlan].self, namespace: userSub) {
+            let cachedRemotePlans = cachedRemotePlansOnly(cached)
+            if !cachedRemotePlans.isEmpty {
+                resolved = merge(
+                    local: localPlans,
+                    remote: cachedRemotePlans,
+                    suppressedPlanSignatures: suppressedPlanSignatures,
+                )
+            }
+        }
+
+        guard networkMonitor.currentStatus, let athleteTrainingClient else {
+            return resolved
+        }
+
+        let enrollmentId = activeEnrollment?.enrollmentId
+        async let calendarResult = athleteTrainingClient.calendar(month: monthKey(for: month))
+        async let scheduleResult: Result<AthleteEnrollmentScheduleResponse, APIError> = {
+            guard let enrollmentId else { return .failure(.invalidURL) }
+            return await athleteTrainingClient.enrollmentSchedule(enrollmentId: enrollmentId)
+        }()
+
+        var remotePlans: [TrainingDayPlan] = []
+
+        if case let .success(calendarResponse) = await calendarResult {
+            remotePlans.append(contentsOf: mapWorkouts(
+                calendarResponse.workouts,
+                month: month,
+                activeEnrollment: activeEnrollment,
+            ))
+        }
+
+        if case let .success(scheduleResponse) = await scheduleResult {
+            remotePlans.append(contentsOf: mapWorkouts(
+                scheduleResponse.workouts,
+                month: month,
+                activeEnrollment: activeEnrollment,
+            ))
+        }
+
+        remotePlans = deduplicatePlans(remotePlans)
+        if !remotePlans.isEmpty {
+            resolved = merge(
+                local: localPlans,
+                remote: remotePlans,
+                suppressedPlanSignatures: suppressedPlanSignatures,
+            )
+            await cacheStore.set(cacheKey, value: remotePlans, namespace: userSub, ttl: 60 * 10)
+        }
+
+        return resolved.sorted { $0.day < $1.day }
+    }
+
+    private func cachedRemotePlansOnly(_ plans: [TrainingDayPlan]) -> [TrainingDayPlan] {
+        plans.filter { $0.id.hasPrefix("remote-") }
+    }
+
+    private func mapWorkouts(
+        _ workouts: [AthleteWorkoutInstance],
+        month: Date,
+        activeEnrollment: ActiveEnrollmentProgressResponse?,
+    ) -> [TrainingDayPlan] {
+        guard let monthInterval = calendar.dateInterval(of: .month, for: month) else {
+            return []
+        }
+
+        return workouts.compactMap { workout in
+            guard let date = parseDate(workout.scheduledAt ?? workout.scheduledDate ?? workout.startedAt ?? workout.completedAt),
+                  monthInterval.contains(date)
+            else {
+                return nil
+            }
+
+            return TrainingDayPlan(
+                id: "remote-\(workout.id)",
+                userSub: userSub,
+                day: date,
+                status: PlanEntry.canonicalStatus(from: workout.status),
+                programId: workout.programId?.trimmedNilIfEmpty,
+                programTitle: resolvedProgramTitle(for: workout, activeEnrollment: activeEnrollment),
+                workoutId: workout.id,
+                title: workout.title?.trimmedNilIfEmpty ?? "Тренировка",
+                source: PlanEntry.source(from: workout.source),
+                workoutDetails: nil,
+            )
+        }
+    }
+
+    private func resolvedProgramTitle(
+        for workout: AthleteWorkoutInstance,
+        activeEnrollment: ActiveEnrollmentProgressResponse?,
+    ) -> String? {
+        let workoutProgramID = workout.programId?.trimmedNilIfEmpty
+        let activeProgramID = activeEnrollment?.programId?.trimmedNilIfEmpty
+        guard workoutProgramID == activeProgramID else { return nil }
+        return activeEnrollment?.programTitle?.trimmedNilIfEmpty
+    }
+
+    private func merge(
+        local: [TrainingDayPlan],
+        remote: [TrainingDayPlan],
+        suppressedPlanSignatures: Set<String>,
+    ) -> [TrainingDayPlan] {
+        guard !remote.isEmpty else {
+            return local
+        }
+
+        let filteredRemote = remote.filter { plan in
+            guard let signature = remoteSuppressionSignature(plan) else { return true }
+            return !suppressedPlanSignatures.contains(signature)
+        }
+        var merged = filteredRemote
+
+        for item in local {
+            guard let remoteIndex = merged.firstIndex(where: { remotePlan in
+                remotePlan.id == item.id
+            }) else {
+                continue
+            }
+            merged[remoteIndex] = mergedRemotePlanPreservingLocalSchedule(remote: merged[remoteIndex], local: item)
+        }
+
+        var existing = Set(merged.map(planSignature))
+
+        for item in local {
+            if item.source == .program,
+               merged.contains(where: { remote in
+                   isRemoteEquivalent(remote: remote, toLocalProgramPlan: item)
+               })
+            {
+                continue
+            }
+            let key = planSignature(item)
+            guard !existing.contains(key) else { continue }
+            existing.insert(key)
+            merged.append(item)
+        }
+
+        return merged.sorted { $0.day < $1.day }
+    }
+
+    private func mergedRemotePlanPreservingLocalSchedule(remote: TrainingDayPlan, local: TrainingDayPlan) -> TrainingDayPlan {
+        guard remote.id == local.id else { return remote }
+
+        let sameDay = calendar.startOfDay(for: remote.day) == calendar.startOfDay(for: local.day)
+        let remoteHasExplicitTime = sameDay && scheduledTimeText(for: remote.day) != nil
+        let localHasExplicitTime = scheduledTimeText(for: local.day) != nil
+        let resolvedDay: Date
+        if sameDay {
+            resolvedDay = !remoteHasExplicitTime && localHasExplicitTime ? local.day : remote.day
+        } else {
+            resolvedDay = local.day
+        }
+
+        return TrainingDayPlan(
+            id: remote.id,
+            userSub: remote.userSub,
+            day: resolvedDay,
+            status: sameDay ? remote.status : local.status,
+            programId: remote.programId ?? local.programId,
+            programTitle: local.programTitle ?? remote.programTitle,
+            workoutId: remote.workoutId ?? local.workoutId,
+            title: local.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? remote.title : local.title,
+            source: remote.source,
+            workoutDetails: preferredWorkoutDetails(remote: remote, local: local),
+            pendingSyncState: local.pendingSyncState,
+            pendingSyncOperationId: local.pendingSyncOperationId,
+        )
+    }
+
+    private func preferredWorkoutDetails(remote: TrainingDayPlan, local: TrainingDayPlan) -> WorkoutDetailsModel? {
+        if hasHydratedWorkoutDetails(remote.workoutDetails, source: remote.source, fallbackTitle: remote.title) {
+            return remote.workoutDetails
+        }
+        if hasHydratedWorkoutDetails(local.workoutDetails, source: local.source, fallbackTitle: local.title) {
+            return local.workoutDetails
+        }
+        return nil
+    }
+
+    private func isRemoteEquivalent(remote: TrainingDayPlan, toLocalProgramPlan local: TrainingDayPlan) -> Bool {
+        guard remote.id.hasPrefix("remote-"), remote.source == .program, local.source == .program else {
+            return false
+        }
+        guard calendar.startOfDay(for: remote.day) == calendar.startOfDay(for: local.day) else {
+            return false
+        }
+        guard remote.programId?.trimmedNilIfEmpty == local.programId?.trimmedNilIfEmpty else {
+            return false
+        }
+        return remote.title.trimmingCharacters(in: .whitespacesAndNewlines)
+            .caseInsensitiveCompare(local.title.trimmingCharacters(in: .whitespacesAndNewlines)) == .orderedSame
+    }
+
+    private func planSignature(_ plan: TrainingDayPlan) -> String {
+        let date = calendar.startOfDay(for: plan.day)
+        return "\(date.timeIntervalSince1970)::\(plan.id)"
+    }
+
+    private func entrySignature(_ entry: PlanEntry) -> String {
+        let date = calendar.startOfDay(for: entry.day)
+        return "\(date.timeIntervalSince1970)::\(entry.id)"
+    }
+
+    private func remoteSuppressionSignature(_ plan: TrainingDayPlan) -> String? {
+        guard plan.id.hasPrefix("remote-"), let workoutId = plan.workoutId else { return nil }
+        let date = calendar.startOfDay(for: plan.day)
+        return "\(date.timeIntervalSince1970)::\(workoutId)"
+    }
+
+    private func scheduledTimeText(for date: Date) -> String? {
+        let components = calendar.dateComponents([.hour, .minute], from: date)
+        guard let hour = components.hour, let minute = components.minute else { return nil }
+        guard hour != 0 || minute != 0 else { return nil }
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "ru_RU")
+        formatter.dateFormat = "HH:mm"
+        return formatter.string(from: date)
+    }
+    private func parseDate(_ value: String?) -> Date? {
+        guard let value, !value.isEmpty else {
+            return nil
+        }
+        if let withFractions = Self.iso8601WithFractions.date(from: value) {
+            return withFractions
+        }
+        if let dateTime = Self.iso8601.date(from: value) {
+            return dateTime
+        }
+        return Self.dateOnly.date(from: value)
+    }
+
+    private var cacheKeys: CacheKeys {
+        CacheKeys()
+    }
+
+    private static let iso8601WithFractions: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter
+    }()
+
+    private static let iso8601: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime]
+        return formatter
+    }()
+
+    private static let dateOnly: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(secondsFromGMT: 0)
+        formatter.dateFormat = "yyyy-MM-dd"
+        return formatter
+    }()
+
+    private struct CacheKeys {
+        let activeEnrollment = "athlete.enrollment.active"
+
+        func month(_ month: String) -> String {
+            "athlete.plan.month.\(month)"
+        }
+    }
+}
+
+private func planWorkoutCacheKey(
+    programId: String?,
+    source: WorkoutSource,
+    workoutId: String?,
+) -> String {
+    let resolvedProgramID = programId?.trimmedNilIfEmpty ?? source.rawValue
+    let resolvedWorkoutID = workoutId?.trimmedNilIfEmpty ?? "unknown"
+    return "workout.details:\(resolvedProgramID):\(resolvedWorkoutID)"
+}
+
+enum PlanMutationErrorKind: Sendable {
+    case repeatScheduling
+    case delete
+    case plannedWorkoutUpdate
+}
+
+struct PlanMutationUserError: Sendable {
+    let kind: PlanMutationErrorKind
+    let message: String
+}
+
+struct PlanMutationOutcome: Sendable {
+    let didMutate: Bool
+    let focusDay: Date?
+    let shouldReload: Bool
+    let retrySyncAfterReload: Bool
+    let broadcastDay: Date?
+    let suppressedPlanSignatures: [String]
+    let userError: PlanMutationUserError?
+
+    static let noOp = PlanMutationOutcome(
+        didMutate: false,
+        focusDay: nil,
+        shouldReload: false,
+        retrySyncAfterReload: false,
+        broadcastDay: nil,
+        suppressedPlanSignatures: [],
+        userError: nil,
+    )
+}
+
+struct PlanMutationItem: Equatable, Sendable {
+    let planId: String
+    let day: Date
+    let title: String
+    let source: WorkoutSource
+    let ownership: PlanEntryOwnership
+    let detailsState: PlanEntryDetailsState
+    let syncState: PlanEntrySyncState
+    let canonicalStatus: TrainingDayStatus
+    let programId: String?
+    let programTitle: String?
+    let workoutId: String?
+    let workoutDetails: WorkoutDetailsModel?
+
+    var isPendingRemoteCreation: Bool {
+        syncState.isPendingCreateCustomWorkout
+    }
+
+    var pendingRemoteCreationOperationId: UUID? {
+        syncState.pendingOperationId
+    }
+
+    var isRemoteCustomWorkout: Bool {
+        ownership == .remoteCustom
+    }
+
+    var isManual: Bool {
+        !ownership.isProgram
+    }
+
+    init(
+        planId: String,
+        day: Date,
+        title: String,
+        source: WorkoutSource,
+        ownership: PlanEntryOwnership,
+        detailsState: PlanEntryDetailsState,
+        syncState: PlanEntrySyncState,
+        canonicalStatus: TrainingDayStatus,
+        programId: String?,
+        programTitle: String?,
+        workoutId: String?,
+        workoutDetails: WorkoutDetailsModel?,
+    ) {
+        self.planId = planId
+        self.day = day
+        self.title = title
+        self.source = source
+        self.ownership = ownership
+        self.detailsState = detailsState
+        self.syncState = syncState
+        self.canonicalStatus = canonicalStatus
+        self.programId = programId
+        self.programTitle = programTitle
+        self.workoutId = workoutId
+        self.workoutDetails = workoutDetails
+    }
+
+    init(entry: PlanEntry) {
+        planId = entry.id
+        day = entry.day
+        title = entry.title
+        source = entry.source
+        ownership = entry.ownership
+        detailsState = entry.detailsState
+        syncState = entry.syncState
+        canonicalStatus = entry.canonicalStatus
+        programId = entry.programId
+        programTitle = entry.programTitle
+        workoutId = entry.workoutId
+        workoutDetails = entry.workoutDetails
+    }
+}
+
+struct PlanScheduleMutationRequest: Sendable {
+    let day: Date
+    let title: String
+    let source: WorkoutSource
+    let programId: String?
+    let programTitle: String?
+    let workoutId: String?
+    let status: TrainingDayStatus
+    let workoutDetails: WorkoutDetailsModel?
+    let planId: String?
+}
+
+struct PlanRepeatWorkoutMutationRequest: Sendable {
+    let workout: WorkoutDetailsModel
+    let source: WorkoutSource
+    let day: Date
+}
+
+struct PlanMoveMutationRequest: Sendable {
+    let item: PlanMutationItem
+    let targetDay: Date
+    let statusOverride: TrainingDayStatus?
+}
+
+struct PlanReplanMutationRequest: Sendable {
+    let item: PlanMutationItem
+    let targetDay: Date
+    let contextEntries: [PlanEntry]
+}
+
+struct PlanUpdateManualWorkoutMutationRequest: Sendable {
+    let item: PlanMutationItem
+    let workout: WorkoutDetailsModel
+}
+
+struct PlanDeleteMutationRequest: Sendable {
+    let item: PlanMutationItem
+}
+
+struct PlanStatusMutationRequest: Sendable {
+    let item: PlanMutationItem
+    let status: TrainingDayStatus
+}
+
+struct PlanMutationService {
+    private let userSub: String
+    private let trainingStore: TrainingStore
+    private let athleteTrainingClient: AthleteTrainingClientProtocol?
+    private let cacheStore: CacheStore
+    private let networkMonitor: NetworkMonitoring
+    private let calendar: Calendar
+
+    init(
+        userSub: String,
+        trainingStore: TrainingStore,
+        athleteTrainingClient: AthleteTrainingClientProtocol?,
+        cacheStore: CacheStore,
+        networkMonitor: NetworkMonitoring,
+        calendar: Calendar,
+    ) {
+        self.userSub = userSub
+        self.trainingStore = trainingStore
+        self.athleteTrainingClient = athleteTrainingClient
+        self.cacheStore = cacheStore
+        self.networkMonitor = networkMonitor
+        self.calendar = calendar
+    }
+
+    func schedule(_ request: PlanScheduleMutationRequest) async -> PlanMutationOutcome {
+        let scheduledDay = normalizedScheduledDate(request.day)
+        guard canSchedule(on: scheduledDay) else { return .noOp }
+
+        let resolvedTitle = request.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let plan = TrainingDayPlan(
+            id: request.planId ?? UUID().uuidString,
+            userSub: userSub,
+            day: scheduledDay,
+            status: request.status,
+            programId: request.programId,
+            programTitle: request.programTitle?.trimmedNilIfEmpty,
+            workoutId: request.workoutId,
+            title: resolvedTitle.isEmpty ? "Тренировка" : resolvedTitle,
+            source: request.source,
+            workoutDetails: request.workoutDetails,
+        )
+
+        await performMutationSideEffects(
+            persistence: {
+                await trainingStore.schedule(plan)
+            }
+        )
+
+        return PlanMutationOutcome(
+            didMutate: true,
+            focusDay: scheduledDay,
+            shouldReload: true,
+            retrySyncAfterReload: false,
+            broadcastDay: nil,
+            suppressedPlanSignatures: [],
+            userError: nil,
+        )
+    }
+
+    func repeatWorkout(_ request: PlanRepeatWorkoutMutationRequest) async -> PlanMutationOutcome {
+        let scheduledDay = normalizedScheduledDate(request.day)
+        guard canSchedule(on: scheduledDay) else { return .noOp }
+
+        if request.source == .program {
+            return await schedule(
+                PlanScheduleMutationRequest(
+                    day: scheduledDay,
+                    title: request.workout.title,
+                    source: .program,
+                    programId: nil,
+                    programTitle: nil,
+                    workoutId: request.workout.id,
+                    status: .planned,
+                    workoutDetails: request.workout,
+                    planId: nil,
+                )
+            )
+        }
+
+        let pendingPlanId = "pending-custom-\(UUID().uuidString)"
+
+        if !networkMonitor.currentStatus {
+            return await enqueuePendingRepeatedWorkout(
+                request.workout,
+                source: request.source,
+                planId: pendingPlanId,
+                on: scheduledDay,
+            )
+        }
+
+        guard let athleteTrainingClient else {
+            return failure(
+                kind: .repeatScheduling,
+                message: "Не удалось отправить запрос на сервер. Повторите попытку позже."
+            )
+        }
+
+        let result = await athleteTrainingClient.createCustomWorkout(
+            request: request.workout.asCreateCustomWorkoutRequest(scheduledDate: scheduledDay),
+            idempotencyKey: SyncOperation.customWorkoutCreationIdempotencyKey(planId: pendingPlanId),
+        )
+        switch result {
+        case let .success(detailsResponse):
+            let expectedScheduledDate = scheduledDateTimeString(scheduledDay)
+            guard detailsResponse.isValidFreshCustomWorkout(
+                expectedScheduledDate: expectedScheduledDate
+            ) else {
+                let validationReason = detailsResponse.validationErrorForFreshCustomWorkout(
+                    expectedScheduledDate: expectedScheduledDate
+                ) ?? "unknown"
+                print(
+                    "[app] repeat-create-invalid-response workoutId=\(detailsResponse.workout.id) " +
+                        "status=\(detailsResponse.workout.status?.rawValue ?? "nil") " +
+                        "source=\(detailsResponse.workout.source.rawValue) " +
+                        "scheduledDate=\(detailsResponse.workout.scheduledDate ?? "nil") " +
+                        "scheduledAt=\(detailsResponse.workout.scheduledAt ?? "nil") " +
+                        "reason=\(validationReason)"
+                )
+                return failure(
+                    kind: .repeatScheduling,
+                    message: "Сервер вернул некорректную копию тренировки. Новая тренировка не создана."
+                )
+            }
+            return await storeRemoteRepeatedWorkout(detailsResponse, scheduledDay: scheduledDay)
+
+        case let .failure(error):
+            if shouldQueuePendingRepeatedWorkout(for: error) {
+                return await enqueuePendingRepeatedWorkout(
+                    request.workout,
+                    source: request.source,
+                    planId: pendingPlanId,
+                    on: scheduledDay,
+                )
+            }
+            return failure(
+                kind: .repeatScheduling,
+                message: repeatSchedulingErrorMessage(for: error)
+            )
+        }
+    }
+
+    func repeatCompleted(
+        item: PlanMutationItem,
+        on targetDay: Date,
+        resolveWorkoutDetails: @escaping @Sendable (PlanMutationItem) async -> WorkoutDetailsModel?,
+    ) async -> PlanMutationOutcome {
+        guard item.canonicalStatus == .completed, item.isManual else { return .noOp }
+        guard let resolvedWorkout = await resolveWorkoutDetails(item) ?? item.workoutDetails else {
+            return .noOp
+        }
+        let repeatPrefix = item.source == .template ? "template-repeat" : "quick-repeat"
+        let repeatedWorkout = resolvedWorkout.asRepeatableCopy(prefix: repeatPrefix)
+        return await repeatWorkout(
+            PlanRepeatWorkoutMutationRequest(
+                workout: repeatedWorkout,
+                source: item.source,
+                day: targetDay,
+            )
+        )
+    }
+
+    func resolveRepeatableWorkout(
+        for record: CompletedWorkoutRecord,
+        templateWorkoutDetails: @escaping @Sendable (String) async -> WorkoutDetailsModel?,
+    ) async -> WorkoutDetailsModel? {
+        let cacheKey = planWorkoutCacheKey(
+            programId: record.programId.trimmedNilIfEmpty,
+            source: record.source,
+            workoutId: record.workoutId.trimmedNilIfEmpty,
+        )
+
+        if let cachedDetails = await cacheStore.get(
+            cacheKey,
+            as: WorkoutDetailsModel.self,
+            namespace: userSub,
+        ) {
+            return cachedDetails
+        }
+
+        if let workoutDetails = record.workoutDetails {
+            await cacheStore.set(
+                cacheKey,
+                value: workoutDetails,
+                namespace: userSub,
+                ttl: 60 * 60 * 24,
+            )
+            return workoutDetails
+        }
+
+        if record.source == .template,
+           let templateID = record.workoutId.trimmedNilIfEmpty,
+           let templateDetails = await templateWorkoutDetails(templateID)
+        {
+            await cacheStore.set(
+                cacheKey,
+                value: templateDetails,
+                namespace: userSub,
+                ttl: 60 * 60 * 24,
+            )
+            return templateDetails
+        }
+
+        if record.source != .template,
+           let workoutInstanceId = record.workoutId.trimmedNilIfEmpty,
+           UUID(uuidString: workoutInstanceId) != nil,
+           let athleteTrainingClient,
+           case let .success(detailsResponse) = await athleteTrainingClient.getWorkoutDetails(workoutInstanceId: workoutInstanceId)
+        {
+            let details = detailsResponse.asWorkoutDetailsModel()
+            await cacheStore.set(
+                cacheKey,
+                value: details,
+                namespace: userSub,
+                ttl: 60 * 60 * 24,
+            )
+            return details
+        }
+
+        return nil
+    }
+
+    func replan(_ request: PlanReplanMutationRequest) async -> PlanMutationOutcome {
+        let normalizedTarget = calendar.startOfDay(for: request.targetDay)
+        guard canSchedule(on: normalizedTarget) else { return .noOp }
+
+        var collectedSuppressions: [String] = []
+        var surfacedError: PlanMutationUserError?
+        let existingReplacement = existingReplannedCopy(for: request.item, in: request.contextEntries)
+
+        if let existingReplacement {
+            let deleteOutcome = await delete(
+                PlanDeleteMutationRequest(item: existingReplacement),
+                shouldBroadcast: false
+            )
+            collectedSuppressions.append(contentsOf: deleteOutcome.suppressedPlanSignatures)
+            if let error = deleteOutcome.userError {
+                surfacedError = error
+            }
+        }
+
+        let moveOutcome = await move(
+            PlanMoveMutationRequest(
+                item: request.item,
+                targetDay: request.targetDay,
+                statusOverride: .planned,
+            )
+        )
+
+        collectedSuppressions.append(contentsOf: moveOutcome.suppressedPlanSignatures)
+        return PlanMutationOutcome(
+            didMutate: moveOutcome.didMutate,
+            focusDay: moveOutcome.focusDay,
+            shouldReload: moveOutcome.shouldReload,
+            retrySyncAfterReload: moveOutcome.retrySyncAfterReload,
+            broadcastDay: moveOutcome.broadcastDay ?? existingReplacement?.day,
+            suppressedPlanSignatures: collectedSuppressions,
+            userError: moveOutcome.userError ?? surfacedError,
+        )
+    }
+
+    func move(_ request: PlanMoveMutationRequest) async -> PlanMutationOutcome {
+        let normalizedCurrent = calendar.startOfDay(for: request.item.day)
+        let normalizedTarget = calendar.startOfDay(for: request.targetDay)
+        guard normalizedCurrent != normalizedTarget else { return .noOp }
+        guard canSchedule(on: normalizedTarget) else { return .noOp }
+
+        let resolvedStatus = request.statusOverride ?? request.item.canonicalStatus
+        if request.item.isPendingRemoteCreation {
+            let workout = request.item.workoutDetails ?? editableDraft(for: request.item)
+            return await updatePendingCustomWorkoutPlan(
+                request.item,
+                workout: workout,
+                scheduledDay: request.targetDay,
+            )
+        }
+
+        if request.item.isRemoteCustomWorkout,
+           let workoutId = request.item.workoutId?.trimmedNilIfEmpty,
+           let athleteTrainingClient
+        {
+            let result = await athleteTrainingClient.updateCustomWorkout(
+                workoutInstanceId: workoutId,
+                request: AthleteUpdateCustomWorkoutRequest(
+                    title: nil,
+                    scheduledDate: scheduledDayString(request.targetDay),
+                    scheduledAt: scheduledDateTimeString(request.targetDay),
+                    notes: request.item.workoutDetails?.coachNote?.trimmedNilIfEmpty,
+                ),
+            )
+            if case .success = result {
+                return PlanMutationOutcome(
+                    didMutate: true,
+                    focusDay: normalizedTarget,
+                    shouldReload: true,
+                    retrySyncAfterReload: false,
+                    broadcastDay: nil,
+                    suppressedPlanSignatures: [],
+                    userError: nil,
+                )
+            }
+        }
+
+        let suppression = suppressionSignature(
+            day: request.item.day,
+            workoutId: request.item.workoutId,
+            planId: request.item.planId,
+        )
+
+        await performMutationSideEffects(
+            persistence: {
+                await trainingStore.movePlan(
+                    userSub: userSub,
+                    from: request.item.day,
+                    to: request.targetDay,
+                    planId: request.item.planId,
+                    workoutId: request.item.workoutId,
+                    title: request.item.title,
+                    source: request.item.source,
+                    status: resolvedStatus,
+                    programId: request.item.programId,
+                    programTitle: request.item.programTitle,
+                    workoutDetails: request.item.workoutDetails,
+                )
+            }
+        )
+
+        return PlanMutationOutcome(
+            didMutate: true,
+            focusDay: normalizedTarget,
+            shouldReload: true,
+            retrySyncAfterReload: false,
+            broadcastDay: nil,
+            suppressedPlanSignatures: suppression.map { [$0] } ?? [],
+            userError: nil,
+        )
+    }
+
+    func updatePlannedManualWorkout(_ request: PlanUpdateManualWorkoutMutationRequest) async -> PlanMutationOutcome {
+        guard request.item.canonicalStatus == .planned, request.item.isManual else { return .noOp }
+
+        if request.item.isPendingRemoteCreation {
+            return await updatePendingCustomWorkoutPlan(
+                request.item,
+                workout: request.workout,
+                scheduledDay: request.item.day,
+            )
+        }
+
+        if request.item.isRemoteCustomWorkout,
+           let workoutId = request.item.workoutId?.trimmedNilIfEmpty,
+           let athleteTrainingClient
+        {
+            let updateResult = await athleteTrainingClient.updateCustomWorkout(
+                workoutInstanceId: workoutId,
+                request: request.workout.asUpdateCustomWorkoutRequest(scheduledDate: request.item.day),
+            )
+            switch updateResult {
+            case let .success(detailsResponse):
+                let details = detailsResponse.asWorkoutDetailsModel()
+                let updatedPlan = TrainingDayPlan(
+                    id: request.item.planId,
+                    userSub: userSub,
+                    day: request.item.day,
+                    status: request.item.canonicalStatus,
+                    programId: request.item.programId,
+                    programTitle: request.item.programTitle,
+                    workoutId: workoutId,
+                    title: details.title,
+                    source: request.item.source,
+                    workoutDetails: details,
+                )
+
+                await performMutationSideEffects(
+                    persistence: {
+                        await trainingStore.schedule(updatedPlan)
+                    },
+                    cache: {
+                        await cacheStore.set(
+                            planWorkoutCacheKey(
+                                programId: request.item.programId,
+                                source: request.item.source,
+                                workoutId: workoutId,
+                            ),
+                            value: details,
+                            namespace: userSub,
+                            ttl: 60 * 60 * 24,
+                        )
+                    }
+                )
+
+                return PlanMutationOutcome(
+                    didMutate: true,
+                    focusDay: request.item.day,
+                    shouldReload: true,
+                    retrySyncAfterReload: false,
+                    broadcastDay: nil,
+                    suppressedPlanSignatures: [],
+                    userError: nil,
+                )
+            case let .failure(error):
+                return failure(
+                    kind: .plannedWorkoutUpdate,
+                    message: plannedWorkoutUpdateErrorMessage(for: error)
+                )
+            }
+        }
+
+        let resolvedTitle = request.workout.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let resolvedWorkoutId = request.item.workoutId ?? request.workout.id
+        let updated = TrainingDayPlan(
+            id: request.item.planId,
+            userSub: userSub,
+            day: calendar.startOfDay(for: request.item.day),
+            status: request.item.canonicalStatus,
+            programId: request.item.programId,
+            programTitle: request.item.programTitle,
+            workoutId: resolvedWorkoutId,
+            title: resolvedTitle.isEmpty ? request.item.title : resolvedTitle,
+            source: request.item.source,
+            workoutDetails: request.workout,
+        )
+
+        await performMutationSideEffects(
+            persistence: {
+                await trainingStore.schedule(updated)
+            },
+            cache: {
+                await cacheStore.set(
+                    planWorkoutCacheKey(
+                        programId: request.item.programId,
+                        source: request.item.source,
+                        workoutId: resolvedWorkoutId,
+                    ),
+                    value: request.workout,
+                    namespace: userSub,
+                    ttl: 60 * 60 * 24,
+                )
+            }
+        )
+
+        return PlanMutationOutcome(
+            didMutate: true,
+            focusDay: request.item.day,
+            shouldReload: true,
+            retrySyncAfterReload: false,
+            broadcastDay: nil,
+            suppressedPlanSignatures: [],
+            userError: nil,
+        )
+    }
+
+    func delete(_ request: PlanDeleteMutationRequest) async -> PlanMutationOutcome {
+        await delete(request, shouldBroadcast: true)
+    }
+
+    func updateStatus(_ request: PlanStatusMutationRequest) async -> PlanMutationOutcome {
+        let updated = TrainingDayPlan(
+            id: request.item.planId,
+            userSub: userSub,
+            day: request.item.day,
+            status: request.status,
+            programId: request.item.programId,
+            programTitle: request.item.programTitle,
+            workoutId: request.item.workoutId,
+            title: request.item.title,
+            source: request.item.source,
+            workoutDetails: request.item.workoutDetails,
+        )
+
+        await performMutationSideEffects(
+            persistence: {
+                await trainingStore.schedule(updated)
+            }
+        )
+
+        return PlanMutationOutcome(
+            didMutate: true,
+            focusDay: request.item.day,
+            shouldReload: true,
+            retrySyncAfterReload: false,
+            broadcastDay: nil,
+            suppressedPlanSignatures: [],
+            userError: nil,
+        )
+    }
+
+    func cancelInProgress(_ item: PlanMutationItem) async -> PlanMutationOutcome {
+        if item.source != .template,
+           let workoutInstanceId = item.workoutId?.trimmedNilIfEmpty,
+           UUID(uuidString: workoutInstanceId) != nil
+        {
+            let updated = TrainingDayPlan(
+                id: item.planId,
+                userSub: userSub,
+                day: item.day,
+                status: .skipped,
+                programId: item.programId,
+                programTitle: item.programTitle,
+                workoutId: item.workoutId,
+                title: item.title,
+                source: item.source,
+                workoutDetails: item.workoutDetails,
+            )
+            let suppression = suppressionSignature(day: item.day, workoutId: item.workoutId, planId: item.planId)
+
+            await performMutationSideEffects(
+                persistence: {
+                    await trainingStore.schedule(updated)
+                },
+                sync: {
+                    _ = await SyncCoordinator.shared.enqueueAbandonWorkout(
+                        namespace: userSub,
+                        workoutInstanceId: workoutInstanceId,
+                        abandonedAt: Date(),
+                    )
+                },
+                cache: {
+                    await invalidateWorkoutCaches(for: item)
+                },
+                cleanup: {
+                    await clearLocalWorkoutProgress(for: item)
+                }
+            )
+
+            return PlanMutationOutcome(
+                didMutate: true,
+                focusDay: item.day,
+                shouldReload: true,
+                retrySyncAfterReload: false,
+                broadcastDay: nil,
+                suppressedPlanSignatures: suppression.map { [$0] } ?? [],
+                userError: nil,
+            )
+        }
+
+        return await updateStatus(
+            PlanStatusMutationRequest(
+                item: item,
+                status: .skipped,
+            )
+        )
+    }
+
+    private func delete(
+        _ request: PlanDeleteMutationRequest,
+        shouldBroadcast: Bool,
+    ) async -> PlanMutationOutcome {
+        if request.item.isRemoteCustomWorkout {
+            guard let workoutId = request.item.workoutId?.trimmedNilIfEmpty else {
+                return failure(
+                    kind: .delete,
+                    message: "Не удалось определить тренировку для удаления."
+                )
+            }
+            guard let athleteTrainingClient else {
+                return failure(
+                    kind: .delete,
+                    message: "Не удалось удалить тренировку без соединения с сервером."
+                )
+            }
+
+            let deleteResult = await athleteTrainingClient.deleteCustomWorkout(workoutInstanceId: workoutId)
+            switch deleteResult {
+            case .success:
+                break
+            case let .failure(error):
+                if case let .httpError(statusCode, _) = error, statusCode == 404 {
+                    break
+                }
+                return failure(
+                    kind: .delete,
+                    message: deleteErrorMessage(for: error)
+                )
+            }
+        }
+
+        let suppression = suppressionSignature(
+            day: request.item.day,
+            workoutId: request.item.workoutId,
+            planId: request.item.planId,
+        )
+
+        await performMutationSideEffects(
+            persistence: {
+                await trainingStore.deletePlan(
+                    userSub: userSub,
+                    day: request.item.day,
+                    planId: request.item.planId,
+                    workoutId: request.item.workoutId,
+                    title: request.item.title,
+                    source: request.item.source,
+                )
+            },
+            sync: {
+                if request.item.isPendingRemoteCreation {
+                    await SyncCoordinator.shared.cancelPendingCreateCustomWorkout(
+                        namespace: userSub,
+                        planId: request.item.planId,
+                    )
+                }
+            },
+            cache: {
+                await invalidateWorkoutCaches(for: request.item)
+            },
+            cleanup: {
+                await clearLocalWorkoutProgress(for: request.item)
+            }
+        )
+
+        return PlanMutationOutcome(
+            didMutate: true,
+            focusDay: request.item.day,
+            shouldReload: true,
+            retrySyncAfterReload: false,
+            broadcastDay: shouldBroadcast ? request.item.day : nil,
+            suppressedPlanSignatures: suppression.map { [$0] } ?? [],
+            userError: nil,
+        )
+    }
+
+    private func enqueuePendingRepeatedWorkout(
+        _ workout: WorkoutDetailsModel,
+        source: WorkoutSource,
+        planId: String,
+        on scheduledDay: Date,
+    ) async -> PlanMutationOutcome {
+        let normalizedSource: WorkoutSource = source == .template ? .template : .freestyle
+        let queueResult = await SyncCoordinator.shared.enqueueCreateCustomWorkout(
+            namespace: userSub,
+            planId: planId,
+            source: normalizedSource,
+            workout: workout,
+            scheduledDay: scheduledDay,
+            processImmediately: false,
+        )
+        let pendingPlan = TrainingDayPlan(
+            id: planId,
+            userSub: userSub,
+            day: scheduledDay,
+            status: .planned,
+            programId: nil,
+            programTitle: nil,
+            workoutId: workout.id,
+            title: workout.title,
+            source: normalizedSource,
+            workoutDetails: workout,
+            pendingSyncState: .createCustomWorkout,
+            pendingSyncOperationId: queueResult.operation?.id,
+        )
+
+        await performMutationSideEffects(
+            persistence: {
+                await trainingStore.schedule(pendingPlan)
+            },
+            cache: {
+                await cacheStore.set(
+                    planWorkoutCacheKey(programId: nil, source: normalizedSource, workoutId: workout.id),
+                    value: workout,
+                    namespace: userSub,
+                    ttl: 60 * 60 * 24,
+                )
+            }
+        )
+
+        return PlanMutationOutcome(
+            didMutate: true,
+            focusDay: scheduledDay,
+            shouldReload: true,
+            retrySyncAfterReload: networkMonitor.currentStatus,
+            broadcastDay: nil,
+            suppressedPlanSignatures: [],
+            userError: nil,
+        )
+    }
+
+    private func storeRemoteRepeatedWorkout(
+        _ detailsResponse: AthleteWorkoutDetailsResponse,
+        scheduledDay: Date,
+    ) async -> PlanMutationOutcome {
+        let details = detailsResponse.asWorkoutDetailsModel()
+        let remoteMirror = TrainingDayPlan(
+            id: "remote-\(details.id)",
+            userSub: userSub,
+            day: scheduledDay,
+            status: .planned,
+            programId: nil,
+            programTitle: nil,
+            workoutId: details.id,
+            title: details.title,
+            source: .freestyle,
+            workoutDetails: details,
+        )
+
+        await performMutationSideEffects(
+            persistence: {
+                await trainingStore.schedule(remoteMirror)
+            },
+            cache: {
+                await cacheStore.set(
+                    planWorkoutCacheKey(programId: nil, source: .freestyle, workoutId: details.id),
+                    value: details,
+                    namespace: userSub,
+                    ttl: 60 * 60 * 24,
+                )
+            }
+        )
+
+        return PlanMutationOutcome(
+            didMutate: true,
+            focusDay: scheduledDay,
+            shouldReload: true,
+            retrySyncAfterReload: false,
+            broadcastDay: nil,
+            suppressedPlanSignatures: [],
+            userError: nil,
+        )
+    }
+
+    private func updatePendingCustomWorkoutPlan(
+        _ item: PlanMutationItem,
+        workout: WorkoutDetailsModel,
+        scheduledDay: Date,
+    ) async -> PlanMutationOutcome {
+        let normalizedDay = normalizedScheduledDate(scheduledDay)
+        let resolvedTitle = workout.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let queueResult = await SyncCoordinator.shared.enqueueCreateCustomWorkout(
+            namespace: userSub,
+            planId: item.planId,
+            source: item.source,
+            workout: workout,
+            scheduledDay: normalizedDay,
+            processImmediately: false,
+        )
+        let updatedPlan = TrainingDayPlan(
+            id: item.planId,
+            userSub: userSub,
+            day: normalizedDay,
+            status: .planned,
+            programId: item.programId,
+            programTitle: item.programTitle,
+            workoutId: workout.id,
+            title: resolvedTitle.isEmpty ? item.title : resolvedTitle,
+            source: item.source,
+            workoutDetails: workout,
+            pendingSyncState: .createCustomWorkout,
+            pendingSyncOperationId: queueResult.operation?.id ?? item.pendingRemoteCreationOperationId,
+        )
+
+        await performMutationSideEffects(
+            persistence: {
+                await trainingStore.schedule(updatedPlan)
+            },
+            sync: {},
+            cache: {
+                await cacheStore.set(
+                    planWorkoutCacheKey(programId: item.programId, source: item.source, workoutId: workout.id),
+                    value: workout,
+                    namespace: userSub,
+                    ttl: 60 * 60 * 24,
+                )
+            }
+        )
+
+        return PlanMutationOutcome(
+            didMutate: true,
+            focusDay: normalizedDay,
+            shouldReload: true,
+            retrySyncAfterReload: networkMonitor.currentStatus,
+            broadcastDay: nil,
+            suppressedPlanSignatures: [],
+            userError: nil,
+        )
+    }
+
+    private func existingReplannedCopy(
+        for item: PlanMutationItem,
+        in entries: [PlanEntry],
+    ) -> PlanMutationItem? {
+        entries
+            .filter { candidate in
+                guard candidate.id != item.planId else { return false }
+                guard candidate.canonicalStatus == .planned || candidate.canonicalStatus == .inProgress else {
+                    return false
+                }
+                guard candidate.source == item.source else { return false }
+                guard candidate.programId?.trimmedNilIfEmpty == item.programId?.trimmedNilIfEmpty else { return false }
+                guard candidate.workoutId?.trimmedNilIfEmpty == item.workoutId?.trimmedNilIfEmpty else { return false }
+                return true
+            }
+            .sorted { $0.day < $1.day }
+            .map(PlanMutationItem.init(entry:))
+            .first
+    }
+
+    private func editableDraft(for item: PlanMutationItem) -> WorkoutDetailsModel {
+        if item.detailsState == .hydrated, let workoutDetails = item.workoutDetails {
+            return workoutDetails
+        }
+
+        return WorkoutDetailsModel(
+            id: item.workoutId?.trimmedNilIfEmpty ?? "manual-\(item.planId)",
+            title: item.title,
+            dayOrder: 0,
+            coachNote: "Ручная тренировка",
+            exercises: [],
+        )
+    }
+
+    private func clearLocalWorkoutProgress(for item: PlanMutationItem) async {
+        guard let workoutId = item.workoutId?.trimmedNilIfEmpty else { return }
+        await LocalWorkoutProgressStore().remove(
+            userSub: userSub,
+            programId: item.programId?.trimmedNilIfEmpty ?? "",
+            workoutId: workoutId,
+        )
+    }
+
+    private func invalidateWorkoutCaches(for item: PlanMutationItem) async {
+        guard let workoutId = item.workoutId?.trimmedNilIfEmpty else { return }
+        await cacheStore.remove(
+            planWorkoutCacheKey(programId: item.programId, source: item.source, workoutId: item.workoutId),
+            namespace: userSub,
+        )
+        await cacheStore.remove(
+            "workout.execution.context:\(item.programId?.trimmedNilIfEmpty ?? ""):\(workoutId)",
+            namespace: userSub,
+        )
+    }
+
+    private func performMutationSideEffects(
+        persistence: @escaping @Sendable () async -> Void,
+        sync: (@Sendable () async -> Void)? = nil,
+        cache: (@Sendable () async -> Void)? = nil,
+        cleanup: (@Sendable () async -> Void)? = nil,
+    ) async {
+        await persistence()
+        if let sync {
+            await sync()
+        }
+        if let cache {
+            await cache()
+        }
+        if let cleanup {
+            await cleanup()
+        }
+    }
+
+    private func canSchedule(on day: Date) -> Bool {
+        calendar.startOfDay(for: day) >= calendar.startOfDay(for: Date())
+    }
+
+    private func normalizedScheduledDate(_ date: Date) -> Date {
+        let components = calendar.dateComponents([.year, .month, .day, .hour, .minute], from: date)
+        return calendar.date(from: components) ?? date
+    }
+
+    private func suppressionSignature(day: Date, workoutId: String?, planId: String) -> String? {
+        guard planId.hasPrefix("remote-"), let workoutId else { return nil }
+        let normalizedDay = calendar.startOfDay(for: day)
+        return "\(normalizedDay.timeIntervalSince1970)::\(workoutId)"
+    }
+
+    private func shouldQueuePendingRepeatedWorkout(for error: APIError) -> Bool {
+        switch error {
+        case .offline:
+            return true
+        case .timeout, .cancelled, .transportError, .serverError, .decodingError, .unknown, .httpError, .unauthorized, .forbidden, .invalidURL:
+            return false
+        }
+    }
+
+    private func repeatSchedulingErrorMessage(for error: APIError) -> String {
+        switch error {
+        case .timeout, .transportError, .serverError, .decodingError, .unknown:
+            return "Не удалось создать тренировку на сервере. Проверьте план и повторите попытку."
+        case .httpError(let statusCode, _):
+            return "Сервер не создал тренировку. Код ответа: \(statusCode)."
+        case .unauthorized, .forbidden:
+            return "Сессия устарела. Войдите снова и повторите попытку."
+        case .invalidURL:
+            return "Не удалось сформировать запрос на сервер."
+        case .offline:
+            return "Нет интернета. Тренировка сохранена локально и будет создана после синхронизации."
+        case .cancelled:
+            return "Создание тренировки было отменено."
+        }
+    }
+
+    private func deleteErrorMessage(for error: APIError) -> String {
+        switch error {
+        case .offline:
+            return "Нет интернета. Удалить уже созданную тренировку можно только после восстановления соединения."
+        case .timeout, .transportError, .serverError, .decodingError, .unknown:
+            return "Не удалось удалить тренировку на сервере. Повторите попытку позже."
+        case .httpError(let statusCode, _):
+            return "Сервер не удалил тренировку. Код ответа: \(statusCode)."
+        case .unauthorized, .forbidden:
+            return "Сессия устарела. Войдите снова и повторите попытку."
+        case .invalidURL:
+            return "Не удалось сформировать запрос на удаление."
+        case .cancelled:
+            return "Удаление тренировки было отменено."
+        }
+    }
+
+    private func plannedWorkoutUpdateErrorMessage(for error: APIError) -> String {
+        switch error {
+        case .offline:
+            return "Нет интернета. Изменения в уже созданной тренировке можно сохранить только после восстановления соединения."
+        case .timeout, .transportError, .serverError, .decodingError, .unknown:
+            return "Не удалось сохранить изменения тренировки на сервере. Повторите попытку позже."
+        case .httpError(let statusCode, _):
+            return "Сервер не сохранил изменения тренировки. Код ответа: \(statusCode)."
+        case .unauthorized, .forbidden:
+            return "Сессия устарела. Войдите снова и повторите попытку."
+        case .invalidURL:
+            return "Не удалось сформировать запрос на сохранение."
+        case .cancelled:
+            return "Сохранение изменений было отменено."
+        }
+    }
+
+    private func failure(kind: PlanMutationErrorKind, message: String) -> PlanMutationOutcome {
+        PlanMutationOutcome(
+            didMutate: false,
+            focusDay: nil,
+            shouldReload: false,
+            retrySyncAfterReload: false,
+            broadcastDay: nil,
+            suppressedPlanSignatures: [],
+            userError: PlanMutationUserError(kind: kind, message: message),
+        )
+    }
+}
+
 @Observable
 @MainActor
 final class PlanScheduleViewModel {
@@ -17,33 +1959,31 @@ final class PlanScheduleViewModel {
         let sourceTitle: String
         let programTitle: String?
         let source: WorkoutSource
-        let sourceKind: SourceKind
-        let status: TrainingDayStatus
+        let ownership: PlanEntryOwnership
+        let detailsState: PlanEntryDetailsState
+        let syncState: PlanEntrySyncState
+        let canonicalStatus: TrainingDayStatus
+        let displayStatus: TrainingDayStatus
         let programId: String?
         let workoutId: String?
         let workoutDetails: WorkoutDetailsModel?
         let scheduledTimeText: String?
-        let isPendingRemoteCreation: Bool
-        let pendingRemoteCreationOperationId: UUID?
-    }
 
-    struct UpcomingDayItem: Identifiable, Equatable {
-        let id: Date
-        let day: Date
-        let status: TrainingDayStatus?
-        let title: String
-    }
-
-    struct WeekCounts: Equatable {
-        let planned: Int
-        let completed: Int
-        let missed: Int
-
-        var total: Int {
-            planned + completed + missed
+        var sourceKind: SourceKind {
+            ownership.isProgram ? .program : .manual
         }
 
-        static let empty = WeekCounts(planned: 0, completed: 0, missed: 0)
+        var status: TrainingDayStatus {
+            displayStatus
+        }
+
+        var isPendingRemoteCreation: Bool {
+            syncState.isPendingCreateCustomWorkout
+        }
+
+        var pendingRemoteCreationOperationId: UUID? {
+            syncState.pendingOperationId
+        }
     }
 
     struct ProgramWorkoutDateWindow: Equatable {
@@ -57,14 +1997,14 @@ final class PlanScheduleViewModel {
     private let cacheStore: CacheStore
     private let networkMonitor: NetworkMonitoring
     private let calendar: Calendar
+    private let readModel: PlanReadModelRepository
+    private let mutationService: PlanMutationService
 
     var selectedMonth: Date = .init()
     var selectedDay: Date = .init()
     var isLoading = false
-    var monthPlans: [TrainingDayPlan] = []
-    var contextPlans: [TrainingDayPlan] = []
-    var upcomingPlans: [TrainingDayPlan] = []
-    var weekCounts: WeekCounts = .empty
+    var monthPlans: [PlanEntry] = []
+    var contextPlans: [PlanEntry] = []
     var lastCompletedRecord: CompletedWorkoutRecord?
     var lastRepeatableRecord: CompletedWorkoutRecord?
     var repeatSchedulingErrorMessage: String?
@@ -86,6 +2026,22 @@ final class PlanScheduleViewModel {
         self.cacheStore = cacheStore
         self.networkMonitor = networkMonitor
         self.calendar = calendar
+        readModel = PlanReadModelRepository(
+            userSub: userSub,
+            trainingStore: trainingStore,
+            athleteTrainingClient: athleteTrainingClient,
+            cacheStore: cacheStore,
+            networkMonitor: networkMonitor,
+            calendar: calendar,
+        )
+        mutationService = PlanMutationService(
+            userSub: userSub,
+            trainingStore: trainingStore,
+            athleteTrainingClient: athleteTrainingClient,
+            cacheStore: cacheStore,
+            networkMonitor: networkMonitor,
+            calendar: calendar,
+        )
         selectedMonth = calendar.startOfDay(for: Date())
         selectedDay = calendar.startOfDay(for: Date())
     }
@@ -99,28 +2055,19 @@ final class PlanScheduleViewModel {
         isLoading = true
         defer { isLoading = false }
 
-        let previousMonth = calendar.date(byAdding: .month, value: -1, to: selectedMonth) ?? selectedMonth
-        let nextMonth = calendar.date(byAdding: .month, value: 1, to: selectedMonth) ?? selectedMonth
-        let activeEnrollment = await resolveActiveEnrollmentProgress()
-
-        async let previousPlans = plansForMonth(previousMonth, activeEnrollment: activeEnrollment)
-        async let selectedPlans = plansForMonth(selectedMonth, activeEnrollment: activeEnrollment)
-        async let nextPlans = plansForMonth(nextMonth, activeEnrollment: activeEnrollment)
-
-        let prevMonthPlans = await previousPlans
-        monthPlans = await selectedPlans
-        let nextMonthPlans = await nextPlans
-        contextPlans = prevMonthPlans + monthPlans + nextMonthPlans
-        upcomingPlans = contextPlans
+        let assembly = await readModel.loadMonthAssembly(
+            selectedMonth: selectedMonth,
+            suppressedPlanSignatures: suppressedPlanSignatures,
+        )
+        monthPlans = assembly.monthPlans
+        contextPlans = assembly.contextPlans
         let history = await trainingStore.history(userSub: userSub, source: nil, limit: 180)
         lastCompletedRecord = history.first
         lastRepeatableRecord = history.first(where: { $0.source != .program })
-        recalculateWeekCounts()
     }
 
     func selectDay(_ day: Date) async {
         selectedDay = calendar.startOfDay(for: day)
-        recalculateWeekCounts()
     }
 
     func selectDayFromAdjacentMonth(_ day: Date) async {
@@ -230,51 +2177,26 @@ final class PlanScheduleViewModel {
         return formatter.string(from: date)
     }
 
-    private func makeDayScheduleItem(from plan: TrainingDayPlan) -> DayScheduleItem {
-        let kind: SourceKind = plan.source == .program ? .program : .manual
-        let resolvedStatus = normalizedDisplayStatus(plan.status, day: plan.day)
+    private func makeDayScheduleItem(from plan: PlanEntry) -> DayScheduleItem {
+        let entry = plan.refreshingDisplayStatus(calendar: calendar)
         return DayScheduleItem(
-            id: "\(plan.day.timeIntervalSince1970)::\(plan.id)",
-            planId: plan.id,
-            day: plan.day,
-            title: plan.title,
-            sourceTitle: sourceTitle(for: plan, kind: kind),
-            programTitle: plan.programTitle,
-            source: plan.source,
-            sourceKind: kind,
-            status: resolvedStatus,
-            programId: plan.programId,
-            workoutId: plan.workoutId,
-            workoutDetails: plan.workoutDetails,
-            scheduledTimeText: scheduledTimeText(for: plan.day),
-            isPendingRemoteCreation: plan.isPendingCustomWorkoutCreation,
-            pendingRemoteCreationOperationId: plan.pendingSyncOperationId,
+            id: "\(entry.day.timeIntervalSince1970)::\(entry.id)",
+            planId: entry.id,
+            day: entry.day,
+            title: entry.title,
+            sourceTitle: sourceTitle(for: entry),
+            programTitle: entry.programTitle,
+            source: entry.source,
+            ownership: entry.ownership,
+            detailsState: entry.detailsState,
+            syncState: entry.syncState,
+            canonicalStatus: entry.canonicalStatus,
+            displayStatus: entry.displayStatus,
+            programId: entry.programId,
+            workoutId: entry.workoutId,
+            workoutDetails: entry.workoutDetails,
+            scheduledTimeText: scheduledTimeText(for: entry.day),
         )
-    }
-
-    private func normalizedDisplayStatus(_ status: TrainingDayStatus, day: Date) -> TrainingDayStatus {
-        let normalizedDay = calendar.startOfDay(for: day)
-        let today = calendar.startOfDay(for: Date())
-        if normalizedDay >= today, status.isMissedLike {
-            return .planned
-        }
-        return status
-    }
-
-    var upcomingDays: [UpcomingDayItem] {
-        let anchor = calendar.startOfDay(for: selectedDay)
-        return (0 ..< 7).compactMap { offset in
-            guard let day = calendar.date(byAdding: .day, value: offset, to: anchor) else { return nil }
-            let plans = plansForDay(in: upcomingPlans, day: day)
-            guard !plans.isEmpty else { return nil }
-            let status = dayStatus(for: plans)
-            return UpcomingDayItem(
-                id: day,
-                day: day,
-                status: status,
-                title: upcomingTitle(from: plans),
-            )
-        }
     }
 
     func statusTitle(_ status: TrainingDayStatus?) -> String {
@@ -305,17 +2227,17 @@ final class PlanScheduleViewModel {
         }
     }
 
-    private func sourceTitle(for plan: TrainingDayPlan, kind: SourceKind) -> String {
+    private func sourceTitle(for entry: PlanEntry) -> String {
         let baseTitle: String
-        switch kind {
-        case .program:
-            if let programTitle = plan.programTitle?.trimmedNilIfEmpty {
+        switch entry.ownership {
+        case .remoteProgram, .localProgramOverlay:
+            if let programTitle = entry.programTitle?.trimmedNilIfEmpty {
                 baseTitle = "Программа: \(programTitle)"
             } else {
                 baseTitle = "Программа"
             }
-        case .manual:
-            switch plan.source {
+        case .remoteCustom, .pendingCustom, .localFreestyle, .localTemplate:
+            switch entry.source {
             case .template:
                 baseTitle = "Ручная: шаблон"
             case .freestyle:
@@ -324,50 +2246,62 @@ final class PlanScheduleViewModel {
                 baseTitle = "Ручная"
             }
         }
-        if plan.isPendingCustomWorkoutCreation {
+        if entry.syncState.isPendingCreateCustomWorkout {
             return "\(baseTitle) • ждёт синхронизации"
         }
         return baseTitle
     }
 
     func scheduleQuickWorkout(on day: Date) async {
-        await schedulePlan(
-            day: day,
-            title: "Быстрая тренировка",
-            source: .freestyle,
-            programId: nil,
-            programTitle: nil,
-            workoutId: "quick-\(UUID().uuidString)",
-            status: .planned,
-            workoutDetails: nil,
+        let outcome = await mutationService.schedule(
+            PlanScheduleMutationRequest(
+                day: day,
+                title: "Быстрая тренировка",
+                source: .freestyle,
+                programId: nil,
+                programTitle: nil,
+                workoutId: "quick-\(UUID().uuidString)",
+                status: .planned,
+                workoutDetails: nil,
+                planId: nil,
+            )
         )
+        _ = await applyMutationOutcome(outcome)
     }
 
     func scheduleConfiguredQuickWorkout(_ workout: WorkoutDetailsModel, on day: Date) async {
-        await schedulePlan(
-            day: day,
-            title: workout.title,
-            source: .freestyle,
-            programId: nil,
-            programTitle: nil,
-            workoutId: workout.id,
-            status: .planned,
-            workoutDetails: workout,
+        let outcome = await mutationService.schedule(
+            PlanScheduleMutationRequest(
+                day: day,
+                title: workout.title,
+                source: .freestyle,
+                programId: nil,
+                programTitle: nil,
+                workoutId: workout.id,
+                status: .planned,
+                workoutDetails: workout,
+                planId: nil,
+            )
         )
+        _ = await applyMutationOutcome(outcome)
     }
 
     func scheduleTemplate(_ template: WorkoutTemplateDraft, on day: Date) async {
         let mappedWorkout = template.asWorkoutDetailsModel()
-        await schedulePlan(
-            day: day,
-            title: template.name,
-            source: .template,
-            programId: nil,
-            programTitle: nil,
-            workoutId: template.id,
-            status: .planned,
-            workoutDetails: mappedWorkout,
+        let outcome = await mutationService.schedule(
+            PlanScheduleMutationRequest(
+                day: day,
+                title: template.name,
+                source: .template,
+                programId: nil,
+                programTitle: nil,
+                workoutId: template.id,
+                status: .planned,
+                workoutDetails: mappedWorkout,
+                planId: nil,
+            )
         )
+        _ = await applyMutationOutcome(outcome)
     }
 
     @discardableResult
@@ -376,180 +2310,15 @@ final class PlanScheduleViewModel {
         source: WorkoutSource,
         on day: Date,
     ) async -> Bool {
-        let scheduledDay = normalizedScheduledDate(day)
-        guard canSchedule(on: scheduledDay) else { return false }
         repeatSchedulingErrorMessage = nil
-
-        if source == .program {
-            await schedulePlan(
-                day: scheduledDay,
-                title: workout.title,
-                source: .program,
-                programId: nil,
-                programTitle: nil,
-                workoutId: workout.id,
-                status: .planned,
-                workoutDetails: workout,
-            )
-            return true
-        }
-
-        let pendingPlanId = "pending-custom-\(UUID().uuidString)"
-
-        if !networkMonitor.currentStatus {
-            return await enqueuePendingRepeatedWorkout(
-                workout,
+        let outcome = await mutationService.repeatWorkout(
+            PlanRepeatWorkoutMutationRequest(
+                workout: workout,
                 source: source,
-                planId: pendingPlanId,
-                on: scheduledDay,
+                day: day,
             )
-        }
-
-        guard let athleteTrainingClient else {
-            repeatSchedulingErrorMessage = "Не удалось отправить запрос на сервер. Повторите попытку позже."
-            return false
-        }
-
-        let result = await athleteTrainingClient.createCustomWorkout(
-            request: workout.asCreateCustomWorkoutRequest(scheduledDate: scheduledDay),
-            idempotencyKey: SyncOperation.customWorkoutCreationIdempotencyKey(planId: pendingPlanId),
         )
-        switch result {
-        case let .success(detailsResponse):
-            let expectedScheduledDate = scheduledDateTimeString(scheduledDay)
-            guard detailsResponse.isValidFreshCustomWorkout(
-                expectedScheduledDate: expectedScheduledDate
-            ) else {
-                let validationReason = detailsResponse.validationErrorForFreshCustomWorkout(
-                    expectedScheduledDate: expectedScheduledDate
-                ) ?? "unknown"
-                print(
-                    "[app] repeat-create-invalid-response workoutId=\(detailsResponse.workout.id) " +
-                        "status=\(detailsResponse.workout.status?.rawValue ?? "nil") " +
-                        "source=\(detailsResponse.workout.source.rawValue) " +
-                        "scheduledDate=\(detailsResponse.workout.scheduledDate ?? "nil") " +
-                        "scheduledAt=\(detailsResponse.workout.scheduledAt ?? "nil") " +
-                        "reason=\(validationReason)"
-                )
-                repeatSchedulingErrorMessage = "Сервер вернул некорректную копию тренировки. Новая тренировка не создана."
-                return false
-            }
-            await storeRemoteRepeatedWorkout(detailsResponse, scheduledDay: scheduledDay)
-            return true
-
-        case let .failure(error):
-            if shouldQueuePendingRepeatedWorkout(for: error) {
-                return await enqueuePendingRepeatedWorkout(
-                    workout,
-                    source: source,
-                    planId: pendingPlanId,
-                    on: scheduledDay,
-                )
-            }
-            repeatSchedulingErrorMessage = repeatSchedulingErrorMessage(for: error)
-            return false
-        }
-    }
-
-    private func shouldQueuePendingRepeatedWorkout(for error: APIError) -> Bool {
-        switch error {
-        case .offline:
-            return true
-        case .timeout, .cancelled, .transportError, .serverError, .decodingError, .unknown, .httpError, .unauthorized, .forbidden, .invalidURL:
-            return false
-        }
-    }
-
-    private func repeatSchedulingErrorMessage(for error: APIError) -> String {
-        switch error {
-        case .timeout, .transportError, .serverError, .decodingError, .unknown:
-            return "Не удалось создать тренировку на сервере. Проверьте план и повторите попытку."
-        case .httpError(let statusCode, _):
-            return "Сервер не создал тренировку. Код ответа: \(statusCode)."
-        case .unauthorized, .forbidden:
-            return "Сессия устарела. Войдите снова и повторите попытку."
-        case .invalidURL:
-            return "Не удалось сформировать запрос на сервер."
-        case .offline:
-            return "Нет интернета. Тренировка сохранена локально и будет создана после синхронизации."
-        case .cancelled:
-            return "Создание тренировки было отменено."
-        }
-    }
-
-    private func storeRemoteRepeatedWorkout(
-        _ detailsResponse: AthleteWorkoutDetailsResponse,
-        scheduledDay: Date,
-    ) async {
-        let details = detailsResponse.asWorkoutDetailsModel()
-        let remoteMirror = TrainingDayPlan(
-            id: "remote-\(details.id)",
-            userSub: userSub,
-            day: scheduledDay,
-            status: .planned,
-            programId: nil,
-            programTitle: nil,
-            workoutId: details.id,
-            title: details.title,
-            source: .freestyle,
-            workoutDetails: details,
-        )
-        await trainingStore.schedule(remoteMirror)
-        await cacheStore.set(
-            workoutCacheKey(programId: nil, source: .freestyle, workoutId: details.id),
-            value: details,
-            namespace: userSub,
-            ttl: 60 * 60 * 24,
-        )
-        selectedDay = calendar.startOfDay(for: scheduledDay)
-        selectedMonth = calendar.dateInterval(of: .month, for: scheduledDay)?.start ?? selectedDay
-        await reload()
-    }
-
-    private func enqueuePendingRepeatedWorkout(
-        _ workout: WorkoutDetailsModel,
-        source: WorkoutSource,
-        planId: String,
-        on scheduledDay: Date,
-    ) async -> Bool {
-        let normalizedSource: WorkoutSource = source == .template ? .template : .freestyle
-        let queueResult = await SyncCoordinator.shared.enqueueCreateCustomWorkout(
-            namespace: userSub,
-            planId: planId,
-            source: normalizedSource,
-            workout: workout,
-            scheduledDay: scheduledDay,
-            processImmediately: false,
-        )
-        let pendingPlan = TrainingDayPlan(
-            id: planId,
-            userSub: userSub,
-            day: scheduledDay,
-            status: .planned,
-            programId: nil,
-            programTitle: nil,
-            workoutId: workout.id,
-            title: workout.title,
-            source: normalizedSource,
-            workoutDetails: workout,
-            pendingSyncState: .createCustomWorkout,
-            pendingSyncOperationId: queueResult.operation?.id,
-        )
-        await trainingStore.schedule(pendingPlan)
-        await cacheStore.set(
-            workoutCacheKey(programId: nil, source: normalizedSource, workoutId: workout.id),
-            value: workout,
-            namespace: userSub,
-            ttl: 60 * 60 * 24,
-        )
-        selectedDay = calendar.startOfDay(for: scheduledDay)
-        selectedMonth = calendar.dateInterval(of: .month, for: scheduledDay)?.start ?? selectedDay
-        await reload()
-        if networkMonitor.currentStatus {
-            await SyncCoordinator.shared.retryNow(namespace: userSub)
-            await reload()
-        }
-        return true
+        return await applyMutationOutcome(outcome)
     }
 
     func scheduleRepeatLastWorkout(on day: Date) async {
@@ -564,7 +2333,12 @@ final class PlanScheduleViewModel {
         }
         guard let resolvedRecord else { return }
         guard resolvedRecord.source != .program else { return }
-        guard let resolvedWorkout = await resolveRepeatableWorkout(for: resolvedRecord) else {
+        guard let resolvedWorkout = await mutationService.resolveRepeatableWorkout(
+            for: resolvedRecord,
+            templateWorkoutDetails: { [weak self] templateID in
+                await self?.templateWorkoutDetails(templateID: templateID)
+            }
+        ) else {
             repeatSchedulingErrorMessage = "Не удалось загрузить последнюю тренировку для повтора."
             return
         }
@@ -577,63 +2351,6 @@ final class PlanScheduleViewModel {
         )
     }
 
-    private func resolveRepeatableWorkout(for record: CompletedWorkoutRecord) async -> WorkoutDetailsModel? {
-        let cacheKey = workoutCacheKey(
-            programId: record.programId.trimmedNilIfEmpty,
-            source: record.source,
-            workoutId: record.workoutId.trimmedNilIfEmpty,
-        )
-
-        if let cachedDetails = await cacheStore.get(
-            cacheKey,
-            as: WorkoutDetailsModel.self,
-            namespace: userSub,
-        ) {
-            return cachedDetails
-        }
-
-        if let workoutDetails = record.workoutDetails {
-            await cacheStore.set(
-                cacheKey,
-                value: workoutDetails,
-                namespace: userSub,
-                ttl: 60 * 60 * 24,
-            )
-            return workoutDetails
-        }
-
-        if record.source == .template,
-           let templateID = record.workoutId.trimmedNilIfEmpty,
-           let templateDetails = await templateWorkoutDetails(templateID: templateID)
-        {
-            await cacheStore.set(
-                cacheKey,
-                value: templateDetails,
-                namespace: userSub,
-                ttl: 60 * 60 * 24,
-            )
-            return templateDetails
-        }
-
-        if record.source != .template,
-           let workoutInstanceId = record.workoutId.trimmedNilIfEmpty,
-           UUID(uuidString: workoutInstanceId) != nil,
-           let athleteTrainingClient,
-           case let .success(detailsResponse) = await athleteTrainingClient.getWorkoutDetails(workoutInstanceId: workoutInstanceId)
-        {
-            let details = detailsResponse.asWorkoutDetailsModel()
-            await cacheStore.set(
-                cacheKey,
-                value: details,
-                namespace: userSub,
-                ttl: 60 * 60 * 24,
-            )
-            return details
-        }
-
-        return nil
-    }
-
     func dismissRepeatSchedulingError() {
         repeatSchedulingErrorMessage = nil
     }
@@ -644,40 +2361,6 @@ final class PlanScheduleViewModel {
 
     func dismissPlannedWorkoutUpdateError() {
         plannedWorkoutUpdateErrorMessage = nil
-    }
-
-    private func deleteErrorMessage(for error: APIError) -> String {
-        switch error {
-        case .offline:
-            return "Нет интернета. Удалить уже созданную тренировку можно только после восстановления соединения."
-        case .timeout, .transportError, .serverError, .decodingError, .unknown:
-            return "Не удалось удалить тренировку на сервере. Повторите попытку позже."
-        case .httpError(let statusCode, _):
-            return "Сервер не удалил тренировку. Код ответа: \(statusCode)."
-        case .unauthorized, .forbidden:
-            return "Сессия устарела. Войдите снова и повторите попытку."
-        case .invalidURL:
-            return "Не удалось сформировать запрос на удаление."
-        case .cancelled:
-            return "Удаление тренировки было отменено."
-        }
-    }
-
-    private func plannedWorkoutUpdateErrorMessage(for error: APIError) -> String {
-        switch error {
-        case .offline:
-            return "Нет интернета. Изменения в уже созданной тренировке можно сохранить только после восстановления соединения."
-        case .timeout, .transportError, .serverError, .decodingError, .unknown:
-            return "Не удалось сохранить изменения тренировки на сервере. Повторите попытку позже."
-        case .httpError(let statusCode, _):
-            return "Сервер не сохранил изменения тренировки. Код ответа: \(statusCode)."
-        case .unauthorized, .forbidden:
-            return "Сессия устарела. Войдите снова и повторите попытку."
-        case .invalidURL:
-            return "Не удалось сформировать запрос на сохранение."
-        case .cancelled:
-            return "Сохранение изменений было отменено."
-        }
     }
 
     func ensureLastCompletedRecordLoaded() async {
@@ -830,83 +2513,40 @@ final class PlanScheduleViewModel {
     }
 
     func markSkipped(_ item: DayScheduleItem) async {
-        await updateStatus(item, to: .skipped)
+        let outcome = await mutationService.updateStatus(
+            PlanStatusMutationRequest(
+                item: item.asMutationItem,
+                status: .skipped,
+            )
+        )
+        _ = await applyMutationOutcome(outcome)
     }
 
     func cancelInProgress(_ item: DayScheduleItem) async {
-        await clearLocalWorkoutSession(for: item)
-
-        if item.source != .template,
-           let workoutInstanceId = item.workoutId?.trimmedNilIfEmpty,
-           UUID(uuidString: workoutInstanceId) != nil
-        {
-            if let suppression = suppressionSignature(day: item.day, workoutId: item.workoutId, planId: item.planId) {
-                suppressedPlanSignatures.insert(suppression)
-            }
-
-            let updated = TrainingDayPlan(
-                id: item.planId,
-                userSub: userSub,
-                day: item.day,
-                status: .skipped,
-                programId: item.programId,
-                programTitle: item.programTitle,
-                workoutId: item.workoutId,
-                title: item.title,
-                source: item.source,
-                workoutDetails: item.workoutDetails,
-            )
-            await trainingStore.schedule(updated)
-            _ = await SyncCoordinator.shared.enqueueAbandonWorkout(
-                namespace: userSub,
-                workoutInstanceId: workoutInstanceId,
-                abandonedAt: Date(),
-            )
-            await reload()
-            return
-        }
-
-        await updateStatus(item, to: .skipped)
+        let outcome = await mutationService.cancelInProgress(item.asMutationItem)
+        _ = await applyMutationOutcome(outcome)
     }
 
     func repeatCompleted(_ item: DayScheduleItem, on targetDay: Date) async {
-        guard canRepeat(item) else { return }
-        guard let resolvedWorkout = await resolveWorkoutDetails(for: item) ?? item.workoutDetails else { return }
-        let repeatPrefix = item.source == .template ? "template-repeat" : "quick-repeat"
-        let repeatedWorkout = resolvedWorkout.asRepeatableCopy(prefix: repeatPrefix)
-        await scheduleRepeatedWorkout(
-            repeatedWorkout,
-            source: item.source,
+        let outcome = await mutationService.repeatCompleted(
+            item: item.asMutationItem,
             on: targetDay,
+            resolveWorkoutDetails: { [weak self] mutationItem in
+                await self?.resolveWorkoutDetails(for: mutationItem)
+            }
         )
+        _ = await applyMutationOutcome(outcome)
     }
 
     func replanMissed(_ item: DayScheduleItem, on targetDay: Date) async {
-        guard canSchedule(on: targetDay) else { return }
-
-        if let existingReplacement = existingReplannedCopy(for: item) {
-            await deletePlan(existingReplacement)
-        }
-        await movePlan(
-            item,
-            to: targetDay,
-            statusOverride: .planned,
+        let outcome = await mutationService.replan(
+            PlanReplanMutationRequest(
+                item: item.asMutationItem,
+                targetDay: targetDay,
+                contextEntries: contextPlans,
+            )
         )
-    }
-
-    private func existingReplannedCopy(for item: DayScheduleItem) -> DayScheduleItem? {
-        contextPlans
-            .filter { candidate in
-                guard candidate.id != item.planId else { return false }
-                guard candidate.status == .planned || candidate.status == .inProgress else { return false }
-                guard candidate.source == item.source else { return false }
-                guard candidate.programId?.trimmedNilIfEmpty == item.programId?.trimmedNilIfEmpty else { return false }
-                guard candidate.workoutId?.trimmedNilIfEmpty == item.workoutId?.trimmedNilIfEmpty else { return false }
-                return true
-            }
-            .sorted { $0.day < $1.day }
-            .map(makeDayScheduleItem(from:))
-            .first
+        _ = await applyMutationOutcome(outcome)
     }
 
     func movePlan(
@@ -914,57 +2554,14 @@ final class PlanScheduleViewModel {
         to targetDay: Date,
         statusOverride: TrainingDayStatus? = nil,
     ) async {
-        let normalizedCurrent = calendar.startOfDay(for: item.day)
-        let normalizedTarget = calendar.startOfDay(for: targetDay)
-        guard normalizedCurrent != normalizedTarget else { return }
-        guard canSchedule(on: normalizedTarget) else { return }
-        let resolvedStatus = statusOverride ?? item.status
-        if item.isPendingRemoteCreation {
-            let workout = await resolveWorkoutDetails(for: item) ?? item.workoutDetails ?? editableDraft(for: item)
-            await updatePendingCustomWorkoutPlan(
-                item,
-                workout: workout,
-                scheduledDay: targetDay,
+        let outcome = await mutationService.move(
+            PlanMoveMutationRequest(
+                item: item.asMutationItem,
+                targetDay: targetDay,
+                statusOverride: statusOverride,
             )
-            return
-        }
-        if isRemoteCustomWorkout(item),
-           let workoutId = item.workoutId?.trimmedNilIfEmpty,
-           let athleteTrainingClient
-        {
-            let result = await athleteTrainingClient.updateCustomWorkout(
-                workoutInstanceId: workoutId,
-                request: AthleteUpdateCustomWorkoutRequest(
-                    title: nil,
-                    scheduledDate: scheduledDayString(targetDay),
-                    scheduledAt: scheduledDateTimeString(targetDay),
-                    notes: item.workoutDetails?.coachNote?.trimmedNilIfEmpty,
-                ),
-            )
-            if case .success = result {
-                await reload()
-                return
-            }
-        }
-        if let suppression = suppressionSignature(day: item.day, workoutId: item.workoutId, planId: item.planId) {
-            suppressedPlanSignatures.insert(suppression)
-        }
-        await trainingStore.movePlan(
-            userSub: userSub,
-            from: item.day,
-            to: targetDay,
-            planId: item.planId,
-            workoutId: item.workoutId,
-            title: item.title,
-            source: item.source,
-            status: resolvedStatus,
-            programId: item.programId,
-            programTitle: item.programTitle,
-            workoutDetails: item.workoutDetails,
         )
-        selectedDay = calendar.startOfDay(for: targetDay)
-        selectedMonth = calendar.dateInterval(of: .month, for: targetDay)?.start ?? selectedDay
-        await reload()
+        _ = await applyMutationOutcome(outcome)
     }
 
     func scheduleProgramWorkout(
@@ -974,186 +2571,40 @@ final class PlanScheduleViewModel {
         workoutDetails: WorkoutDetailsModel,
         on targetDay: Date,
     ) async {
-        await schedulePlan(
-            day: targetDay,
-            title: title,
-            source: .program,
-            programId: programId,
-            programTitle: nil,
-            workoutId: workoutId,
-            status: .planned,
-            workoutDetails: workoutDetails,
+        let outcome = await mutationService.schedule(
+            PlanScheduleMutationRequest(
+                day: targetDay,
+                title: title,
+                source: .program,
+                programId: programId,
+                programTitle: nil,
+                workoutId: workoutId,
+                status: .planned,
+                workoutDetails: workoutDetails,
+                planId: nil,
+            )
         )
+        _ = await applyMutationOutcome(outcome)
     }
 
     func deletePlan(_ item: DayScheduleItem) async {
         deleteErrorMessage = nil
-
-        if isRemoteCustomWorkout(item) {
-            guard let workoutId = item.workoutId?.trimmedNilIfEmpty else {
-                deleteErrorMessage = "Не удалось определить тренировку для удаления."
-                return
-            }
-            guard let athleteTrainingClient else {
-                deleteErrorMessage = "Не удалось удалить тренировку без соединения с сервером."
-                return
-            }
-
-            let deleteResult = await athleteTrainingClient.deleteCustomWorkout(workoutInstanceId: workoutId)
-            switch deleteResult {
-            case .success:
-                break
-            case let .failure(error):
-                if case let .httpError(statusCode, _) = error, statusCode == 404 {
-                    break
-                }
-                deleteErrorMessage = deleteErrorMessage(for: error)
-                return
-            }
-        }
-        if item.isPendingRemoteCreation {
-            await SyncCoordinator.shared.cancelPendingCreateCustomWorkout(
-                namespace: userSub,
-                planId: item.planId,
-            )
-        }
-        if let suppression = suppressionSignature(day: item.day, workoutId: item.workoutId, planId: item.planId) {
-            suppressedPlanSignatures.insert(suppression)
-        }
-        await clearLocalWorkoutSession(for: item)
-        await trainingStore.deletePlan(
-            userSub: userSub,
-            day: item.day,
-            planId: item.planId,
-            workoutId: item.workoutId,
-            title: item.title,
-            source: item.source,
+        let outcome = await mutationService.delete(
+            PlanDeleteMutationRequest(item: item.asMutationItem)
         )
-        await reload()
-        NotificationCenter.default.post(name: .fitfluenceTrainingPlanDidChange, object: item.day)
-    }
-
-    private func updatePendingCustomWorkoutPlan(
-        _ item: DayScheduleItem,
-        workout: WorkoutDetailsModel,
-        scheduledDay: Date,
-    ) async {
-        let normalizedDay = normalizedScheduledDate(scheduledDay)
-        let resolvedTitle = workout.title.trimmingCharacters(in: .whitespacesAndNewlines)
-        let queueResult = await SyncCoordinator.shared.enqueueCreateCustomWorkout(
-            namespace: userSub,
-            planId: item.planId,
-            source: item.source,
-            workout: workout,
-            scheduledDay: normalizedDay,
-            processImmediately: false,
-        )
-        let updatedPlan = TrainingDayPlan(
-            id: item.planId,
-            userSub: userSub,
-            day: normalizedDay,
-            status: .planned,
-            programId: item.programId,
-            programTitle: item.programTitle,
-            workoutId: workout.id,
-            title: resolvedTitle.isEmpty ? item.title : resolvedTitle,
-            source: item.source,
-            workoutDetails: workout,
-            pendingSyncState: .createCustomWorkout,
-            pendingSyncOperationId: queueResult.operation?.id ?? item.pendingRemoteCreationOperationId,
-        )
-        await trainingStore.schedule(updatedPlan)
-        await cacheStore.set(
-            workoutCacheKey(programId: item.programId, source: item.source, workoutId: workout.id),
-            value: workout,
-            namespace: userSub,
-            ttl: 60 * 60 * 24,
-        )
-        selectedDay = calendar.startOfDay(for: normalizedDay)
-        selectedMonth = calendar.dateInterval(of: .month, for: normalizedDay)?.start ?? selectedDay
-        await reload()
-        if networkMonitor.currentStatus {
-            await SyncCoordinator.shared.retryNow(namespace: userSub)
-            await reload()
-        }
-    }
-
-    private func schedulePlan(
-        day: Date,
-        title: String,
-        source: WorkoutSource,
-        programId: String?,
-        programTitle: String?,
-        workoutId: String?,
-        status: TrainingDayStatus,
-        workoutDetails: WorkoutDetailsModel?,
-        planId: String? = nil,
-    ) async {
-        let scheduledDay = normalizedScheduledDate(day)
-        guard canSchedule(on: scheduledDay) else { return }
-        let resolvedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
-        let plan = TrainingDayPlan(
-            id: planId ?? UUID().uuidString,
-            userSub: userSub,
-            day: scheduledDay,
-            status: status,
-            programId: programId,
-            programTitle: programTitle?.trimmedNilIfEmpty,
-            workoutId: workoutId,
-            title: resolvedTitle.isEmpty ? "Тренировка" : resolvedTitle,
-            source: source,
-            workoutDetails: workoutDetails,
-        )
-        await trainingStore.schedule(plan)
-        selectedDay = calendar.startOfDay(for: scheduledDay)
-        selectedMonth = calendar.dateInterval(of: .month, for: scheduledDay)?.start ?? selectedDay
-        await reload()
-    }
-
-    private func updateStatus(_ item: DayScheduleItem, to status: TrainingDayStatus) async {
-        let updated = TrainingDayPlan(
-            id: item.planId,
-            userSub: userSub,
-            day: item.day,
-            status: status,
-            programId: item.programId,
-            programTitle: item.programTitle,
-            workoutId: item.workoutId,
-            title: item.title,
-            source: item.source,
-            workoutDetails: item.workoutDetails,
-        )
-        await trainingStore.schedule(updated)
-        await reload()
-    }
-
-    private func clearLocalWorkoutSession(for item: DayScheduleItem) async {
-        guard let workoutId = item.workoutId?.trimmedNilIfEmpty else { return }
-        await LocalWorkoutProgressStore().remove(
-            userSub: userSub,
-            programId: item.programId?.trimmedNilIfEmpty ?? "",
-            workoutId: workoutId,
-        )
-        await cacheStore.remove(
-            workoutCacheKey(programId: item.programId, source: item.source, workoutId: item.workoutId),
-            namespace: userSub,
-        )
-        await cacheStore.remove(
-            "workout.execution.context:\(item.programId?.trimmedNilIfEmpty ?? ""):\(workoutId)",
-            namespace: userSub,
-        )
-    }
-
-    private func normalizedScheduledDate(_ date: Date) -> Date {
-        let components = calendar.dateComponents([.year, .month, .day, .hour, .minute], from: date)
-        return calendar.date(from: components) ?? date
+        _ = await applyMutationOutcome(outcome)
     }
 
     func resolveWorkoutDetails(for item: DayScheduleItem) async -> WorkoutDetailsModel? {
-        if hasHydratedWorkoutDetails(item.workoutDetails, for: item) {
-            let workoutDetails = item.workoutDetails!
+        await resolveWorkoutDetails(for: item.asMutationItem)
+    }
+
+    private func resolveWorkoutDetails(for item: PlanMutationItem) async -> WorkoutDetailsModel? {
+        let cacheKey = workoutCacheKey(programId: item.programId, source: item.source, workoutId: item.workoutId)
+
+        if item.detailsState == .hydrated, let workoutDetails = item.workoutDetails {
             await cacheStore.set(
-                workoutCacheKey(programId: item.programId, source: item.source, workoutId: item.workoutId),
+                cacheKey,
                 value: workoutDetails,
                 namespace: userSub,
                 ttl: 60 * 60 * 24,
@@ -1164,7 +2615,7 @@ final class PlanScheduleViewModel {
         if item.source == .template, let templateID = item.workoutId?.trimmedNilIfEmpty {
             if let templateDetails = await templateWorkoutDetails(templateID: templateID) {
                 await cacheStore.set(
-                    workoutCacheKey(programId: item.programId, source: item.source, workoutId: item.workoutId),
+                    cacheKey,
                     value: templateDetails,
                     namespace: userSub,
                     ttl: 60 * 60 * 24,
@@ -1174,10 +2625,10 @@ final class PlanScheduleViewModel {
         }
 
         if let cached = await cacheStore.get(
-            workoutCacheKey(programId: item.programId, source: item.source, workoutId: item.workoutId),
+            cacheKey,
             as: WorkoutDetailsModel.self,
             namespace: userSub,
-        ), hasHydratedWorkoutDetails(cached, for: item) {
+        ), hasHydratedWorkoutDetails(cached, source: item.source, fallbackTitle: item.title) {
             return cached
         }
 
@@ -1188,7 +2639,7 @@ final class PlanScheduleViewModel {
             if case let .success(detailsResponse) = await athleteTrainingClient.getWorkoutDetails(workoutInstanceId: workoutInstanceId) {
                 let details = detailsResponse.asWorkoutDetailsModel()
                 await cacheStore.set(
-                    workoutCacheKey(programId: item.programId, source: item.source, workoutId: item.workoutId),
+                    cacheKey,
                     value: details,
                     namespace: userSub,
                     ttl: 60 * 60 * 24,
@@ -1205,7 +2656,7 @@ final class PlanScheduleViewModel {
             if case let .success(detailsResponse) = await athleteTrainingClient.getWorkoutDetails(workoutInstanceId: workoutInstanceId) {
                 let details = detailsResponse.asWorkoutDetailsModel()
                 await cacheStore.set(
-                    workoutCacheKey(programId: item.programId, source: item.source, workoutId: item.workoutId),
+                    cacheKey,
                     value: details,
                     namespace: userSub,
                     ttl: 60 * 60 * 24,
@@ -1227,19 +2678,54 @@ final class PlanScheduleViewModel {
         return nil
     }
 
+    private func applyMutationOutcome(_ outcome: PlanMutationOutcome) async -> Bool {
+        if let userError = outcome.userError {
+            switch userError.kind {
+            case .repeatScheduling:
+                repeatSchedulingErrorMessage = userError.message
+            case .delete:
+                deleteErrorMessage = userError.message
+            case .plannedWorkoutUpdate:
+                plannedWorkoutUpdateErrorMessage = userError.message
+            }
+        }
+
+        for signature in outcome.suppressedPlanSignatures {
+            suppressedPlanSignatures.insert(signature)
+        }
+
+        if let focusDay = outcome.focusDay {
+            selectedDay = calendar.startOfDay(for: focusDay)
+            selectedMonth = calendar.dateInterval(of: .month, for: focusDay)?.start ?? selectedDay
+        }
+
+        if outcome.shouldReload {
+            await reload()
+            if outcome.retrySyncAfterReload {
+                await SyncCoordinator.shared.retryNow(namespace: userSub)
+                await reload()
+            }
+            if let broadcastDay = outcome.broadcastDay {
+                NotificationCenter.default.post(name: .fitfluenceTrainingPlanDidChange, object: broadcastDay)
+            }
+        }
+
+        return outcome.didMutate
+    }
+
     func canEditPlannedWorkout(_ item: DayScheduleItem, details _: WorkoutDetailsModel?) -> Bool {
-        guard item.status == .planned else { return false }
+        guard item.canonicalStatus == .planned else { return false }
         guard item.sourceKind == .manual else { return false }
         return true
     }
 
     func canDeletePlannedWorkout(_ item: DayScheduleItem) -> Bool {
-        guard item.status == .planned else { return false }
+        guard item.canonicalStatus == .planned else { return false }
         return item.sourceKind == .manual
     }
 
     func canRepeat(_ item: DayScheduleItem) -> Bool {
-        item.status == .completed && item.sourceKind == .manual
+        item.canonicalStatus == .completed && item.sourceKind == .manual
     }
 
     func editableDraft(for item: DayScheduleItem) -> WorkoutDetailsModel {
@@ -1260,320 +2746,32 @@ final class PlanScheduleViewModel {
     func updatePlannedManualWorkout(_ item: DayScheduleItem, with workout: WorkoutDetailsModel) async {
         guard canEditPlannedWorkout(item, details: workout) else { return }
         plannedWorkoutUpdateErrorMessage = nil
-        if item.isPendingRemoteCreation {
-            await updatePendingCustomWorkoutPlan(
-                item,
+        let outcome = await mutationService.updatePlannedManualWorkout(
+            PlanUpdateManualWorkoutMutationRequest(
+                item: item.asMutationItem,
                 workout: workout,
-                scheduledDay: item.day,
             )
-            return
-        }
-        if isRemoteCustomWorkout(item),
-           let workoutId = item.workoutId?.trimmedNilIfEmpty,
-           let athleteTrainingClient
-        {
-            let updateResult = await athleteTrainingClient.updateCustomWorkout(
-                workoutInstanceId: workoutId,
-                request: workout.asUpdateCustomWorkoutRequest(scheduledDate: item.day),
-            )
-            switch updateResult {
-            case let .success(detailsResponse):
-                let details = detailsResponse.asWorkoutDetailsModel()
-                let updatedPlan = TrainingDayPlan(
-                    id: item.planId,
-                    userSub: userSub,
-                    day: item.day,
-                    status: item.status,
-                    programId: item.programId,
-                    programTitle: item.programTitle,
-                    workoutId: workoutId,
-                    title: details.title,
-                    source: item.source,
-                    workoutDetails: details,
-                )
-                await trainingStore.schedule(updatedPlan)
-                await cacheStore.set(
-                    workoutCacheKey(programId: item.programId, source: item.source, workoutId: workoutId),
-                    value: details,
-                    namespace: userSub,
-                    ttl: 60 * 60 * 24,
-                )
-                await reload()
-                return
-            case let .failure(error):
-                plannedWorkoutUpdateErrorMessage = plannedWorkoutUpdateErrorMessage(for: error)
-                return
-            }
-        }
-
-        let resolvedTitle = workout.title.trimmingCharacters(in: .whitespacesAndNewlines)
-        let updated = TrainingDayPlan(
-            id: item.planId,
-            userSub: userSub,
-            day: calendar.startOfDay(for: item.day),
-            status: item.status,
-            programId: item.programId,
-            programTitle: item.programTitle,
-            workoutId: item.workoutId ?? workout.id,
-            title: resolvedTitle.isEmpty ? item.title : resolvedTitle,
-            source: item.source,
-            workoutDetails: workout,
         )
-        await trainingStore.schedule(updated)
-        await cacheStore.set(
-            workoutCacheKey(programId: item.programId, source: item.source, workoutId: item.workoutId ?? workout.id),
-            value: workout,
-            namespace: userSub,
-            ttl: 60 * 60 * 24,
-        )
-        await reload()
+        _ = await applyMutationOutcome(outcome)
     }
 
-    private func isRemoteCustomWorkout(_ item: DayScheduleItem) -> Bool {
-        item.source == .freestyle && item.planId.hasPrefix("remote-") && item.workoutId?.trimmedNilIfEmpty != nil
-    }
-
-    private func suppressionSignature(day: Date, workoutId: String?, planId: String) -> String? {
-        guard planId.hasPrefix("remote-"), let workoutId else { return nil }
-        let normalizedDay = calendar.startOfDay(for: day)
-        return "\(normalizedDay.timeIntervalSince1970)::\(workoutId)"
-    }
-
-    private func weekStart(for date: Date) -> Date {
-        let normalized = calendar.startOfDay(for: date)
-        return calendar.dateInterval(of: .weekOfYear, for: normalized)?.start ?? normalized
-    }
-
-    private func plansForDay(in plans: [TrainingDayPlan], day: Date) -> [TrainingDayPlan] {
+    private func plansForDay(in plans: [PlanEntry], day: Date) -> [PlanEntry] {
         let normalized = calendar.startOfDay(for: day)
         return plans.filter { calendar.isDate($0.day, inSameDayAs: normalized) }
     }
 
-    private func dayStatus(for plans: [TrainingDayPlan]) -> TrainingDayStatus? {
-        if plans.contains(where: { $0.status == .inProgress }) {
+    private func dayStatus(for plans: [PlanEntry]) -> TrainingDayStatus? {
+        if plans.contains(where: { $0.canonicalStatus == .inProgress }) {
             return .inProgress
         }
-        if plans.contains(where: { $0.status == .completed }) {
+        if plans.contains(where: { $0.canonicalStatus == .completed }) {
             return .completed
         }
-        if plans.contains(where: { $0.status.isMissedLike }) {
+        if plans.contains(where: { $0.canonicalStatus.isMissedLike }) {
             return .missed
         }
-        if plans.contains(where: { $0.status == .planned }) {
+        if plans.contains(where: { $0.canonicalStatus == .planned }) {
             return .planned
-        }
-        return nil
-    }
-
-    private func recalculateWeekCounts() {
-        let start = weekStart(for: selectedDay)
-        let end = calendar.date(byAdding: .day, value: 7, to: start) ?? start
-        let items = contextPlans.filter { plan in
-            let day = calendar.startOfDay(for: plan.day)
-            return day >= start && day < end
-        }
-
-        weekCounts = WeekCounts(
-            planned: items.count(where: { $0.status == .planned || $0.status == .inProgress }),
-            completed: items.count(where: { $0.status == .completed }),
-            missed: items.count(where: { $0.status.isMissedLike }),
-        )
-    }
-
-    private func upcomingTitle(from plans: [TrainingDayPlan]) -> String {
-        let sorted = plans.sorted { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }
-        guard let first = sorted.first else { return "Тренировка" }
-        let remaining = sorted.count - 1
-        if remaining > 0 {
-            return "\(first.title) + ещё \(remaining)"
-        }
-        return first.title
-    }
-
-    private func resolveActiveEnrollmentProgress() async -> ActiveEnrollmentProgressResponse? {
-        if let cached = await cacheStore.get(
-            cacheKeys.activeEnrollment,
-            as: ActiveEnrollmentProgressResponse.self,
-            namespace: userSub,
-        ) {
-            return cached
-        }
-
-        guard networkMonitor.currentStatus, let athleteTrainingClient else {
-            return nil
-        }
-
-        let result = await athleteTrainingClient.activeEnrollmentProgress()
-        guard case let .success(progress) = result else {
-            return nil
-        }
-
-        await cacheStore.set(cacheKeys.activeEnrollment, value: progress, namespace: userSub, ttl: 60 * 5)
-        return progress
-    }
-
-    private func plansForMonth(_ month: Date, activeEnrollment: ActiveEnrollmentProgressResponse?) async -> [TrainingDayPlan] {
-        let localPlans = await trainingStore.plans(userSub: userSub, month: month)
-        let cacheKey = cacheKeys.month(monthKey(for: month))
-        var resolved = localPlans
-
-        if let cached = await cacheStore.get(cacheKey, as: [TrainingDayPlan].self, namespace: userSub)
-        {
-            let cachedRemotePlans = cachedRemotePlansOnly(cached)
-            if !cachedRemotePlans.isEmpty {
-                resolved = merge(local: localPlans, remote: cachedRemotePlans)
-            }
-        }
-
-        guard networkMonitor.currentStatus, let athleteTrainingClient else {
-            return resolved
-        }
-
-        let enrollmentId = activeEnrollment?.enrollmentId
-        async let calendarResult = athleteTrainingClient.calendar(month: monthKey(for: month))
-        async let scheduleResult: Result<AthleteEnrollmentScheduleResponse, APIError> = {
-            guard let enrollmentId else { return .failure(.invalidURL) }
-            return await athleteTrainingClient.enrollmentSchedule(enrollmentId: enrollmentId)
-        }()
-
-        var remotePlans: [TrainingDayPlan] = []
-
-        if case let .success(calendarResponse) = await calendarResult {
-            remotePlans.append(contentsOf: mapWorkouts(calendarResponse.workouts, month: month, activeEnrollment: activeEnrollment))
-        }
-
-        if case let .success(scheduleResponse) = await scheduleResult {
-            remotePlans.append(contentsOf: mapWorkouts(scheduleResponse.workouts, month: month, activeEnrollment: activeEnrollment))
-        }
-
-        remotePlans = deduplicate(remotePlans)
-        if !remotePlans.isEmpty {
-            resolved = merge(local: localPlans, remote: remotePlans)
-            await cacheStore.set(cacheKey, value: remotePlans, namespace: userSub, ttl: 60 * 10)
-        }
-
-        return resolved.sorted { $0.day < $1.day }
-    }
-
-    private func cachedRemotePlansOnly(_ plans: [TrainingDayPlan]) -> [TrainingDayPlan] {
-        plans.filter { $0.id.hasPrefix("remote-") }
-    }
-
-    private func mapWorkouts(
-        _ workouts: [AthleteWorkoutInstance],
-        month: Date,
-        activeEnrollment: ActiveEnrollmentProgressResponse?,
-    ) -> [TrainingDayPlan] {
-        guard let monthInterval = calendar.dateInterval(of: .month, for: month) else {
-            return []
-        }
-
-        return workouts.compactMap { workout in
-            guard let date = parseDate(workout.scheduledAt ?? workout.scheduledDate ?? workout.startedAt ?? workout.completedAt),
-                  monthInterval.contains(date)
-            else {
-                return nil
-            }
-
-            return TrainingDayPlan(
-                id: "remote-\(workout.id)",
-                userSub: userSub,
-                day: date,
-                status: mapStatus(workout.status),
-                programId: workout.programId?.trimmedNilIfEmpty,
-                programTitle: resolvedProgramTitle(for: workout, activeEnrollment: activeEnrollment),
-                workoutId: workout.id,
-                title: workout.title?.trimmedNilIfEmpty ?? "Тренировка",
-                source: mapSource(workout.source),
-                workoutDetails: nil,
-            )
-        }
-    }
-
-    private func resolvedProgramTitle(
-        for workout: AthleteWorkoutInstance,
-        activeEnrollment: ActiveEnrollmentProgressResponse?,
-    ) -> String? {
-        let workoutProgramID = workout.programId?.trimmedNilIfEmpty
-        let activeProgramID = activeEnrollment?.programId?.trimmedNilIfEmpty
-        guard workoutProgramID == activeProgramID else { return nil }
-        return activeEnrollment?.programTitle?.trimmedNilIfEmpty
-    }
-
-    private func merge(local: [TrainingDayPlan], remote: [TrainingDayPlan]) -> [TrainingDayPlan] {
-        guard !remote.isEmpty else {
-            return local
-        }
-
-        let filteredRemote = remote.filter { plan in
-            guard let signature = remoteSuppressionSignature(plan) else { return true }
-            return !suppressedPlanSignatures.contains(signature)
-        }
-        var merged = filteredRemote
-
-        for item in local {
-            guard let remoteIndex = merged.firstIndex(where: { remotePlan in
-                remotePlan.id == item.id
-            }) else {
-                continue
-            }
-            merged[remoteIndex] = mergedRemotePlanPreservingLocalSchedule(remote: merged[remoteIndex], local: item)
-        }
-
-        var existing = Set(merged.map(planSignature))
-
-        for item in local {
-            if item.source == .program,
-               merged.contains(where: { remote in
-                   isRemoteEquivalent(remote: remote, toLocalProgramPlan: item)
-               })
-            {
-                continue
-            }
-            let key = planSignature(item)
-            guard !existing.contains(key) else { continue }
-            existing.insert(key)
-            merged.append(item)
-        }
-
-        return merged.sorted { $0.day < $1.day }
-    }
-
-    private func mergedRemotePlanPreservingLocalSchedule(remote: TrainingDayPlan, local: TrainingDayPlan) -> TrainingDayPlan {
-        guard remote.id == local.id else { return remote }
-
-        let sameDay = calendar.startOfDay(for: remote.day) == calendar.startOfDay(for: local.day)
-        let remoteHasExplicitTime = sameDay && scheduledTimeText(for: remote.day) != nil
-        let localHasExplicitTime = scheduledTimeText(for: local.day) != nil
-        let resolvedDay: Date
-        if sameDay {
-            resolvedDay = !remoteHasExplicitTime && localHasExplicitTime ? local.day : remote.day
-        } else {
-            resolvedDay = local.day
-        }
-
-        return TrainingDayPlan(
-            id: remote.id,
-            userSub: remote.userSub,
-            day: resolvedDay,
-            status: sameDay ? remote.status : local.status,
-            programId: remote.programId ?? local.programId,
-            programTitle: local.programTitle ?? remote.programTitle,
-            workoutId: remote.workoutId ?? local.workoutId,
-            title: local.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? remote.title : local.title,
-            source: remote.source,
-            workoutDetails: preferredWorkoutDetails(remote: remote, local: local),
-            pendingSyncState: local.pendingSyncState,
-            pendingSyncOperationId: local.pendingSyncOperationId,
-        )
-    }
-
-    private func preferredWorkoutDetails(remote: TrainingDayPlan, local: TrainingDayPlan) -> WorkoutDetailsModel? {
-        if hasHydratedWorkoutDetails(remote.workoutDetails, source: remote.source, fallbackTitle: remote.title) {
-            return remote.workoutDetails
-        }
-        if hasHydratedWorkoutDetails(local.workoutDetails, source: local.source, fallbackTitle: local.title) {
-            return local.workoutDetails
         }
         return nil
     }
@@ -1591,58 +2789,11 @@ final class PlanScheduleViewModel {
         source: WorkoutSource,
         fallbackTitle: String,
     ) -> Bool {
-        guard let workoutDetails else { return false }
-        if !workoutDetails.exercises.isEmpty {
-            return true
-        }
-        let trimmedCoachNote = workoutDetails.coachNote?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        if !trimmedCoachNote.isEmpty {
-            return true
-        }
-        if source == .program && workoutDetails.dayOrder > 0 {
-            return true
-        }
-
-        let normalizedTitle = workoutDetails.title.trimmingCharacters(in: .whitespacesAndNewlines)
-        let normalizedFallbackTitle = fallbackTitle.trimmingCharacters(in: .whitespacesAndNewlines)
-        return !normalizedTitle.isEmpty && normalizedTitle.caseInsensitiveCompare(normalizedFallbackTitle) != .orderedSame
-    }
-
-    private func isRemoteEquivalent(remote: TrainingDayPlan, toLocalProgramPlan local: TrainingDayPlan) -> Bool {
-        guard remote.id.hasPrefix("remote-"), remote.source == .program, local.source == .program else {
-            return false
-        }
-        guard calendar.startOfDay(for: remote.day) == calendar.startOfDay(for: local.day) else {
-            return false
-        }
-        guard remote.programId?.trimmedNilIfEmpty == local.programId?.trimmedNilIfEmpty else {
-            return false
-        }
-        return remote.title.trimmingCharacters(in: .whitespacesAndNewlines)
-            .caseInsensitiveCompare(local.title.trimmingCharacters(in: .whitespacesAndNewlines)) == .orderedSame
-    }
-
-    private func deduplicate(_ plans: [TrainingDayPlan]) -> [TrainingDayPlan] {
-        var deduped: [TrainingDayPlan] = []
-        var seen = Set<String>()
-        for plan in plans.sorted(by: { $0.day < $1.day }) {
-            let key = planSignature(plan)
-            guard !seen.contains(key) else { continue }
-            seen.insert(key)
-            deduped.append(plan)
-        }
-        return deduped
-    }
-
-    private func planSignature(_ plan: TrainingDayPlan) -> String {
-        let date = calendar.startOfDay(for: plan.day)
-        return "\(date.timeIntervalSince1970)::\(plan.id)"
-    }
-
-    private func remoteSuppressionSignature(_ plan: TrainingDayPlan) -> String? {
-        guard plan.id.hasPrefix("remote-"), let workoutId = plan.workoutId else { return nil }
-        let date = calendar.startOfDay(for: plan.day)
-        return "\(date.timeIntervalSince1970)::\(workoutId)"
+        readModel.hasHydratedWorkoutDetails(
+            workoutDetails,
+            source: source,
+            fallbackTitle: fallbackTitle,
+        )
     }
 
     private func workoutCacheKey(programId: String?, source: WorkoutSource, workoutId: String?) -> String {
@@ -1666,7 +2817,7 @@ final class PlanScheduleViewModel {
         var workoutCandidates: [(id: String, programId: String?)] = []
         var seenWorkoutIDs = Set<String>()
 
-        let localCandidatePlans = deduplicate(contextPlans + monthPlans)
+        let localCandidatePlans = readModel.deduplicateEntries(contextPlans + monthPlans)
         for plan in localCandidatePlans {
             guard plan.source == .program,
                   let workoutID = plan.workoutId?.trimmedNilIfEmpty
@@ -1676,7 +2827,7 @@ final class PlanScheduleViewModel {
         }
 
         for month in monthCandidates {
-            let monthToken = monthKey(for: month)
+            let monthToken = readModel.monthKey(for: month)
             if case let .success(calendarResponse) = await athleteTrainingClient.calendar(month: monthToken) {
                 for workout in calendarResponse.workouts {
                     guard let normalized = workout.id.trimmedNilIfEmpty else { continue }
@@ -1686,7 +2837,7 @@ final class PlanScheduleViewModel {
             }
         }
 
-        if let enrollmentId = await resolveActiveEnrollmentProgress()?.enrollmentId,
+        if let enrollmentId = await readModel.activeEnrollmentProgress()?.enrollmentId,
            case let .success(scheduleResponse) = await athleteTrainingClient.enrollmentSchedule(enrollmentId: enrollmentId)
         {
             for workout in scheduleResponse.workouts {
@@ -1753,82 +2904,24 @@ final class PlanScheduleViewModel {
         return templates
     }
 
-    private func mapStatus(_ status: AthleteWorkoutInstanceStatus?) -> TrainingDayStatus {
-        switch status {
-        case .completed:
-            return .completed
-        case .missed:
-            return .missed
-        case .abandoned:
-            return .skipped
-        case .inProgress:
-            return .inProgress
-        case .planned, .none:
-            return .planned
-        }
-    }
+}
 
-    private func mapSource(_ source: AthleteWorkoutSource) -> WorkoutSource {
-        switch source {
-        case .program:
-            return .program
-        case .custom:
-            return .freestyle
-        }
-    }
-
-    private func monthKey(for date: Date) -> String {
-        let formatter = DateFormatter()
-        formatter.calendar = calendar
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.timeZone = calendar.timeZone
-        formatter.dateFormat = "yyyy-MM"
-        return formatter.string(from: date)
-    }
-
-    private func parseDate(_ value: String?) -> Date? {
-        guard let value, !value.isEmpty else {
-            return nil
-        }
-        if let withFractions = Self.iso8601WithFractions.date(from: value) {
-            return withFractions
-        }
-        if let dateTime = Self.iso8601.date(from: value) {
-            return dateTime
-        }
-        return Self.dateOnly.date(from: value)
-    }
-
-    private var cacheKeys: CacheKeys {
-        CacheKeys()
-    }
-
-    private static let iso8601WithFractions: ISO8601DateFormatter = {
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        return formatter
-    }()
-
-    private static let iso8601: ISO8601DateFormatter = {
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime]
-        return formatter
-    }()
-
-    private static let dateOnly: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.timeZone = TimeZone(secondsFromGMT: 0)
-        formatter.dateFormat = "yyyy-MM-dd"
-        return formatter
-    }()
-
-    private struct CacheKeys {
-        let activeEnrollment = "athlete.enrollment.active"
-
-        func month(_ month: String) -> String {
-            "athlete.plan.month.\(month)"
-        }
+private extension PlanScheduleViewModel.DayScheduleItem {
+    var asMutationItem: PlanMutationItem {
+        PlanMutationItem(
+            planId: planId,
+            day: day,
+            title: title,
+            source: source,
+            ownership: ownership,
+            detailsState: detailsState,
+            syncState: syncState,
+            canonicalStatus: canonicalStatus,
+            programId: programId,
+            programTitle: programTitle,
+            workoutId: workoutId,
+            workoutDetails: workoutDetails,
+        )
     }
 }
 
@@ -1870,13 +2963,12 @@ struct PlanScheduleScreen: View {
 
     @State var viewModel: PlanScheduleViewModel
     let onOpenProgramWorkout: (_ programId: String, _ workoutId: String) -> Void
-    let onOpenPresetWorkout: (_ workout: WorkoutDetailsModel, _ source: WorkoutSource, _ programId: String?) -> Void
+    let onOpenPresetWorkout: (_ workout: WorkoutDetailsModel, _ source: WorkoutSource, _ programId: String?, _ planId: String?) -> Void
     let onOpenQuickWorkoutBuilder: () -> Void
     let onOpenCompletedWorkout: (_ record: CompletedWorkoutRecord) -> Void
     let exerciseCatalogRepository: any ExerciseCatalogRepository
     let exercisePickerSuggestionsProvider: any ExercisePickerSuggestionsProviding
 
-    @State private var expandedUpcomingDay: Date?
     @State private var scheduleTargetDay: Date?
     @State private var isScheduleDialogPresented = false
     @State private var isTemplatePickerPresented = false
@@ -1895,7 +2987,7 @@ struct PlanScheduleScreen: View {
         ),
         exercisePickerSuggestionsProvider: any ExercisePickerSuggestionsProviding = EmptyExercisePickerSuggestionsProvider(),
         onOpenProgramWorkout: @escaping (_ programId: String, _ workoutId: String) -> Void = { _, _ in },
-        onOpenPresetWorkout: @escaping (_ workout: WorkoutDetailsModel, _ source: WorkoutSource, _ programId: String?) -> Void = { _, _, _ in },
+        onOpenPresetWorkout: @escaping (_ workout: WorkoutDetailsModel, _ source: WorkoutSource, _ programId: String?, _ planId: String?) -> Void = { _, _, _, _ in },
         onOpenQuickWorkoutBuilder: @escaping () -> Void = {},
         onOpenCompletedWorkout: @escaping (_ record: CompletedWorkoutRecord) -> Void = { _ in },
     ) {
@@ -2379,137 +3471,6 @@ struct PlanScheduleScreen: View {
         }
     }
 
-    private var weekSummaryCard: some View {
-        FFCard {
-            VStack(alignment: .leading, spacing: FFSpacing.sm) {
-                Text("Неделя")
-                    .font(FFTypography.h2)
-                    .foregroundStyle(FFColors.textPrimary)
-
-                HStack(spacing: FFSpacing.sm) {
-                    summaryMetric(
-                        title: "Всего",
-                        value: "\(viewModel.weekCounts.total)",
-                    )
-                    summaryMetric(
-                        title: "Выполнено",
-                        value: "\(viewModel.weekCounts.completed)",
-                    )
-                    summaryMetric(
-                        title: "Пропущено",
-                        value: "\(viewModel.weekCounts.missed)",
-                    )
-                }
-            }
-        }
-    }
-
-    private func summaryMetric(title: String, value: String) -> some View {
-        VStack(alignment: .center, spacing: FFSpacing.xxs) {
-            Text(title)
-                .font(FFTypography.caption)
-                .foregroundStyle(FFColors.textSecondary)
-                .lineLimit(2)
-                .multilineTextAlignment(.center)
-                .minimumScaleFactor(0.85)
-            Text(value)
-                .font(FFTypography.h2)
-                .foregroundStyle(FFColors.textPrimary)
-                .lineLimit(1)
-                .minimumScaleFactor(0.8)
-        }
-        .frame(maxWidth: .infinity)
-        .frame(minHeight: 88)
-        .padding(FFSpacing.sm)
-        .background(FFColors.surface)
-        .clipShape(RoundedRectangle(cornerRadius: FFTheme.Radius.control))
-        .overlay {
-            RoundedRectangle(cornerRadius: FFTheme.Radius.control)
-                .stroke(FFColors.gray700, lineWidth: 1)
-        }
-    }
-
-    private var upcomingCard: some View {
-        FFCard {
-            VStack(alignment: .leading, spacing: FFSpacing.sm) {
-                Text("Тренировки на 7 дней")
-                    .font(FFTypography.h2)
-                    .foregroundStyle(FFColors.textPrimary)
-
-                ForEach(viewModel.upcomingDays) { item in
-                    infoRowContainer {
-                        VStack(alignment: .leading, spacing: FFSpacing.xs) {
-                            Button {
-                                toggleUpcomingDay(item.day)
-                            } label: {
-                                HStack(spacing: FFSpacing.sm) {
-                                    VStack(alignment: .leading, spacing: FFSpacing.xxs) {
-                                        Text(relativeDayTitle(item.day))
-                                            .font(FFTypography.caption.weight(.semibold))
-                                            .foregroundStyle(FFColors.textSecondary)
-                                        Text(item.title)
-                                            .font(FFTypography.body.weight(.semibold))
-                                            .foregroundStyle(FFColors.textPrimary)
-                                            .lineLimit(1)
-                                        Text(viewModel.statusTitle(item.status))
-                                            .font(FFTypography.caption)
-                                            .foregroundStyle(FFColors.textSecondary)
-                                    }
-                                    Spacer()
-                                    Circle()
-                                        .fill(upcomingStatusColor(item.status))
-                                        .frame(width: 8, height: 8)
-                                    Image(systemName: expandedUpcomingDay == item.day ? "chevron.up" : "chevron.down")
-                                        .font(.system(size: 12, weight: .semibold))
-                                        .foregroundStyle(FFColors.textSecondary)
-                                }
-                                .contentShape(Rectangle())
-                            }
-                            .buttonStyle(.plain)
-
-                            if expandedUpcomingDay == item.day {
-                                let dayItems = viewModel.dayItems(for: item.day)
-                                ForEach(dayItems) { dayItem in
-                                    Button {
-                                        openFromList(dayItem)
-                                    } label: {
-                                        HStack(alignment: .top, spacing: FFSpacing.sm) {
-                                            VStack(alignment: .leading, spacing: FFSpacing.xxs) {
-                                                Text(dayItem.title)
-                                                    .font(FFTypography.caption.weight(.semibold))
-                                                    .foregroundStyle(FFColors.textPrimary)
-                                                Text(dayItem.sourceTitle)
-                                                    .font(FFTypography.caption)
-                                                    .foregroundStyle(FFColors.textSecondary)
-                                                if let scheduledTimeText = dayItem.scheduledTimeText {
-                                                    Text("Время: \(scheduledTimeText)")
-                                                        .font(FFTypography.caption)
-                                                        .foregroundStyle(FFColors.accent)
-                                                }
-                                                Text("Статус: \(viewModel.statusTitle(dayItem.status).lowercased())")
-                                                    .font(FFTypography.caption)
-                                                    .foregroundStyle(FFColors.textSecondary)
-                                            }
-                                            Spacer()
-                                            Circle()
-                                                .fill(upcomingStatusColor(dayItem.status))
-                                                .frame(width: 6, height: 6)
-                                        }
-                                        .padding(.horizontal, FFSpacing.xs)
-                                        .padding(.vertical, FFSpacing.xs)
-                                        .background(FFColors.background.opacity(0.24))
-                                        .clipShape(RoundedRectangle(cornerRadius: FFTheme.Radius.control))
-                                    }
-                                    .buttonStyle(.plain)
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
     @ViewBuilder
     private func primaryActionButton(for item: PlanScheduleViewModel.DayScheduleItem) -> some View {
         switch item.status {
@@ -2773,21 +3734,6 @@ struct PlanScheduleScreen: View {
         }
     }
 
-    private func upcomingStatusColor(_ status: TrainingDayStatus?) -> Color {
-        switch status {
-        case .planned:
-            planStatusColor(.planned)
-        case .inProgress:
-            planStatusColor(.inProgress)
-        case .completed:
-            planStatusColor(.completed)
-        case .missed, .skipped:
-            planStatusColor(.skipped)
-        case nil:
-            FFColors.gray700
-        }
-    }
-
     private func planStatusColor(_ status: PlanStatusPalette) -> Color {
         switch status {
         case .planned:
@@ -2806,14 +3752,6 @@ struct PlanScheduleScreen: View {
         case inProgress
         case completed
         case skipped
-    }
-
-    private func toggleUpcomingDay(_ day: Date) {
-        if expandedUpcomingDay == day {
-            expandedUpcomingDay = nil
-        } else {
-            expandedUpcomingDay = day
-        }
     }
 
     private func applyPendingPlanFocusIfNeeded() async {
@@ -2846,7 +3784,7 @@ struct PlanScheduleScreen: View {
                 Task {
                     if let details = await viewModel.resolveWorkoutDetails(for: item) {
                         await MainActor.run {
-                            onOpenPresetWorkout(details, .program, item.programId)
+                            onOpenPresetWorkout(details, .program, item.programId, item.planId)
                         }
                     } else {
                         await MainActor.run {
@@ -2868,7 +3806,7 @@ struct PlanScheduleScreen: View {
             Task {
                 if let details = await viewModel.resolveWorkoutDetails(for: item) {
                     await MainActor.run {
-                        onOpenPresetWorkout(details, .freestyle, nil)
+                        onOpenPresetWorkout(details, .freestyle, nil, item.planId)
                     }
                 } else {
                     await MainActor.run {
@@ -2881,7 +3819,7 @@ struct PlanScheduleScreen: View {
             Task {
                 if let templateWorkout = await viewModel.resolveWorkoutDetails(for: item) {
                     await MainActor.run {
-                        onOpenPresetWorkout(templateWorkout, .template, nil)
+                        onOpenPresetWorkout(templateWorkout, .template, nil, item.planId)
                     }
                 } else {
                     await MainActor.run {
@@ -2939,10 +3877,6 @@ struct PlanScheduleScreen: View {
         }
     }
 
-    private func openPlannedItemFromList(_ item: PlanScheduleViewModel.DayScheduleItem) {
-        presentDetails(item)
-    }
-
     private func openInProgressItemFromList(_ item: PlanScheduleViewModel.DayScheduleItem) {
         switch item.source {
         case .program:
@@ -2953,7 +3887,7 @@ struct PlanScheduleScreen: View {
             Task {
                 if let details = await viewModel.resolveWorkoutDetails(for: item) {
                     await MainActor.run {
-                        onOpenPresetWorkout(details, .freestyle, nil)
+                        onOpenPresetWorkout(details, .freestyle, nil, item.planId)
                     }
                 } else {
                     await MainActor.run {
@@ -2961,19 +3895,6 @@ struct PlanScheduleScreen: View {
                     }
                 }
             }
-        }
-    }
-
-    private func openFromList(_ item: PlanScheduleViewModel.DayScheduleItem) {
-        switch item.status {
-        case .completed:
-            openCompletedItem(item)
-        case .missed, .skipped:
-            presentDetails(item)
-        case .planned:
-            openPlannedItemFromList(item)
-        case .inProgress:
-            openInProgressItemFromList(item)
         }
     }
 

@@ -420,7 +420,6 @@ struct TemplateLibraryView: View {
                         .foregroundStyle(FFColors.textSecondary)
                 }
                 Spacer()
-                reorderBadge
                 Button(role: .destructive) {
                     viewModel.removeSelectedExercise(id: normalized.id)
                 } label: {
@@ -429,6 +428,7 @@ struct TemplateLibraryView: View {
                         .foregroundStyle(FFColors.danger)
                 }
                 .buttonStyle(.plain)
+                FFReorderHandle()
             }
 
             controlRow(title: "Подходы", value: normalized.sets) {
@@ -531,20 +531,6 @@ struct TemplateLibraryView: View {
         -> some View
     {
         FFIconButton(systemName: systemName, tint: tint, action: action)
-    }
-
-    private var reorderBadge: some View {
-        Image(systemName: "arrow.up.arrow.down")
-            .font(.system(size: 16, weight: .semibold))
-            .foregroundStyle(FFColors.textSecondary)
-            .frame(width: 32, height: 32)
-            .background(FFColors.surface)
-            .clipShape(RoundedRectangle(cornerRadius: FFTheme.Radius.control))
-            .overlay {
-                RoundedRectangle(cornerRadius: FFTheme.Radius.control)
-                    .stroke(FFColors.gray700, lineWidth: 1)
-            }
-            .accessibilityHidden(true)
     }
 
     private func normalize(_ exercise: TemplateExerciseDraft) -> EditableTemplateExercise {
@@ -690,7 +676,7 @@ private struct TemplateDetailsView: View {
                     .font(FFTypography.body.weight(.semibold))
                     .foregroundStyle(FFColors.textPrimary)
                 Spacer()
-                detailsReorderBadge
+                FFReorderHandle()
             }
 
             detailsControlRow(title: "Подходы", value: exercise.sets) {
@@ -754,20 +740,6 @@ private struct TemplateDetailsView: View {
 
     private func detailsIconButton(systemName: String, action: @escaping () -> Void) -> some View {
         FFIconButton(systemName: systemName, action: action)
-    }
-
-    private var detailsReorderBadge: some View {
-        Image(systemName: "arrow.up.arrow.down")
-            .font(.system(size: 16, weight: .semibold))
-            .frame(width: 32, height: 32)
-            .foregroundStyle(FFColors.textSecondary)
-            .background(FFColors.surface)
-            .clipShape(RoundedRectangle(cornerRadius: FFTheme.Radius.control))
-            .overlay {
-                RoundedRectangle(cornerRadius: FFTheme.Radius.control)
-                    .stroke(FFColors.gray700, lineWidth: 1)
-            }
-            .accessibilityHidden(true)
     }
 
     private func updateExercise(_ id: String, mutate: (inout EditableTemplateExercise) -> Void) {

@@ -2,7 +2,7 @@
 import XCTest
 
 final class TrainingStoreTests: XCTestCase {
-    func testAppendHistoryUpdatesLastCompletedAndSummary() async throws {
+    func testStoreHistoryRecordUpdatesLastCompletedWithoutChangingWeeklySummary() async throws {
         let suite = "fitfluence.tests.training.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
         defer { defaults.removePersistentDomain(forName: suite) }
@@ -27,7 +27,91 @@ final class TrainingStoreTests: XCTestCase {
             overallRPE: 8,
         )
 
-        await store.appendHistory(record)
+        await store.storeHistoryRecord(record)
+
+        let last = await store.lastCompleted(userSub: "u1")
+        XCTAssertEqual(last?.id, "r1")
+
+        let weekStart = Calendar.current.date(from: Calendar.current.dateComponents(
+            [.yearForWeekOfYear, .weekOfYear],
+            from: now,
+        )) ?? now
+        let summary = await store.weeklySummary(userSub: "u1", weekStart: weekStart)
+        XCTAssertEqual(summary.completed, 0)
+    }
+
+    func testStoreHistoryRecordDoesNotCreatePlanEntry() async throws {
+        let suite = "fitfluence.tests.training.history-only.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        let store = LocalTrainingStore(defaults: defaults)
+        let finishedAt = Date()
+        let record = CompletedWorkoutRecord(
+            id: "history-only",
+            userSub: "u1",
+            programId: "p1",
+            workoutId: "w1",
+            workoutTitle: "History Only",
+            source: .program,
+            startedAt: finishedAt.addingTimeInterval(-1800),
+            finishedAt: finishedAt,
+            durationSeconds: 1800,
+            completedSets: 8,
+            totalSets: 10,
+            volume: 840,
+            workoutDetails: nil,
+            notes: nil,
+            overallRPE: nil,
+        )
+
+        await store.storeHistoryRecord(record)
+
+        let plans = await store.plans(userSub: "u1", month: finishedAt)
+        XCTAssertTrue(plans.isEmpty)
+    }
+
+    func testCompleteWorkoutUpdatesLastCompletedAndWeeklySummary() async throws {
+        let suite = "fitfluence.tests.training.complete-summary.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        let store = LocalTrainingStore(defaults: defaults)
+        let now = Date()
+        await store.schedule(
+            TrainingDayPlan(
+                id: "plan-complete-summary",
+                userSub: "u1",
+                day: now,
+                status: .planned,
+                programId: "p1",
+                programTitle: "Program",
+                workoutId: "w1",
+                title: "Тренировка A",
+                source: .program,
+                workoutDetails: nil
+            )
+        )
+
+        let record = CompletedWorkoutRecord(
+            id: "r1",
+            userSub: "u1",
+            programId: "p1",
+            workoutId: "w1",
+            workoutTitle: "Тренировка A",
+            source: .program,
+            startedAt: now.addingTimeInterval(-1800),
+            finishedAt: now,
+            durationSeconds: 1800,
+            completedSets: 10,
+            totalSets: 12,
+            volume: 1240,
+            workoutDetails: nil,
+            notes: nil,
+            overallRPE: 8,
+        )
+
+        await store.completeWorkout(record, planId: "plan-complete-summary")
 
         let last = await store.lastCompleted(userSub: "u1")
         XCTAssertEqual(last?.id, "r1")
@@ -38,6 +122,60 @@ final class TrainingStoreTests: XCTestCase {
         )) ?? now
         let summary = await store.weeklySummary(userSub: "u1", weekStart: weekStart)
         XCTAssertEqual(summary.completed, 1)
+    }
+
+    func testCompleteWorkoutUpdatesExistingPlanWithoutDuplicate() async throws {
+        let suite = "fitfluence.tests.training.complete-existing.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = try XCTUnwrap(TimeZone(secondsFromGMT: 4 * 60 * 60))
+        let store = LocalTrainingStore(defaults: defaults, calendar: calendar)
+        let plannedDay = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 4, day: 14, hour: 18, minute: 15)))
+        let finishedAt = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 4, day: 14, hour: 20, minute: 42)))
+
+        await store.schedule(
+            TrainingDayPlan(
+                id: "plan-1",
+                userSub: "u1",
+                day: plannedDay,
+                status: .planned,
+                programId: nil,
+                programTitle: nil,
+                workoutId: "manual-1",
+                title: "Быстрая тренировка",
+                source: .freestyle,
+                workoutDetails: makeRepeatWorkout(id: "manual-1", title: "Быстрая тренировка"),
+            )
+        )
+
+        await store.completeWorkout(
+            CompletedWorkoutRecord(
+                id: "record-1",
+                userSub: "u1",
+                programId: "freestyle",
+                workoutId: "manual-1",
+                workoutTitle: "Быстрая тренировка",
+                source: .freestyle,
+                startedAt: finishedAt.addingTimeInterval(-1800),
+                finishedAt: finishedAt,
+                durationSeconds: 1800,
+                completedSets: 6,
+                totalSets: 6,
+                volume: 1200,
+                workoutDetails: makeRepeatWorkout(id: "manual-1", title: "Быстрая тренировка"),
+                notes: nil,
+                overallRPE: 8,
+            ),
+            planId: "plan-1",
+        )
+
+        let plans = await store.plans(userSub: "u1", month: finishedAt)
+        XCTAssertEqual(plans.count, 1)
+        XCTAssertEqual(plans.first?.id, "plan-1")
+        XCTAssertEqual(plans.first?.status, .completed)
+        XCTAssertEqual(plans.first?.day, plannedDay)
     }
 
     func testTemplatePersistenceAndNamespace() async throws {
@@ -117,6 +255,483 @@ final class TrainingStoreTests: XCTestCase {
         let templates = await viewModel.templates()
 
         XCTAssertTrue(templates.contains(where: { $0.id == "t-plan" && $0.name == "Plan Visible Template" }))
+    }
+
+    @MainActor
+    func testPlanViewModelMutationStillBroadcastsPlanRefreshNotification() async throws {
+        let suite = "fitfluence.tests.training.plan.notifications.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        let trainingStore = LocalTrainingStore(defaults: defaults)
+        let targetDay = Calendar.current.date(from: DateComponents(year: 2026, month: 4, day: 19, hour: 18)) ?? Date()
+        await trainingStore.schedule(
+            TrainingDayPlan(
+                id: "broadcast-plan",
+                userSub: "u1",
+                day: targetDay,
+                status: .planned,
+                programId: nil,
+                programTitle: nil,
+                workoutId: "workout-1",
+                title: "Plan to delete",
+                source: .freestyle,
+                workoutDetails: makeRepeatWorkout(id: "workout-1", title: "Plan to delete"),
+            ),
+        )
+        let viewModel = PlanScheduleViewModel(
+            userSub: "u1",
+            trainingStore: trainingStore,
+            athleteTrainingClient: nil,
+            cacheStore: MemoryCacheStore(),
+            networkMonitor: StaticNetworkMonitor(currentStatus: false),
+            calendar: .current,
+        )
+        await viewModel.onAppear()
+        let item = try XCTUnwrap(viewModel.dayItems(for: targetDay).first)
+
+        let notificationExpectation = expectation(description: "plan refresh notification")
+        let observer = NotificationCenter.default.addObserver(
+            forName: .fitfluenceTrainingPlanDidChange,
+            object: nil,
+            queue: nil,
+        ) { notification in
+            guard let day = notification.object as? Date else { return }
+            if Calendar.current.isDate(day, inSameDayAs: targetDay) {
+                notificationExpectation.fulfill()
+            }
+        }
+        defer { NotificationCenter.default.removeObserver(observer) }
+
+        await viewModel.deletePlan(item)
+
+        await fulfillment(of: [notificationExpectation], timeout: 1.0)
+    }
+
+    func testPlanEntryPreservesCanonicalStatusWhileNormalizingDisplayStatus() {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 4 * 60 * 60) ?? .current
+        let now = calendar.date(from: DateComponents(year: 2026, month: 4, day: 13, hour: 12)) ?? Date()
+        let futureDay = calendar.date(from: DateComponents(year: 2026, month: 4, day: 14, hour: 18)) ?? now
+        let pastDay = calendar.date(from: DateComponents(year: 2026, month: 4, day: 12, hour: 18)) ?? now
+
+        let futureMissed = TrainingDayPlan(
+            id: "future-missed",
+            userSub: "u1",
+            day: futureDay,
+            status: .missed,
+            programId: nil,
+            programTitle: nil,
+            workoutId: "workout-future",
+            title: "Будущая",
+            source: .freestyle,
+            workoutDetails: nil,
+        ).asPlanEntry(calendar: calendar, now: now)
+
+        let pastMissed = TrainingDayPlan(
+            id: "past-missed",
+            userSub: "u1",
+            day: pastDay,
+            status: .missed,
+            programId: nil,
+            programTitle: nil,
+            workoutId: "workout-past",
+            title: "Прошлая",
+            source: .freestyle,
+            workoutDetails: nil,
+        ).asPlanEntry(calendar: calendar, now: now)
+
+        XCTAssertEqual(futureMissed.canonicalStatus, .missed)
+        XCTAssertEqual(futureMissed.displayStatus, .planned)
+        XCTAssertEqual(pastMissed.canonicalStatus, .missed)
+        XCTAssertEqual(pastMissed.displayStatus, .missed)
+    }
+
+    func testPlanEntryOwnershipMappingCoversRemotePendingAndLocalCases() {
+        let baseDay = Date()
+        let operationId = UUID()
+
+        let remoteProgram = TrainingDayPlan(
+            id: "remote-program-1",
+            userSub: "u1",
+            day: baseDay,
+            status: .planned,
+            programId: "program-1",
+            programTitle: "Program",
+            workoutId: "workout-program",
+            title: "Program",
+            source: .program,
+            workoutDetails: nil,
+        ).asPlanEntry()
+        let localProgram = TrainingDayPlan(
+            id: "local-program-1",
+            userSub: "u1",
+            day: baseDay,
+            status: .planned,
+            programId: "program-1",
+            programTitle: "Program",
+            workoutId: "workout-program-template",
+            title: "Program Local",
+            source: .program,
+            workoutDetails: nil,
+        ).asPlanEntry()
+        let remoteCustom = TrainingDayPlan(
+            id: "remote-custom-1",
+            userSub: "u1",
+            day: baseDay,
+            status: .planned,
+            programId: nil,
+            programTitle: nil,
+            workoutId: "11111111-1111-1111-1111-111111111111",
+            title: "Remote Custom",
+            source: .freestyle,
+            workoutDetails: nil,
+        ).asPlanEntry()
+        let pendingCustom = TrainingDayPlan(
+            id: "pending-custom-1",
+            userSub: "u1",
+            day: baseDay,
+            status: .planned,
+            programId: nil,
+            programTitle: nil,
+            workoutId: "local-custom",
+            title: "Pending Custom",
+            source: .template,
+            workoutDetails: nil,
+            pendingSyncState: .createCustomWorkout,
+            pendingSyncOperationId: operationId,
+        ).asPlanEntry()
+        let localFreestyle = TrainingDayPlan(
+            id: "local-freestyle-1",
+            userSub: "u1",
+            day: baseDay,
+            status: .planned,
+            programId: nil,
+            programTitle: nil,
+            workoutId: "local-freestyle",
+            title: "Local Freestyle",
+            source: .freestyle,
+            workoutDetails: nil,
+        ).asPlanEntry()
+        let localTemplate = TrainingDayPlan(
+            id: "local-template-1",
+            userSub: "u1",
+            day: baseDay,
+            status: .planned,
+            programId: nil,
+            programTitle: nil,
+            workoutId: "template-1",
+            title: "Local Template",
+            source: .template,
+            workoutDetails: nil,
+        ).asPlanEntry()
+
+        XCTAssertEqual(remoteProgram.ownership, .remoteProgram)
+        XCTAssertEqual(localProgram.ownership, .localProgramOverlay)
+        XCTAssertEqual(remoteCustom.ownership, .remoteCustom)
+        XCTAssertEqual(pendingCustom.ownership, .pendingCustom)
+        XCTAssertEqual(localFreestyle.ownership, .localFreestyle)
+        XCTAssertEqual(localTemplate.ownership, .localTemplate)
+    }
+
+    func testPlanEntryDetailsStateMappingDistinguishesHydratedPlaceholderAndMissing() {
+        let hydrated = TrainingDayPlan(
+            id: "details-hydrated",
+            userSub: "u1",
+            day: Date(),
+            status: .planned,
+            programId: nil,
+            programTitle: nil,
+            workoutId: "workout-hydrated",
+            title: "Hydrated",
+            source: .freestyle,
+            workoutDetails: makeRepeatWorkout(id: "workout-hydrated", title: "Hydrated"),
+        ).asPlanEntry()
+        let placeholder = TrainingDayPlan(
+            id: "details-placeholder",
+            userSub: "u1",
+            day: Date(),
+            status: .planned,
+            programId: nil,
+            programTitle: nil,
+            workoutId: "workout-placeholder",
+            title: "Placeholder",
+            source: .freestyle,
+            workoutDetails: WorkoutDetailsModel(
+                id: "workout-placeholder",
+                title: "Placeholder",
+                dayOrder: 0,
+                coachNote: nil,
+                exercises: []
+            ),
+        ).asPlanEntry()
+        let missing = TrainingDayPlan(
+            id: "details-missing",
+            userSub: "u1",
+            day: Date(),
+            status: .planned,
+            programId: nil,
+            programTitle: nil,
+            workoutId: "workout-missing",
+            title: "Missing",
+            source: .freestyle,
+            workoutDetails: nil,
+        ).asPlanEntry()
+
+        XCTAssertEqual(hydrated.detailsState, .hydrated)
+        XCTAssertEqual(placeholder.detailsState, .placeholder)
+        XCTAssertEqual(missing.detailsState, .missing)
+    }
+
+    func testPlanEntrySyncStateMappingTracksPendingCreateCustomWorkout() {
+        let operationId = UUID()
+        let pending = TrainingDayPlan(
+            id: "pending-sync",
+            userSub: "u1",
+            day: Date(),
+            status: .planned,
+            programId: nil,
+            programTitle: nil,
+            workoutId: "workout-pending",
+            title: "Pending",
+            source: .freestyle,
+            workoutDetails: nil,
+            pendingSyncState: .createCustomWorkout,
+            pendingSyncOperationId: operationId,
+        ).asPlanEntry()
+        let synced = TrainingDayPlan(
+            id: "synced",
+            userSub: "u1",
+            day: Date(),
+            status: .planned,
+            programId: nil,
+            programTitle: nil,
+            workoutId: "workout-synced",
+            title: "Synced",
+            source: .freestyle,
+            workoutDetails: nil,
+        ).asPlanEntry()
+
+        XCTAssertEqual(pending.syncState, .pendingCreateCustomWorkout(operationId: operationId))
+        XCTAssertTrue(pending.syncState.isPendingCreateCustomWorkout)
+        XCTAssertEqual(pending.syncState.pendingOperationId, operationId)
+        XCTAssertEqual(synced.syncState, .none)
+        XCTAssertFalse(synced.syncState.isPendingCreateCustomWorkout)
+        XCTAssertNil(synced.syncState.pendingOperationId)
+    }
+
+    func testPlanReadModelRepositoryAssemblesPreviousCurrentAndNextMonthsWithoutChangingSelection() async throws {
+        let suite = "fitfluence.tests.training.plan.read-model.month-assembly.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = try XCTUnwrap(TimeZone(secondsFromGMT: 4 * 60 * 60))
+        let selectedMonth = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 4, day: 1)))
+        let previousDay = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 3, day: 28, hour: 8)))
+        let currentDay = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 4, day: 12, hour: 18)))
+        let nextDay = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 5, day: 3, hour: 7)))
+        let store = LocalTrainingStore(defaults: defaults, calendar: calendar)
+
+        await store.schedule(
+            TrainingDayPlan(
+                id: "prev-plan",
+                userSub: "u1",
+                day: previousDay,
+                status: .planned,
+                programId: nil,
+                programTitle: nil,
+                workoutId: "prev-workout",
+                title: "Предыдущий месяц",
+                source: .freestyle,
+                workoutDetails: nil,
+            )
+        )
+        await store.schedule(
+            TrainingDayPlan(
+                id: "current-plan",
+                userSub: "u1",
+                day: currentDay,
+                status: .planned,
+                programId: "program-1",
+                programTitle: "Текущий блок",
+                workoutId: "current-workout",
+                title: "Текущий месяц",
+                source: .program,
+                workoutDetails: makeRepeatWorkout(id: "current-workout", title: "Текущий месяц"),
+            )
+        )
+        await store.schedule(
+            TrainingDayPlan(
+                id: "next-plan",
+                userSub: "u1",
+                day: nextDay,
+                status: .completed,
+                programId: nil,
+                programTitle: nil,
+                workoutId: "next-workout",
+                title: "Следующий месяц",
+                source: .template,
+                workoutDetails: nil,
+            )
+        )
+
+        let repository = PlanReadModelRepository(
+            userSub: "u1",
+            trainingStore: store,
+            athleteTrainingClient: nil,
+            cacheStore: MemoryCacheStore(),
+            networkMonitor: StaticNetworkMonitor(currentStatus: false),
+            calendar: calendar,
+        )
+
+        let assembly = await repository.loadMonthAssembly(
+            selectedMonth: selectedMonth,
+            suppressedPlanSignatures: [],
+        )
+
+        XCTAssertEqual(assembly.monthPlans.map(\.id), ["current-plan"])
+        XCTAssertEqual(assembly.contextPlans.map(\.id), ["prev-plan", "current-plan", "next-plan"])
+        XCTAssertEqual(assembly.monthPlans.first?.ownership, .localProgramOverlay)
+        XCTAssertEqual(assembly.monthPlans.first?.detailsState, .hydrated)
+    }
+
+    func testPlanReadModelRepositoryKeepsRemoteStatusAndSourceMappingUnchanged() async throws {
+        let suite = "fitfluence.tests.training.plan.read-model.remote-mapping.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = try XCTUnwrap(TimeZone(secondsFromGMT: 4 * 60 * 60))
+        let selectedMonth = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 4, day: 1)))
+        let store = LocalTrainingStore(defaults: defaults, calendar: calendar)
+        let client = MockRepeatWorkoutAthleteTrainingClient(
+            createResult: .failure(.unknown),
+            calendarResult: .success(
+                AthleteCalendarResponse(
+                    workouts: [
+                        AthleteWorkoutInstance(
+                            id: "remote-program-completed",
+                            enrollmentId: nil,
+                            workoutTemplateId: "template-1",
+                            title: "Program Complete",
+                            status: .completed,
+                            source: .program,
+                            scheduledDate: "2026-04-10",
+                            scheduledAt: nil,
+                            startedAt: nil,
+                            completedAt: nil,
+                            durationSeconds: nil,
+                            notes: nil,
+                            programId: "program-1"
+                        ),
+                        AthleteWorkoutInstance(
+                            id: "remote-custom-abandoned",
+                            enrollmentId: nil,
+                            workoutTemplateId: nil,
+                            title: "Custom Skipped",
+                            status: .abandoned,
+                            source: .custom,
+                            scheduledDate: "2026-04-11",
+                            scheduledAt: nil,
+                            startedAt: nil,
+                            completedAt: nil,
+                            durationSeconds: nil,
+                            notes: nil,
+                            programId: nil
+                        ),
+                        AthleteWorkoutInstance(
+                            id: "remote-custom-planned",
+                            enrollmentId: nil,
+                            workoutTemplateId: nil,
+                            title: "Custom Planned",
+                            status: nil,
+                            source: .custom,
+                            scheduledDate: "2026-04-12",
+                            scheduledAt: nil,
+                            startedAt: nil,
+                            completedAt: nil,
+                            durationSeconds: nil,
+                            notes: nil,
+                            programId: nil
+                        ),
+                    ]
+                )
+            )
+        )
+        let repository = PlanReadModelRepository(
+            userSub: "u1",
+            trainingStore: store,
+            athleteTrainingClient: client,
+            cacheStore: MemoryCacheStore(),
+            networkMonitor: StaticNetworkMonitor(currentStatus: true),
+            calendar: calendar,
+        )
+
+        let assembly = await repository.loadMonthAssembly(
+            selectedMonth: selectedMonth,
+            suppressedPlanSignatures: [],
+        )
+
+        let completedProgram = try XCTUnwrap(assembly.monthPlans.first(where: { $0.id == "remote-remote-program-completed" }))
+        let skippedManual = try XCTUnwrap(assembly.monthPlans.first(where: { $0.id == "remote-remote-custom-abandoned" }))
+        let plannedManual = try XCTUnwrap(assembly.monthPlans.first(where: { $0.id == "remote-remote-custom-planned" }))
+
+        XCTAssertEqual(completedProgram.canonicalStatus, .completed)
+        XCTAssertEqual(completedProgram.source, .program)
+        XCTAssertEqual(completedProgram.ownership, .remoteProgram)
+
+        XCTAssertEqual(skippedManual.canonicalStatus, .skipped)
+        XCTAssertEqual(skippedManual.source, .freestyle)
+        XCTAssertEqual(skippedManual.ownership, .remoteCustom)
+
+        XCTAssertEqual(plannedManual.canonicalStatus, .planned)
+        XCTAssertEqual(plannedManual.source, .freestyle)
+        XCTAssertEqual(plannedManual.ownership, .remoteCustom)
+    }
+
+    @MainActor
+    func testPlanViewModelDayItemKeepsCanonicalStatusSeparateFromDisplayStatus() async throws {
+        let suite = "fitfluence.tests.training.plan.day-item-status.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 4 * 60 * 60) ?? .current
+        let today = calendar.startOfDay(for: Date())
+        let targetDay = calendar.date(byAdding: .day, value: 1, to: today) ?? today
+        let store = LocalTrainingStore(defaults: defaults, calendar: calendar)
+
+        await store.schedule(
+            TrainingDayPlan(
+                id: "future-missed-plan",
+                userSub: "u1",
+                day: targetDay,
+                status: .missed,
+                programId: nil,
+                programTitle: nil,
+                workoutId: "future-missed-workout",
+                title: "Future Missed",
+                source: .freestyle,
+                workoutDetails: nil,
+            )
+        )
+
+        let viewModel = PlanScheduleViewModel(
+            userSub: "u1",
+            trainingStore: store,
+            athleteTrainingClient: nil,
+            cacheStore: MemoryCacheStore(),
+            networkMonitor: StaticNetworkMonitor(currentStatus: false),
+            calendar: calendar,
+        )
+
+        await viewModel.onAppear()
+        let item = try XCTUnwrap(viewModel.dayItems(for: targetDay).first)
+
+        XCTAssertEqual(item.canonicalStatus, .missed)
+        XCTAssertEqual(item.displayStatus, .planned)
+        XCTAssertEqual(item.status, .planned)
     }
 
     @MainActor
@@ -1015,7 +1630,7 @@ final class TrainingStoreTests: XCTestCase {
             calendar: calendar,
         )
 
-        await store.appendHistory(
+        await store.storeHistoryRecord(
             CompletedWorkoutRecord(
                 id: "history-last-manual",
                 userSub: "u1",
@@ -1204,7 +1819,7 @@ final class TrainingStoreTests: XCTestCase {
         XCTAssertEqual(components.minute, 45)
     }
 
-    func testAppendHistoryPreservesCompletedTimeInPlan() async throws {
+    func testCompleteWorkoutPreservesCompletedTimeInPlan() async throws {
         let suite = "fitfluence.tests.training.plan.completed-time.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
         defer { defaults.removePersistentDomain(forName: suite) }
@@ -1215,7 +1830,7 @@ final class TrainingStoreTests: XCTestCase {
         let store = LocalTrainingStore(defaults: defaults, calendar: calendar)
         let finishedAt = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 3, day: 20, hour: 20, minute: 42)))
 
-        await store.appendHistory(
+        await store.completeWorkout(
             CompletedWorkoutRecord(
                 id: "completed-time-1",
                 userSub: "u1",
@@ -1232,7 +1847,8 @@ final class TrainingStoreTests: XCTestCase {
                 workoutDetails: nil,
                 notes: nil,
                 overallRPE: nil,
-            )
+            ),
+            planId: nil
         )
 
         let plans = await store.plans(userSub: "u1", month: finishedAt)
@@ -1711,8 +2327,8 @@ final class TrainingStoreTests: XCTestCase {
             overallRPE: 8
         )
 
-        await store.appendHistory(remoteLikeRecord)
-        await store.appendHistory(localRichRecord)
+        await store.storeHistoryRecord(remoteLikeRecord)
+        await store.storeHistoryRecord(localRichRecord)
 
         let viewModel = PlanScheduleViewModel(
             userSub: "u1",

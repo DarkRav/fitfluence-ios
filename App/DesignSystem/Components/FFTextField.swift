@@ -8,20 +8,28 @@ struct FFTextField: View {
         case disabled
     }
 
+    enum LabelDisplayMode {
+        case visible
+        case hidden
+    }
+
     let label: String
     let placeholder: String
     @Binding var text: String
     var helperText: String?
     var keyboardType: UIKeyboardType = .default
     var state: FieldState = .normal
+    var labelDisplayMode: LabelDisplayMode = .visible
 
     @FocusState private var isFocused: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: FFSpacing.xs) {
-            Text(label)
-                .font(FFTypography.caption)
-                .foregroundStyle(FFColors.textSecondary)
+            if labelDisplayMode == .visible {
+                Text(label)
+                    .font(FFTypography.caption)
+                    .foregroundStyle(FFColors.textSecondary)
+            }
 
             TextField(
                 "",
@@ -45,6 +53,7 @@ struct FFTextField: View {
             .clipShape(RoundedRectangle(cornerRadius: FFTheme.Radius.control))
             .focused($isFocused)
             .disabled(state == .disabled)
+            .accessibilityLabel(label)
 
             if let statusText {
                 Text(statusText)

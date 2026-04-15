@@ -223,6 +223,8 @@ struct TrainingStoreExercisePickerSuggestionsProvider: ExercisePickerSuggestions
 @Observable
 @MainActor
 final class ExercisePickerViewModel {
+    private let catalogPageSize = 20
+
     struct Context: Equatable, Sendable {
         var title: String?
         var muscleGroups: [ExerciseCatalogMuscleGroup] = []
@@ -293,7 +295,9 @@ final class ExercisePickerViewModel {
     private let context: Context
     private var searchTask: Task<Void, Never>?
     private var suggestionsSnapshot: ExercisePickerSuggestionsSnapshot = .empty
+    private var catalogGeneration = 0
     private(set) var catalogMetadata: ExerciseCatalogMetadata = .empty
+    private(set) var catalogPageMetadata: PageMetadata?
     private(set) var hasLoaded = false
 
     var searchText = ""
@@ -304,6 +308,7 @@ final class ExercisePickerViewModel {
     var note: String?
     var contractGaps: [String] = []
     var isLoadingCatalog = false
+    var isLoadingNextCatalogPage = false
     var isLoadingSuggestions = false
 
     init(
@@ -337,6 +342,39 @@ final class ExercisePickerViewModel {
 
     func refreshCatalog() async {
         await reloadCatalog()
+    }
+
+    func loadNextCatalogPageIfNeeded(currentItemID: String) async {
+        guard !isLoadingCatalog else { return }
+        guard !isLoadingNextCatalogPage else { return }
+        guard canLoadMoreCatalogResults else { return }
+        guard currentItemID == filteredCatalogItems.last?.id else { return }
+
+        let generation = catalogGeneration
+        let baselineVisibleCount = filteredCatalogItems.count
+        isLoadingNextCatalogPage = true
+        defer {
+            if generation == catalogGeneration {
+                isLoadingNextCatalogPage = false
+            }
+        }
+
+        while generation == catalogGeneration, canLoadMoreCatalogResults {
+            let nextPage = (catalogPageMetadata?.page ?? 0) + 1
+            let result = await repository.search(query: catalogQuery(page: nextPage))
+            guard generation == catalogGeneration else { return }
+
+            let visibleCountBeforeAppend = filteredCatalogItems.count
+            appendCatalogPage(result)
+
+            if !requiresCatalogClientSidePaginationFiltering {
+                return
+            }
+
+            if filteredCatalogItems.count > max(baselineVisibleCount, visibleCountBeforeAppend) {
+                return
+            }
+        }
     }
 
     func clearFilters() async {
@@ -516,6 +554,26 @@ final class ExercisePickerViewModel {
         return sections
     }
 
+    var canLoadMoreCatalogResults: Bool {
+        guard let catalogPageMetadata else { return false }
+        return catalogPageMetadata.page + 1 < catalogPageMetadata.totalPages
+    }
+
+    var requiresCatalogClientSidePaginationFiltering: Bool {
+        filters.movementPatterns.count > 1 || filters.difficultyLevels.count > 1
+    }
+
+    var catalogResultsBadgeCount: Int? {
+        guard !filteredCatalogItems.isEmpty else { return nil }
+        if requiresCatalogClientSidePaginationFiltering {
+            return filteredCatalogItems.count
+        }
+        guard let catalogPageMetadata, catalogPageMetadata.totalElements > 0 else {
+            return filteredCatalogItems.count
+        }
+        return max(filteredCatalogItems.count, catalogPageMetadata.totalElements)
+    }
+
     var statusMessage: String? {
         switch catalogState {
         case .content:
@@ -553,8 +611,14 @@ final class ExercisePickerViewModel {
     }
 
     private var currentQuery: ExerciseCatalogQuery {
+        catalogQuery(page: 0)
+    }
+
+    private func catalogQuery(page: Int) -> ExerciseCatalogQuery {
         ExerciseCatalogQuery(
             search: trimmedSearch,
+            page: page,
+            size: catalogPageSize,
             movementPattern: filters.movementPatterns.count == 1 ? filters.movementPatterns.first : nil,
             difficultyLevel: filters.difficultyLevels.count == 1 ? filters.difficultyLevels.first : nil,
             muscleGroups: filters.muscleGroups.isEmpty ? context.muscleGroups : filters.muscleGroups,
@@ -680,8 +744,11 @@ final class ExercisePickerViewModel {
     }
 
     private func reloadAll() async {
+        catalogGeneration += 1
+        let generation = catalogGeneration
         let query = currentQuery
         isLoadingCatalog = true
+        isLoadingNextCatalogPage = false
         isLoadingSuggestions = true
 
         async let suggestions = suggestionsProvider.loadSuggestions()
@@ -696,20 +763,56 @@ final class ExercisePickerViewModel {
         isLoadingSuggestions = false
         catalogMetadata = await metadata
 
-        applyCatalogResult(await catalog)
+        replaceCatalogResult(await catalog, generation: generation)
     }
 
     private func reloadCatalog() async {
+        catalogGeneration += 1
+        let generation = catalogGeneration
         isLoadingCatalog = true
-        applyCatalogResult(await repository.search(query: currentQuery))
+        isLoadingNextCatalogPage = false
+        replaceCatalogResult(await repository.search(query: currentQuery), generation: generation)
     }
 
-    private func applyCatalogResult(_ result: ExerciseCatalogResult) {
+    private func replaceCatalogResult(_ result: ExerciseCatalogResult, generation: Int) {
+        guard generation == catalogGeneration else { return }
         catalogItems = result.items
+        catalogPageMetadata = result.metadata
         catalogState = result.state
         note = result.note
         contractGaps = (suggestionsSnapshot.contractGaps + result.contractGaps).removingDuplicateStrings()
         isLoadingCatalog = false
+    }
+
+    private func appendCatalogPage(_ result: ExerciseCatalogResult) {
+        if !result.items.isEmpty {
+            catalogItems = mergeCatalogItems(existing: catalogItems, incoming: result.items)
+        }
+
+        catalogPageMetadata = result.metadata ?? catalogPageMetadata
+        contractGaps = (suggestionsSnapshot.contractGaps + result.contractGaps).removingDuplicateStrings()
+
+        switch result.state {
+        case .content, .empty:
+            if !catalogItems.isEmpty {
+                catalogState = .content
+            } else {
+                catalogState = result.state
+            }
+            note = result.note
+        case let .unavailable(message):
+            catalogState = catalogItems.isEmpty ? .unavailable(message: message) : .content
+            note = message
+        }
+    }
+
+    private func mergeCatalogItems(existing: [ExerciseCatalogItem], incoming: [ExerciseCatalogItem]) -> [ExerciseCatalogItem] {
+        var seen = Set(existing.map(\.id))
+        var merged = existing
+        for item in incoming where seen.insert(item.id).inserted {
+            merged.append(item)
+        }
+        return merged
     }
 }
 
@@ -1068,6 +1171,12 @@ struct ExercisePickerView: View {
                 sectionHeader(section)
                 ForEach(section.items) { item in
                     exerciseRow(item)
+                        .task {
+                            await viewModel.loadNextCatalogPageIfNeeded(currentItemID: item.id)
+                        }
+                }
+                if viewModel.isLoadingNextCatalogPage {
+                    catalogLoadingFooter
                 }
             }
         } else {
@@ -1089,7 +1198,7 @@ struct ExercisePickerView: View {
                 Text(section.title)
                     .font(FFTypography.h2)
                     .foregroundStyle(FFColors.textPrimary)
-                Text("\(section.items.count)")
+                Text("\(sectionItemCount(section))")
                     .font(FFTypography.caption.weight(.semibold))
                     .foregroundStyle(FFColors.textSecondary)
             }
@@ -1099,6 +1208,24 @@ struct ExercisePickerView: View {
                     .foregroundStyle(FFColors.textSecondary)
             }
         }
+    }
+
+    private var catalogLoadingFooter: some View {
+        HStack(spacing: FFSpacing.sm) {
+            ProgressView()
+                .controlSize(.small)
+            Text(viewModel.requiresCatalogClientSidePaginationFiltering ? "Ищем ещё подходящие упражнения..." : "Загружаем ещё упражнения...")
+                .font(FFTypography.caption)
+                .foregroundStyle(FFColors.textSecondary)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, FFSpacing.xs)
+        .padding(.vertical, FFSpacing.xxs)
+    }
+
+    private func sectionItemCount(_ section: ExercisePickerSection) -> Int {
+        guard section.kind == .catalogResults else { return section.items.count }
+        return viewModel.catalogResultsBadgeCount ?? section.items.count
     }
 
     private func exerciseRow(_ exercise: ExerciseCatalogItem) -> some View {

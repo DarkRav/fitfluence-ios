@@ -94,6 +94,12 @@ final class PlanNavigationCoordinator {
     }
 }
 
+@MainActor
+func requestPlanFocusAndOpen(day: Date?, onOpenPlan: (() -> Void)?) {
+    PlanNavigationCoordinator.shared.request(day: day)
+    onOpenPlan?()
+}
+
 @Observable
 @MainActor
 final class ProgramDetailsViewModel {
@@ -195,6 +201,7 @@ final class ProgramDetailsViewModel {
     private let progressStore: WorkoutProgressStore
     private let trainingStore: TrainingStore
     private let onUnauthorized: (() -> Void)?
+    private let planReadModel: PlanReadModelRepository
 
     var details: ProgramDetails?
     var isShowingCachedData = false
@@ -272,6 +279,14 @@ final class ProgramDetailsViewModel {
         self.progressStore = progressStore
         self.trainingStore = trainingStore
         self.onUnauthorized = onUnauthorized
+        planReadModel = PlanReadModelRepository(
+            userSub: userSub,
+            trainingStore: trainingStore,
+            athleteTrainingClient: athleteTrainingClient,
+            cacheStore: cacheStore,
+            networkMonitor: networkMonitor,
+            calendar: .current,
+        )
     }
 
     func onAppear() async {
@@ -733,60 +748,56 @@ final class ProgramDetailsViewModel {
     private func resolveScheduleContext() async -> ScheduleContext {
         let today = Calendar.current.startOfDay(for: Date())
 
-        if let remotePlans = await remoteProgramSchedulePlans(), !remotePlans.isEmpty {
+        if let remoteEntries = await remoteProgramScheduleEntries(), !remoteEntries.isEmpty {
             let formatter = DateFormatter()
             formatter.locale = Locale(identifier: "ru_RU")
             formatter.setLocalizedDateFormatFromTemplate("EEE d MMM")
 
-            let normalizedRemotePlans: [(plan: TrainingDayPlan, status: TrainingDayStatus)] = remotePlans.map { plan in
-                (
-                    plan: plan,
-                    status: normalizedDisplayStatus(plan.status, day: plan.day)
-                )
-            }
-            let relevantPlans = normalizedRemotePlans
-                .filter { $0.status == .planned || $0.status == .inProgress }
-                .sorted { $0.plan.day < $1.plan.day }
-
-            let references = makeWorkoutScheduleReferences(
-                from: normalizedRemotePlans,
-                formatter: formatter,
-                today: today
-            )
+            let relevantPlans = remoteEntries
+                .filter { $0.displayStatus == .planned || $0.displayStatus == .inProgress }
+                .sorted { $0.day < $1.day }
+            let references = PlanSharedSelectors.scheduleReferences(from: remoteEntries)
+                .mapValues { selection in
+                    WorkoutScheduleReference(
+                        day: selection.day,
+                        dateText: formatter.string(from: selection.day).capitalized,
+                        status: selection.status,
+                    )
+                }
 
             let weekdays = Set(
-                relevantPlans.compactMap { plan in
-                    ProgramScheduleWeekday.from(date: plan.plan.day, calendar: Calendar.current)
+                relevantPlans.compactMap { entry in
+                    ProgramScheduleWeekday.from(date: entry.day, calendar: Calendar.current)
                 }
             )
 
             let upcoming = relevantPlans
-                .filter { Calendar.current.startOfDay(for: $0.plan.day) >= today }
+                .filter { Calendar.current.startOfDay(for: $0.day) >= today }
                 .prefix(3)
-                .map { plan in
+                .map { entry in
                     UpcomingWorkout(
-                        id: plan.plan.id,
-                        title: plan.plan.title,
-                        dateText: formatter.string(from: plan.plan.day).capitalized
+                        id: entry.id,
+                        title: entry.title,
+                        dateText: formatter.string(from: entry.day).capitalized
                     )
                 }
 
             return ScheduleContext(
                 upcomingWorkouts: upcoming,
                 references: references,
-                firstDay: relevantPlans.first?.plan.day,
+                firstDay: relevantPlans.first?.day,
                 weekdays: weekdays
             )
         }
 
-        var plans: [TrainingDayPlan] = []
+        var entries: [PlanEntry] = []
         let targetCount = max(1, details?.workouts?.count ?? 0)
         for monthOffset in 0..<6 {
             let month = Calendar.current.date(byAdding: .month, value: monthOffset, to: today) ?? today
-            let monthPlans = await trainingStore.plans(userSub: userSub, month: month)
-            plans.append(contentsOf: monthPlans)
+            let monthEntries = await planReadModel.localEntries(month: month)
+            entries.append(contentsOf: monthEntries)
             let matchedTemplateIDs = Set(
-                plans
+                entries
                     .filter { $0.programId == programId }
                     .compactMap { $0.workoutId?.trimmedNilIfEmpty }
             )
@@ -799,166 +810,80 @@ final class ProgramDetailsViewModel {
         formatter.locale = Locale(identifier: "ru_RU")
         formatter.setLocalizedDateFormatFromTemplate("EEE d MMM")
 
-        let programPlans = plans.filter { $0.programId == programId }
-        let normalizedPlans: [(plan: TrainingDayPlan, status: TrainingDayStatus)] = programPlans.map { plan in
-            (
-                plan: plan,
-                status: normalizedDisplayStatus(plan.status, day: plan.day)
-            )
-        }
-        let relevantPlans = normalizedPlans
-            .filter { $0.status == .planned || $0.status == .inProgress }
-            .sorted { $0.plan.day < $1.plan.day }
-
-        let references = makeWorkoutScheduleReferences(
-            from: normalizedPlans,
-            formatter: formatter,
-            today: today
-        )
+        let programEntries = entries.filter { $0.programId == programId }
+        let relevantPlans = programEntries
+            .filter { $0.displayStatus == .planned || $0.displayStatus == .inProgress }
+            .sorted { $0.day < $1.day }
+        let references = PlanSharedSelectors.scheduleReferences(from: programEntries)
+            .mapValues { selection in
+                WorkoutScheduleReference(
+                    day: selection.day,
+                    dateText: formatter.string(from: selection.day).capitalized,
+                    status: selection.status,
+                )
+            }
 
         let weekdays = Set(
-            relevantPlans.compactMap { plan in
-                ProgramScheduleWeekday.from(date: plan.plan.day, calendar: Calendar.current)
+            relevantPlans.compactMap { entry in
+                ProgramScheduleWeekday.from(date: entry.day, calendar: Calendar.current)
             }
         )
 
         let upcoming = relevantPlans
-            .filter { Calendar.current.startOfDay(for: $0.plan.day) >= today }
+            .filter { Calendar.current.startOfDay(for: $0.day) >= today }
             .prefix(3)
-            .map { plan in
+            .map { entry in
                 UpcomingWorkout(
-                    id: plan.plan.id,
-                    title: plan.plan.title,
-                    dateText: formatter.string(from: plan.plan.day).capitalized
+                    id: entry.id,
+                    title: entry.title,
+                    dateText: formatter.string(from: entry.day).capitalized
                 )
             }
 
         return ScheduleContext(
             upcomingWorkouts: upcoming,
             references: references,
-            firstDay: relevantPlans.first?.plan.day,
+            firstDay: relevantPlans.first?.day,
             weekdays: weekdays
         )
     }
 
-    private func makeWorkoutScheduleReferences(
-        from plans: [(plan: TrainingDayPlan, status: TrainingDayStatus)],
-        formatter: DateFormatter,
-        today: Date
-    ) -> [String: WorkoutScheduleReference] {
-        var references: [String: WorkoutScheduleReference] = [:]
-        var priorities: [String: Int] = [:]
-
-        for candidate in plans {
-            let scheduleKey = candidate.plan.workoutDetails?.id.trimmedNilIfEmpty
-                ?? candidate.plan.workoutId?.trimmedNilIfEmpty
-            guard let workoutID = scheduleKey else { continue }
-
-            let priority = scheduleReferencePriority(
-                for: candidate.status,
-                day: candidate.plan.day,
-                today: today
-            )
-
-            if let existingPriority = priorities[workoutID], existingPriority > priority {
-                continue
-            }
-
-            if let existingPriority = priorities[workoutID],
-               existingPriority == priority,
-               let existing = references[workoutID],
-               existing.day > candidate.plan.day {
-                continue
-            }
-
-            priorities[workoutID] = priority
-            references[workoutID] = WorkoutScheduleReference(
-                day: candidate.plan.day,
-                dateText: formatter.string(from: candidate.plan.day).capitalized,
-                status: candidate.status
-            )
-        }
-
-        return references
-    }
-
-    private func scheduleReferencePriority(
-        for status: TrainingDayStatus,
-        day: Date,
-        today: Date
-    ) -> Int {
-        let normalizedDay = Calendar.current.startOfDay(for: day)
-        switch status {
-        case .inProgress:
-            return 5
-        case .planned:
-            return normalizedDay >= today ? 4 : 3
-        case .completed:
-            return 2
-        case .missed, .skipped:
-            return 1
-        }
-    }
-
     private func resolveTemplatePlanAnchors() async -> [String: TemplatePlanAnchor] {
-        if let remotePlans = await remoteProgramSchedulePlans(), !remotePlans.isEmpty {
-            var anchors: [String: TemplatePlanAnchor] = [:]
-            for plan in remotePlans where plan.programId == programId {
-                guard let workoutID = plan.workoutDetails?.id.trimmedNilIfEmpty ?? plan.workoutId?.trimmedNilIfEmpty else { continue }
-                guard let dayOrder = plan.workoutDetails?.dayOrder, dayOrder > 0 else { continue }
-
-                let candidate = TemplatePlanAnchor(
-                    workoutId: workoutID,
-                    dayOrder: dayOrder,
-                    day: Calendar.current.startOfDay(for: plan.day),
-                    status: normalizedDisplayStatus(plan.status, day: plan.day),
+        if let remoteEntries = await remoteProgramScheduleEntries(), !remoteEntries.isEmpty {
+            return PlanSharedSelectors.templatePlanAnchors(
+                from: remoteEntries.filter { $0.programId == programId }
+            ).mapValues { anchor in
+                TemplatePlanAnchor(
+                    workoutId: anchor.workoutId,
+                    dayOrder: anchor.dayOrder,
+                    day: anchor.day,
+                    status: anchor.status,
                 )
-
-                if let existing = anchors[workoutID] {
-                    if candidate.day > existing.day {
-                        anchors[workoutID] = candidate
-                    }
-                } else {
-                    anchors[workoutID] = candidate
-                }
             }
-            return anchors
         }
 
         let today = Calendar.current.startOfDay(for: Date())
-        var plans: [TrainingDayPlan] = []
+        var entries: [PlanEntry] = []
 
         for monthOffset in -6..<6 {
             let month = Calendar.current.date(byAdding: .month, value: monthOffset, to: today) ?? today
-            let monthPlans = await trainingStore.plans(userSub: userSub, month: month)
-            plans.append(contentsOf: monthPlans)
+            let monthEntries = await planReadModel.localEntries(month: month)
+            entries.append(contentsOf: monthEntries)
         }
 
-        var anchors: [String: TemplatePlanAnchor] = [:]
-        for plan in plans where plan.programId == programId {
-            guard let workoutID = plan.workoutId?.trimmedNilIfEmpty else { continue }
-            guard let dayOrder = plan.workoutDetails?.dayOrder, dayOrder > 0 else { continue }
-
-            let candidate = TemplatePlanAnchor(
-                workoutId: workoutID,
-                dayOrder: dayOrder,
-                day: Calendar.current.startOfDay(for: plan.day),
-                status: normalizedDisplayStatus(plan.status, day: plan.day),
+        return PlanSharedSelectors.templatePlanAnchors(
+            from: entries.filter { $0.programId == programId }
+        ).mapValues { anchor in
+            TemplatePlanAnchor(
+                workoutId: anchor.workoutId,
+                dayOrder: anchor.dayOrder,
+                day: anchor.day,
+                status: anchor.status,
             )
-
-            if let existing = anchors[workoutID] {
-                if candidate.day > existing.day {
-                    anchors[workoutID] = candidate
-                }
-            } else {
-                anchors[workoutID] = candidate
-            }
         }
-
-        return anchors
     }
 
-    private func remoteProgramSchedulePlans() async -> [TrainingDayPlan]? {
+    private func remoteProgramScheduleEntries() async -> [PlanEntry]? {
         guard let athleteTrainingClient,
               networkMonitor.currentStatus,
               let enrollmentId = currentEnrollmentId?.trimmedNilIfEmpty,
@@ -994,29 +919,14 @@ final class ProgramDetailsViewModel {
                 id: "remote-schedule-\(workout.id)",
                 userSub: userSub,
                 day: day,
-                status: mapWorkoutInstanceStatus(workout.status),
+                status: PlanEntry.canonicalStatus(from: workout.status),
                 programId: programId,
                 programTitle: details.title.trimmedNilIfEmpty,
                 workoutId: templateId ?? workout.id,
                 title: workout.title?.trimmedNilIfEmpty ?? template?.title?.trimmedNilIfEmpty ?? "Тренировка",
                 source: .program,
                 workoutDetails: mappedWorkout
-            )
-        }
-    }
-
-    private func mapWorkoutInstanceStatus(_ status: AthleteWorkoutInstanceStatus?) -> TrainingDayStatus {
-        switch status {
-        case .completed:
-            return .completed
-        case .missed:
-            return .missed
-        case .abandoned:
-            return .skipped
-        case .inProgress:
-            return .inProgress
-        case .planned, .none:
-            return .planned
+            ).asPlanEntry()
         }
     }
 
@@ -1073,15 +983,6 @@ final class ProgramDetailsViewModel {
         }
 
         return false
-    }
-
-    private func normalizedDisplayStatus(_ status: TrainingDayStatus, day: Date) -> TrainingDayStatus {
-        let normalizedDay = Calendar.current.startOfDay(for: day)
-        let today = Calendar.current.startOfDay(for: Date())
-        if normalizedDay >= today, status.isMissedLike {
-            return .planned
-        }
-        return status
     }
 
     private func persistPendingEnrollment(programVersionId: String) async {
@@ -1946,9 +1847,8 @@ struct ProgramDetailsScreen: View {
                             weekdays: weekdays,
                         )
                         await MainActor.run {
-                            PlanNavigationCoordinator.shared.request(day: firstDay)
                             viewModel.dismissEnrollmentConfirmation()
-                            onOpenProgramPlan?()
+                            requestPlanFocusAndOpen(day: firstDay, onOpenPlan: onOpenProgramPlan)
                         }
                     }
                 },
@@ -2678,8 +2578,7 @@ struct ProgramDetailsScreen: View {
     }
 
     private func openProgramSchedule(focusedDay: Date?) {
-        PlanNavigationCoordinator.shared.request(day: focusedDay)
-        onOpenProgramPlan?()
+        requestPlanFocusAndOpen(day: focusedDay, onOpenPlan: onOpenProgramPlan)
     }
 
     private func quickFactItems(details: ProgramDetails) -> [(title: String, value: String)] {

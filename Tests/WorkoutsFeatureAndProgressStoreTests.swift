@@ -767,7 +767,7 @@ final class WorkoutsFeatureAndProgressStoreTests: XCTestCase {
             notes: nil,
             overallRPE: 8,
         )
-        await trainingStore.appendHistory(localRichRecord)
+        await trainingStore.storeHistoryRecord(localRichRecord)
 
         let client = MockWorkoutHomeAthleteTrainingClient(
             homeSummaryResult: .success(
@@ -1003,6 +1003,65 @@ final class WorkoutsFeatureAndProgressStoreTests: XCTestCase {
         XCTAssertEqual(viewModel.primaryAction, .startNext(programId: programId, workoutId: "workout-today"))
     }
 
+    func testHomeViewModelLocalPlanFallbackUsesSharedPlanDisplayStatus() async throws {
+        let suite = "fitfluence.tests.home.plan-fallback.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        let trainingStore = LocalTrainingStore(defaults: defaults)
+        let today = Calendar.current.startOfDay(for: Date())
+        let firstDay = Calendar.current.date(byAdding: .hour, value: 8, to: today) ?? today
+        let secondDay = Calendar.current.date(byAdding: .hour, value: 18, to: today) ?? today
+
+        await trainingStore.schedule(
+            TrainingDayPlan(
+                id: "local-first",
+                userSub: "u1",
+                day: firstDay,
+                status: .missed,
+                programId: "program-1",
+                programTitle: "Upper Lower",
+                workoutId: "workout-1",
+                title: "Ноги A",
+                source: .program,
+                workoutDetails: nil,
+            ),
+        )
+        await trainingStore.schedule(
+            TrainingDayPlan(
+                id: "local-second",
+                userSub: "u1",
+                day: secondDay,
+                status: .planned,
+                programId: nil,
+                programTitle: nil,
+                workoutId: "manual-1",
+                title: "Своя тренировка",
+                source: .freestyle,
+                workoutDetails: nil,
+            ),
+        )
+
+        let viewModel = HomeViewModel(
+            userSub: "u1",
+            sessionManager: WorkoutSessionManager(progressStore: MockWorkoutProgressStore(statuses: [:])),
+            isOnline: false,
+            trainingStore: trainingStore,
+            cacheStore: MemoryCacheStore(),
+            progressStore: MockWorkoutProgressStore(statuses: [:]),
+            programsClient: nil,
+            athleteTrainingClient: nil,
+            calendar: .current,
+        )
+
+        await viewModel.onAppear()
+
+        XCTAssertEqual(viewModel.plannedWorkoutToday?.title, "Ноги A")
+        XCTAssertEqual(viewModel.plannedWorkoutToday?.status, .planned)
+        XCTAssertEqual(viewModel.plannedWorkoutToday?.statusText, "Запланирована")
+        XCTAssertEqual(viewModel.plannedWorkoutToday?.subtitle, "По программе")
+    }
+
     func testWorkoutHomeViewModelPrefersRemoteResumeOverLocalStaleSession() async {
         let localSnapshot = WorkoutProgressSnapshot(
             userSub: "u1",
@@ -1169,6 +1228,68 @@ final class WorkoutsFeatureAndProgressStoreTests: XCTestCase {
 
         XCTAssertEqual(viewModel.todayWorkout?.status, .planned)
         XCTAssertEqual(viewModel.primaryActionKind, .startToday)
+    }
+
+    func testWorkoutHomeViewModelLocalTodaySelectionUsesSharedCanonicalPlanStatus() async throws {
+        let suite = "fitfluence.tests.workout-home.local-today.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        let trainingStore = LocalTrainingStore(defaults: defaults)
+        let today = Calendar.current.startOfDay(for: Date())
+        let missedSlot = Calendar.current.date(byAdding: .hour, value: 7, to: today) ?? today
+        let plannedSlot = Calendar.current.date(byAdding: .hour, value: 18, to: today) ?? today
+
+        await trainingStore.schedule(
+            TrainingDayPlan(
+                id: "missed-local",
+                userSub: "u1",
+                day: missedSlot,
+                status: .missed,
+                programId: nil,
+                programTitle: nil,
+                workoutId: "manual-missed",
+                title: "Пропущенная ручная",
+                source: .freestyle,
+                workoutDetails: nil,
+            ),
+        )
+        await trainingStore.schedule(
+            TrainingDayPlan(
+                id: "program-local",
+                userSub: "u1",
+                day: plannedSlot,
+                status: .planned,
+                programId: "program-1",
+                programTitle: "Upper Lower",
+                workoutId: "workout-1",
+                title: "Ноги A",
+                source: .program,
+                workoutDetails: sampleWorkoutDetails,
+            ),
+        )
+
+        let viewModel = WorkoutHomeViewModel(
+            userSub: "u1",
+            trainingStore: trainingStore,
+            progressStore: MockWorkoutProgressStore(statuses: [:]),
+            resumeStore: LocalWorkoutResumeStore(),
+            cacheStore: MemoryCacheStore(),
+            networkMonitor: StaticNetworkMonitor(currentStatus: false),
+            athleteTrainingClient: nil,
+            syncCoordinator: .shared,
+        )
+
+        await viewModel.reload()
+
+        XCTAssertEqual(viewModel.todayWorkout?.title, "Ноги A")
+        XCTAssertEqual(viewModel.todayWorkout?.status, .planned)
+        XCTAssertEqual(viewModel.todayWorkout?.source, .program)
+        if case .preset? = viewModel.todayWorkout?.launchTarget {
+            XCTAssertTrue(true)
+        } else {
+            XCTFail("Expected preset launch target for local program overlay")
+        }
     }
 
     func testWorkoutHomeViewModelSkipsAbandonedTodayWorkoutFromHomeSummary() async {
@@ -1545,6 +1666,52 @@ final class WorkoutsFeatureAndProgressStoreTests: XCTestCase {
 
         let snapshot = await progressStore.load(userSub: "u1", programId: "p1", workoutId: "w1")
         XCTAssertEqual(snapshot?.isFinished, true)
+    }
+
+    func testWorkoutPlayerViewModelFinishUpdatesExistingPlanEntryInsteadOfCreatingDuplicate() async throws {
+        let suite = "fitfluence.tests.workout.finish-plan-update.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        let trainingStore = LocalTrainingStore(defaults: defaults)
+        let progressStore = MockWorkoutProgressStore(statuses: [:])
+        let sessionManager = WorkoutSessionManager(
+            progressStore: progressStore,
+            trainingStore: trainingStore,
+        )
+        let plannedDay = Date()
+
+        await trainingStore.schedule(
+            TrainingDayPlan(
+                id: "plan-local-1",
+                userSub: "u1",
+                day: plannedDay,
+                status: .planned,
+                programId: nil,
+                programTitle: nil,
+                workoutId: sampleWorkoutDetails.id,
+                title: sampleWorkoutDetails.title,
+                source: .freestyle,
+                workoutDetails: sampleWorkoutDetails,
+            )
+        )
+
+        let viewModel = WorkoutPlayerViewModel(
+            userSub: "u1",
+            programId: WorkoutSource.freestyle.rawValue,
+            workout: sampleWorkoutDetails,
+            source: .freestyle,
+            originPlanId: "plan-local-1",
+            sessionManager: sessionManager,
+        )
+
+        await viewModel.onAppear()
+        await viewModel.finish()
+
+        let plans = await trainingStore.plans(userSub: "u1", month: plannedDay)
+        XCTAssertEqual(plans.count, 1)
+        XCTAssertEqual(plans.first?.id, "plan-local-1")
+        XCTAssertEqual(plans.first?.status, .completed)
     }
 
     func testWorkoutPlayerViewModelCopyPreviousAndJump() async {
@@ -2345,6 +2512,7 @@ final class WorkoutsFeatureAndProgressStoreTests: XCTestCase {
                     userSub: "u1",
                     programId: "program-1",
                     workoutId: "workout-1",
+                    planId: nil,
                     source: .program,
                     status: .inProgress,
                     currentExerciseIndex: 1,
@@ -2754,6 +2922,7 @@ private actor MockWorkoutProgressStore: WorkoutProgressStore {
             userSub: snapshot.userSub,
             programId: snapshot.programId,
             workoutId: snapshot.workoutId,
+            planId: snapshot.planId,
             source: snapshot.source ?? .program,
             status: snapshot.status,
             currentExerciseIndex: snapshot.currentExerciseIndex,

@@ -3,6 +3,70 @@ import XCTest
 
 @MainActor
 final class CatalogAndProgramDetailsFeatureTests: XCTestCase {
+    func testRootPlanDependenciesBuildPlanViewModelFromInjectedTrainingStore() async throws {
+        let suite = "RootPlanDependenciesTests-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        let trainingStore = LocalTrainingStore(defaults: defaults)
+        let day = Calendar.current.date(from: DateComponents(year: 2026, month: 4, day: 15, hour: 18)) ?? Date()
+        await trainingStore.schedule(
+            TrainingDayPlan(
+                id: "root-plan-entry",
+                userSub: "u1",
+                day: day,
+                status: .planned,
+                programId: "program-1",
+                programTitle: "Program",
+                workoutId: "workout-1",
+                title: "Injected Plan",
+                source: .program,
+                workoutDetails: nil,
+            ),
+        )
+
+        let dependencies = RootPlanDependencies(
+            apiClient: nil,
+            trainingStore: trainingStore,
+            cacheStore: MemoryCacheStore(),
+            networkMonitor: StaticNetworkMonitor(currentStatus: false),
+            calendar: .current,
+        )
+        let viewModel = dependencies.makePlanViewModel(userSub: "u1")
+
+        await viewModel.onAppear()
+
+        XCTAssertEqual(
+            viewModel.dayItems(for: day).map(\.planId),
+            ["root-plan-entry"],
+        )
+    }
+
+    func testProgramDetailsOpenPlanRequestsFocusedDayBeforeOpeningPlan() {
+        let expectedDay = Calendar.current.date(from: DateComponents(year: 2026, month: 4, day: 21)) ?? Date()
+        var didOpenPlan = false
+
+        requestPlanFocusAndOpen(day: expectedDay) {
+            didOpenPlan = true
+        }
+
+        XCTAssertTrue(didOpenPlan)
+        XCTAssertEqual(PlanNavigationCoordinator.shared.consumePendingDay(), expectedDay)
+    }
+
+    func testRepeatFlowOpenPlanRequestsFocusedDayBeforeOpeningPlan() {
+        let expectedDay = Calendar.current.date(from: DateComponents(year: 2026, month: 4, day: 24)) ?? Date()
+        var openedCount = 0
+
+        requestPlanFocusAndOpen(day: expectedDay) {
+            openedCount += 1
+        }
+
+        XCTAssertEqual(openedCount, 1)
+        XCTAssertEqual(PlanNavigationCoordinator.shared.consumePendingDay(), expectedDay)
+        XCTAssertNil(PlanNavigationCoordinator.shared.consumePendingDay())
+    }
+
     func testCatalogOnAppearSuccessShowsPrograms() async {
         let mockClient = MockProgramsClient(
             listResults: [.success(samplePage(title: "Сила и тонус"))],
@@ -482,6 +546,60 @@ final class CatalogAndProgramDetailsFeatureTests: XCTestCase {
         XCTAssertEqual(scheduled.map(\.workoutId), ["w1", "w2", "w3"])
         XCTAssertEqual(scheduled.map(\.programTitle), ["Программа", "Программа", "Программа"])
         XCTAssertTrue(scheduled.allSatisfy { $0.workoutDetails != nil })
+    }
+
+    func testProgramDetailsScheduleReferencesUseSharedPlanDisplayInterpretation() async {
+        let suiteName = "ProgramDetailsScheduleReferenceTests-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        let trainingStore = LocalTrainingStore(defaults: defaults)
+        defer {
+            defaults.removePersistentDomain(forName: suiteName)
+        }
+
+        let today = Calendar.current.startOfDay(for: Date())
+        let plannedDay = Calendar.current.date(byAdding: .hour, value: 10, to: today) ?? today
+
+        await trainingStore.schedule(
+            TrainingDayPlan(
+                id: "local-plan-reference",
+                userSub: "u1",
+                day: plannedDay,
+                status: .missed,
+                programId: "program-1",
+                programTitle: "Программа",
+                workoutId: "w1",
+                title: "День 1",
+                source: .program,
+                workoutDetails: WorkoutDetailsModel(
+                    id: "w1",
+                    title: "День 1",
+                    dayOrder: 1,
+                    coachNote: nil,
+                    exercises: [],
+                ),
+            ),
+        )
+
+        let mockClient = MockProgramsClient(
+            listResults: [],
+            detailsResults: [.success(sampleDetailsWithWorkouts)],
+            startResults: [],
+        )
+
+        let viewModel = ProgramDetailsViewModel(
+            programId: "program-1",
+            userSub: "u1",
+            programsClient: mockClient,
+            cacheStore: MemoryCacheStore(),
+            networkMonitor: StaticNetworkMonitor(currentStatus: false),
+            trainingStore: trainingStore,
+        )
+
+        await viewModel.onAppear()
+
+        XCTAssertEqual(viewModel.scheduleReference(for: "w1")?.status, .planned)
+        XCTAssertEqual(viewModel.templatePlanAnchors["w1"]?.status, .planned)
+        XCTAssertEqual(viewModel.scheduleReference(for: "w1")?.day, plannedDay)
     }
 
     func testWorkoutsClientFallsBackToEquipmentForBodyweightProgramExercises() async {

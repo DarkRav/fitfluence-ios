@@ -446,7 +446,8 @@ struct WeeklyTrainingSummary: Equatable, Sendable {
 }
 
 protocol TrainingStore: Sendable {
-    func appendHistory(_ record: CompletedWorkoutRecord) async
+    func storeHistoryRecord(_ record: CompletedWorkoutRecord) async
+    func completeWorkout(_ record: CompletedWorkoutRecord, planId: String?) async
     func history(userSub: String, source: WorkoutSource?, limit: Int?) async -> [CompletedWorkoutRecord]
     func lastCompleted(userSub: String) async -> CompletedWorkoutRecord?
     func saveTemplate(_ template: WorkoutTemplateDraft) async
@@ -485,6 +486,10 @@ protocol TrainingStore: Sendable {
 }
 
 extension TrainingStore {
+    func completeWorkout(_ record: CompletedWorkoutRecord, planId _: String?) async {
+        await storeHistoryRecord(record)
+    }
+
     func deletePlan(
         userSub _: String,
         day _: Date,
@@ -527,26 +532,44 @@ actor LocalTrainingStore: TrainingStore {
         self.calendar = calendar
     }
 
-    func appendHistory(_ record: CompletedWorkoutRecord) async {
+    func storeHistoryRecord(_ record: CompletedWorkoutRecord) async {
         var items = await history(userSub: record.userSub, source: nil, limit: nil)
         items.removeAll { $0.id == record.id }
         items.append(record)
         items.sort { $0.finishedAt > $1.finishedAt }
         await saveArray(items, key: historyKey(userSub: record.userSub))
+    }
 
-        let plan = TrainingDayPlan(
-            id: record.id,
-            userSub: record.userSub,
-            day: record.finishedAt,
-            status: .completed,
-            programId: record.programId,
-            programTitle: nil,
-            workoutId: record.workoutId,
-            title: record.workoutTitle,
-            source: record.source,
-            workoutDetails: record.workoutDetails,
+    func completeWorkout(_ record: CompletedWorkoutRecord, planId: String?) async {
+        await storeHistoryRecord(record)
+
+        var items = loadArray([TrainingDayPlan].self, key: planKey(userSub: record.userSub)) ?? []
+        let resolvedPlanId = resolveCompletedPlanID(
+            for: record,
+            preferredPlanId: planId,
+            existingPlans: items,
         )
-        await schedule(plan)
+        let existingPlan = resolvedPlanId.flatMap { candidateId in
+            items.first(where: { $0.userSub == record.userSub && $0.id == candidateId })
+        }
+        let normalizedTitle = record.workoutTitle.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty ?? "Тренировка"
+        let completedPlan = TrainingDayPlan(
+            id: resolvedPlanId ?? record.id,
+            userSub: record.userSub,
+            day: existingPlan?.day ?? record.finishedAt,
+            status: .completed,
+            programId: existingPlan?.programId ?? normalized(record.programId),
+            programTitle: existingPlan?.programTitle,
+            workoutId: existingPlan?.workoutId ?? record.workoutId,
+            title: existingPlan?.title.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty ?? normalizedTitle,
+            source: existingPlan?.source ?? record.source,
+            workoutDetails: existingPlan?.workoutDetails ?? record.workoutDetails,
+        )
+
+        items.removeAll { $0.userSub == record.userSub && $0.id == completedPlan.id }
+        items.append(completedPlan)
+        items.sort { $0.day > $1.day }
+        await saveArray(items, key: planKey(userSub: record.userSub))
     }
 
     func history(userSub: String, source: WorkoutSource?, limit: Int?) async -> [CompletedWorkoutRecord] {
@@ -737,6 +760,40 @@ actor LocalTrainingStore: TrainingStore {
         }
 
         return streak
+    }
+
+    private func resolveCompletedPlanID(
+        for record: CompletedWorkoutRecord,
+        preferredPlanId: String?,
+        existingPlans: [TrainingDayPlan],
+    ) -> String? {
+        let userPlans = existingPlans.filter { $0.userSub == record.userSub }
+
+        if let preferredPlanId = preferredPlanId?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty,
+           userPlans.contains(where: { $0.id == preferredPlanId })
+        {
+            return preferredPlanId
+        }
+
+        let remoteCandidate = "remote-\(record.workoutId)"
+        if userPlans.contains(where: { $0.id == remoteCandidate }) {
+            return remoteCandidate
+        }
+
+        let sameDayCandidates = userPlans.filter { candidate in
+            guard candidate.source == record.source else { return false }
+            guard normalized(candidate.workoutId) == normalized(record.workoutId) else { return false }
+            return startOfDay(candidate.day) == startOfDay(record.finishedAt)
+        }
+        if sameDayCandidates.count == 1 {
+            return sameDayCandidates[0].id
+        }
+
+        return nil
+    }
+
+    private func normalized(_ value: String?) -> String? {
+        value?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
     }
 
     private func loadArray<T: Decodable>(_ type: T.Type, key: String) -> T? {

@@ -177,6 +177,7 @@ enum WorkoutDomainRules {
             userSub: userSub,
             programId: resumeTarget.programId,
             workoutId: resumeTarget.workoutId,
+            planId: nil,
             source: .program,
             status: .inProgress,
             currentExerciseIndex: nil,
@@ -295,6 +296,7 @@ struct WorkoutProgressSnapshot: Codable, Equatable, Sendable {
     let userSub: String
     let programId: String
     let workoutId: String
+    var planId: String? = nil
     var currentExerciseIndex: Int?
     var startedAt: Date? = nil
     var source: WorkoutSource? = nil
@@ -308,6 +310,7 @@ struct WorkoutProgressSnapshot: Codable, Equatable, Sendable {
         userSub: String,
         programId: String,
         workoutId: String,
+        planId: String? = nil,
         currentExerciseIndex: Int?,
         startedAt: Date? = nil,
         source: WorkoutSource? = nil,
@@ -320,6 +323,7 @@ struct WorkoutProgressSnapshot: Codable, Equatable, Sendable {
         self.userSub = userSub
         self.programId = programId
         self.workoutId = workoutId
+        self.planId = planId
         self.currentExerciseIndex = currentExerciseIndex
         self.startedAt = startedAt
         self.source = source
@@ -335,6 +339,7 @@ struct WorkoutProgressSnapshot: Codable, Equatable, Sendable {
         userSub = try container.decode(String.self, forKey: .userSub)
         programId = try container.decode(String.self, forKey: .programId)
         workoutId = try container.decode(String.self, forKey: .workoutId)
+        planId = try container.decodeIfPresent(String.self, forKey: .planId)
         currentExerciseIndex = try container.decodeIfPresent(Int.self, forKey: .currentExerciseIndex)
         startedAt = try container.decodeIfPresent(Date.self, forKey: .startedAt)
         source = try container.decodeIfPresent(WorkoutSource.self, forKey: .source)
@@ -360,6 +365,7 @@ struct ActiveWorkoutSession: Equatable, Sendable {
     let userSub: String
     let programId: String
     let workoutId: String
+    let planId: String?
     let source: WorkoutSource
     let status: WorkoutProgressStatus
     let currentExerciseIndex: Int?
@@ -438,6 +444,7 @@ actor LocalWorkoutProgressStore: WorkoutProgressStore {
             userSub: snapshot.userSub,
             programId: snapshot.programId,
             workoutId: snapshot.workoutId,
+            planId: snapshot.planId,
             source: snapshot.source ?? .program,
             status: snapshot.status,
             currentExerciseIndex: snapshot.currentExerciseIndex,
@@ -485,6 +492,7 @@ struct WorkoutSessionState: Equatable, Sendable {
     var userSub: String
     var programId: String
     var workoutId: String
+    var planId: String?
     var workoutTitle: String
     var workoutDetails: WorkoutDetailsModel
     var source: WorkoutSource
@@ -560,6 +568,7 @@ actor WorkoutSessionManager {
         programId: String,
         workout: WorkoutDetailsModel,
         source: WorkoutSource = .program,
+        planId: String? = nil,
     ) async -> WorkoutSessionLoadResult {
         let key = sessionKey(userSub: userSub, programId: programId, workoutId: workout.id)
 
@@ -577,6 +586,7 @@ actor WorkoutSessionManager {
             userSub: userSub,
             programId: programId,
             workoutId: workout.id,
+            planId: planId,
             workoutTitle: workout.title,
             workoutDetails: workout,
             source: source,
@@ -1069,7 +1079,10 @@ actor WorkoutSessionManager {
 
         let snapshot = snapshot(from: session, isFinished: true)
         await progressStore.save(snapshot)
-        await trainingStore.appendHistory(record)
+        await trainingStore.completeWorkout(
+            record,
+            planId: session.planId ?? remotePlanIDCandidate(for: session),
+        )
     }
 
     func latestActiveSession(userSub: String) async -> ActiveWorkoutSession? {
@@ -1237,6 +1250,7 @@ actor WorkoutSessionManager {
             userSub: snapshot.userSub,
             programId: snapshot.programId,
             workoutId: snapshot.workoutId,
+            planId: snapshot.planId,
             workoutTitle: resolvedWorkout.title,
             workoutDetails: resolvedWorkout,
             source: snapshot.source ?? .program,
@@ -1265,6 +1279,7 @@ actor WorkoutSessionManager {
             userSub: session.userSub,
             programId: session.programId,
             workoutId: session.workoutId,
+            planId: session.planId,
             currentExerciseIndex: session.currentExerciseIndex,
             startedAt: session.startedAt,
             source: session.source,
@@ -1278,6 +1293,13 @@ actor WorkoutSessionManager {
 
     private func sessionKey(userSub: String, programId: String, workoutId: String) -> String {
         "\(userSub)::\(programId)::\(workoutId)"
+    }
+
+    private func remotePlanIDCandidate(for session: WorkoutSessionState) -> String? {
+        guard session.source != .template, UUID(uuidString: session.workoutId) != nil else {
+            return nil
+        }
+        return "remote-\(session.workoutId)"
     }
 }
 

@@ -84,6 +84,15 @@ private final class QuickWorkoutBuilderViewModel {
             }
         }
 
+        var showsTitleEditor: Bool {
+            switch self {
+            case .quickStart:
+                false
+            case .todayPlanning, .plannedQuickWorkout, .editWorkout, .createTemplate, .editTemplate:
+                true
+            }
+        }
+
         var emptyTitle: String {
             switch self {
             case .createTemplate, .editTemplate:
@@ -307,7 +316,9 @@ struct QuickWorkoutBuilderView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: FFSpacing.md) {
                     headerCard
-                    titleCard
+                    if viewModel.mode.showsTitleEditor {
+                        titleCard
+                    }
                     exercisesCard
                 }
                 .padding(.horizontal, FFSpacing.md)
@@ -382,9 +393,7 @@ struct QuickWorkoutBuilderView: View {
         TrainingBuilderSectionCard(
             eyebrow: nil,
             title: "Упражнения",
-            helper: viewModel.draft.exercises.isEmpty
-                ? "Добавьте первое упражнение."
-                : ""
+            helper: ""
         ) {
             VStack(alignment: .leading, spacing: FFSpacing.sm) {
                 if viewModel.draft.exercises.isEmpty {
@@ -392,7 +401,7 @@ struct QuickWorkoutBuilderView: View {
                 } else {
                     FFVerticalReorderStack(
                         items: viewModel.draft.exercises,
-                        spacing: FFSpacing.sm,
+                        spacing: FFSpacing.md,
                         onReorder: { draggedId, targetId in
                         _ = viewModel.reorderExercises(draggedId: draggedId, targetId: targetId)
                     }) { exercise, isDragging in
@@ -497,11 +506,7 @@ struct QuickWorkoutBuilderView: View {
     }
 
     private var titleCard: some View {
-        TrainingBuilderSectionCard(
-            eyebrow: nil,
-            title: viewModel.mode.titleLabel,
-            helper: viewModel.helperText ?? ""
-        ) {
+        FFCard(padding: FFSpacing.sm) {
             FFTextField(
                 label: viewModel.mode.titleLabel,
                 placeholder: viewModel.mode.titlePlaceholder,
@@ -510,6 +515,7 @@ struct QuickWorkoutBuilderView: View {
                     set: { viewModel.draft.title = $0 }
                 ),
                 helperText: viewModel.helperText,
+                labelDisplayMode: .hidden,
             )
         }
     }
@@ -527,23 +533,8 @@ struct QuickWorkoutBuilderView: View {
                 isExercisePickerPresented = true
             }
         }
-        .padding(FFSpacing.md)
+        .padding(.vertical, FFSpacing.xs)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            LinearGradient(
-                colors: [
-                    FFColors.accent.opacity(0.12),
-                    FFColors.surface,
-                ],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            )
-        )
-        .clipShape(RoundedRectangle(cornerRadius: FFTheme.Radius.control))
-        .overlay {
-            RoundedRectangle(cornerRadius: FFTheme.Radius.control)
-                .stroke(FFColors.gray700, lineWidth: 1)
-        }
     }
 
     private var bottomActionBar: some View {
@@ -737,34 +728,19 @@ private struct QuickWorkoutExerciseCard: View {
         VStack(alignment: .leading, spacing: FFSpacing.sm) {
             HStack(alignment: .top, spacing: FFSpacing.sm) {
                 Button(action: onToggleExpanded) {
-                    VStack(alignment: .leading, spacing: FFSpacing.xxs) {
-                        HStack(spacing: FFSpacing.xs) {
-                            Text("Упр. \(index + 1)")
-                                .font(FFTypography.caption.weight(.semibold))
-                                .foregroundStyle(FFColors.background)
-                                .padding(.horizontal, FFSpacing.sm)
-                                .padding(.vertical, 6)
-                                .background(FFColors.accent)
-                                .clipShape(Capsule())
-                            Text(exercise.name)
-                                .font(FFTypography.body.weight(.semibold))
-                                .foregroundStyle(FFColors.textPrimary)
-                                .multilineTextAlignment(.leading)
-                        }
-                        if !exercise.catalogTags.isEmpty {
-                            exerciseTagRow(tags: exercise.catalogTags)
-                        }
-                        Text(exercise.summaryText)
-                            .font(FFTypography.caption)
-                            .foregroundStyle(FFColors.textSecondary)
+                    HStack(spacing: FFSpacing.xs) {
+                        Text("Упр. \(index + 1)")
+                            .font(FFTypography.caption.weight(.semibold))
+                            .foregroundStyle(FFColors.background)
+                            .padding(.horizontal, FFSpacing.sm)
+                            .padding(.vertical, 6)
+                            .background(FFColors.accent)
+                            .clipShape(Capsule())
+                        Text(exercise.name)
+                            .font(FFTypography.body.weight(.semibold))
+                            .foregroundStyle(FFColors.textPrimary)
                             .multilineTextAlignment(.leading)
-                        if let notesPreview = exercise.notesPreview {
-                            Text(notesPreview)
-                                .font(FFTypography.caption)
-                                .foregroundStyle(FFColors.textSecondary)
-                                .lineLimit(isExpanded ? 2 : 1)
-                                .multilineTextAlignment(.leading)
-                        }
+                            .lineLimit(2)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .contentShape(Rectangle())
@@ -772,9 +748,26 @@ private struct QuickWorkoutExerciseCard: View {
                 .buttonStyle(.plain)
                 Spacer()
                 HStack(spacing: FFSpacing.xxs) {
-                    reorderBadge
                     iconButton(systemName: "trash", tint: FFColors.danger, action: onRemove)
+                    FFReorderHandle()
                 }
+            }
+
+            if !exercise.catalogTags.isEmpty {
+                exerciseTagRow(tags: exercise.catalogTags)
+            }
+
+            Text(exercise.summaryText)
+                .font(FFTypography.caption)
+                .foregroundStyle(FFColors.textSecondary)
+                .multilineTextAlignment(.leading)
+
+            if let notesPreview = exercise.notesPreview {
+                Text(notesPreview)
+                    .font(FFTypography.caption)
+                    .foregroundStyle(FFColors.textSecondary)
+                    .lineLimit(isExpanded ? 2 : 1)
+                    .multilineTextAlignment(.leading)
             }
 
             if isExpanded {
@@ -866,7 +859,7 @@ private struct QuickWorkoutExerciseCard: View {
             LinearGradient(
                 colors: [
                     FFColors.surface,
-                    FFColors.surface.opacity(0.92),
+                    FFColors.background.opacity(0.98),
                 ],
                 startPoint: .topLeading,
                 endPoint: .bottomTrailing
@@ -877,6 +870,7 @@ private struct QuickWorkoutExerciseCard: View {
             RoundedRectangle(cornerRadius: FFTheme.Radius.card)
                 .stroke(isReordering ? FFColors.primary.opacity(0.7) : FFColors.gray700.opacity(0.9), lineWidth: 1)
         }
+        .shadow(color: FFTheme.Shadow.color.opacity(0.35), radius: 12, y: 4)
     }
 
     private func metricTile(
@@ -928,20 +922,6 @@ private struct QuickWorkoutExerciseCard: View {
                 }
             }
         }
-    }
-
-    private var reorderBadge: some View {
-        Image(systemName: "arrow.up.arrow.down")
-            .font(.system(size: 14, weight: .semibold))
-            .foregroundStyle(FFColors.textSecondary)
-            .frame(width: 32, height: 32)
-            .background(FFColors.background)
-            .clipShape(RoundedRectangle(cornerRadius: FFTheme.Radius.control))
-            .overlay {
-                RoundedRectangle(cornerRadius: FFTheme.Radius.control)
-                    .stroke(FFColors.gray700, lineWidth: 1)
-            }
-            .accessibilityHidden(true)
     }
 
     private func iconButton(

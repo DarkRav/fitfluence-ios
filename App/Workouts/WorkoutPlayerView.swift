@@ -575,6 +575,7 @@ final class WorkoutPlayerViewModel {
     private let userSub: String
     private let programId: String
     private let source: WorkoutSource
+    private let originPlanId: String?
     private let athleteTrainingClient: AthleteTrainingClientProtocol?
     private let cacheStore: CacheStore
     private let networkMonitor: NetworkMonitoring
@@ -630,6 +631,7 @@ final class WorkoutPlayerViewModel {
         programId: String,
         workout: WorkoutDetailsModel,
         source: WorkoutSource = .program,
+        originPlanId: String? = nil,
         sessionManager: WorkoutSessionManager = WorkoutSessionManager(),
         athleteTrainingClient: AthleteTrainingClientProtocol? = nil,
         cacheStore: CacheStore = CompositeCacheStore(),
@@ -648,6 +650,7 @@ final class WorkoutPlayerViewModel {
         self.programId = programId
         self.workout = workout
         self.source = source
+        self.originPlanId = originPlanId
         self.sessionManager = sessionManager
         self.athleteTrainingClient = athleteTrainingClient
         self.cacheStore = cacheStore
@@ -1054,6 +1057,7 @@ final class WorkoutPlayerViewModel {
             programId: programId,
             workout: workout,
             source: source,
+            planId: originPlanId,
         )
         switch result {
         case let .session(resolvedSession):
@@ -2140,6 +2144,7 @@ final class WorkoutPlayerViewModel {
             userSub: session.userSub,
             programId: session.programId,
             workoutId: session.workoutId,
+            planId: session.planId,
             workoutTitle: canonicalWorkout.title,
             workoutDetails: canonicalWorkout,
             source: session.source,

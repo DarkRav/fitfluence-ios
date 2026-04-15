@@ -58,3 +58,22 @@ struct FFIconButton: View {
         RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
     }
 }
+
+struct FFReorderHandle: View {
+    var size: CGFloat = 32
+    var cornerRadius: CGFloat = FFTheme.Radius.control
+
+    var body: some View {
+        Image(systemName: "arrow.up.arrow.down")
+            .font(.system(size: 16, weight: .semibold))
+            .foregroundStyle(FFColors.textSecondary)
+            .frame(width: size, height: size)
+            .background(FFColors.background.opacity(0.75))
+            .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .stroke(FFColors.gray700, lineWidth: 1)
+            }
+            .accessibilityHidden(true)
+    }
+}

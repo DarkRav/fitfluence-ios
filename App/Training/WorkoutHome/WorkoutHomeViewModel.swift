@@ -35,6 +35,7 @@ final class WorkoutHomeViewModel {
         let workout: WorkoutDetailsModel
         let source: WorkoutSource
         let programId: String?
+        let planId: String?
     }
 
     struct TodayWorkout: Equatable {
@@ -104,6 +105,7 @@ final class WorkoutHomeViewModel {
     private let athleteTrainingClient: AthleteTrainingClientProtocol?
     private let calendar: Calendar
     private let syncCoordinator: SyncCoordinator
+    private let planReadModel: PlanReadModelRepository
     private let completedProgramVisibilityDays = 14
 
     var isLoading = false
@@ -176,6 +178,14 @@ final class WorkoutHomeViewModel {
         self.athleteTrainingClient = athleteTrainingClient
         self.calendar = calendar
         self.syncCoordinator = syncCoordinator
+        planReadModel = PlanReadModelRepository(
+            userSub: userSub,
+            trainingStore: trainingStore,
+            athleteTrainingClient: athleteTrainingClient,
+            cacheStore: cacheStore,
+            networkMonitor: networkMonitor,
+            calendar: calendar,
+        )
     }
 
     func onAppear() async {
@@ -232,7 +242,7 @@ final class WorkoutHomeViewModel {
     private func loadLocalContext() async {
         async let active = progressStore.latestActiveSession(userSub: userSub)
         async let history = trainingStore.history(userSub: userSub, source: nil, limit: 8)
-        async let monthPlans = trainingStore.plans(userSub: userSub, month: Date())
+        async let monthEntries = planReadModel.localEntries(month: Date())
         let storedResume = await resumeStore.latest(userSub: userSub)
 
         if let activeCandidate = await active,
@@ -279,7 +289,7 @@ final class WorkoutHomeViewModel {
         let allHistory = await history
         recentWorkouts = allHistory
         lastCompleted = allHistory.first
-        localTodayCandidates = await resolveLocalTodayCandidates(from: await monthPlans)
+        localTodayCandidates = await resolveLocalTodayCandidates(from: await monthEntries)
         rebuildResume()
         rebuildTodayWorkout()
     }
@@ -388,11 +398,11 @@ final class WorkoutHomeViewModel {
             let mergedRecent = mergeRecentWorkouts(existing: recentWorkouts, incoming: remoteRecent)
             for record in remoteRecent {
                 guard let preferredRecord = mergedRecent.first(where: { isSameRecentWorkout($0, record) }) else {
-                    await trainingStore.appendHistory(record)
+                    await trainingStore.storeHistoryRecord(record)
                     continue
                 }
                 guard preferredRecord.id == record.id else { continue }
-                await trainingStore.appendHistory(preferredRecord)
+                await trainingStore.storeHistoryRecord(preferredRecord)
             }
             recentWorkouts = Array(mergedRecent.prefix(8))
             lastCompleted = recentWorkouts.first
@@ -403,7 +413,7 @@ final class WorkoutHomeViewModel {
                 namespace: userSub,
                 workoutInstanceId: todayWorkout.workoutInstanceId
             )
-            if pendingAbandon, mapStatus(todayWorkout.status) == .inProgress {
+            if pendingAbandon, PlanEntry.canonicalStatus(from: todayWorkout.status) == .inProgress {
                 remoteTodayCandidates = []
             } else {
                 remoteTodayCandidates = makeRemoteTodayWorkout(from: todayWorkout, programTitle: summary.activeProgram?.title)
@@ -592,24 +602,23 @@ final class WorkoutHomeViewModel {
         return elapsed < completedProgramVisibilityDays
     }
 
-    private func resolveLocalTodayCandidates(from plans: [TrainingDayPlan]) async -> [TodayWorkout] {
-        let today = calendar.startOfDay(for: Date())
+    private func resolveLocalTodayCandidates(from entries: [PlanEntry]) async -> [TodayWorkout] {
         var resolved: [TodayWorkout] = []
 
-        for plan in plans where calendar.isDate(plan.day, inSameDayAs: today) {
-            guard let status = todayWorkoutStatus(for: plan.status) else { continue }
+        for entry in PlanSharedSelectors.todayEntries(from: entries, calendar: calendar) {
+            guard let status = PlanSharedSelectors.workoutHomeStatus(for: entry) else { continue }
 
-            let launchTarget = await resolveLaunchTarget(for: plan)
-            let detailText = plan.isPendingCustomWorkoutCreation
+            let launchTarget = await resolveLaunchTarget(for: entry)
+            let detailText = entry.syncState.isPendingCreateCustomWorkout
                 ? "Ожидает синхронизации с сервером"
-                : statusDetailText(status, source: plan.source)
+                : statusDetailText(status, source: entry.source)
             resolved.append(
                 TodayWorkout(
-                    title: plan.title,
-                    subtitle: localTodaySubtitle(for: plan),
+                    title: entry.title,
+                    subtitle: localTodaySubtitle(for: entry),
                     detailText: detailText,
                     status: status,
-                    source: plan.source,
+                    source: entry.source,
                     launchTarget: launchTarget,
                 ),
             )
@@ -622,8 +631,10 @@ final class WorkoutHomeViewModel {
         from workout: AthleteHomeWorkoutSummary,
         programTitle: String?,
     ) -> TodayWorkout? {
-        let source: WorkoutSource = workout.source == .custom ? .freestyle : .program
-        guard let status = todayWorkoutStatus(for: mapStatus(workout.status)) else {
+        let source = PlanEntry.source(from: workout.source)
+        guard let status = PlanSharedSelectors.workoutHomeStatus(
+            for: PlanEntry.canonicalStatus(from: workout.status)
+        ) else {
             return nil
         }
         let title = workout.title.trimmedNilIfEmpty ?? "Тренировка"
@@ -685,21 +696,12 @@ final class WorkoutHomeViewModel {
         return score
     }
 
-    private func todayWorkoutStatus(for status: TrainingDayStatus) -> TrainingDayStatus? {
-        switch status {
-        case .planned, .inProgress:
-            return status
-        case .completed, .missed, .skipped:
-            return nil
-        }
-    }
-
-    private func localTodaySubtitle(for plan: TrainingDayPlan) -> String {
-        if let programTitle = plan.programTitle?.trimmedNilIfEmpty {
+    private func localTodaySubtitle(for entry: PlanEntry) -> String {
+        if let programTitle = entry.programTitle?.trimmedNilIfEmpty {
             return "Сегодня • \(programTitle)"
         }
 
-        switch plan.source {
+        switch entry.source {
         case .program:
             return "Сегодня • По программе"
         case .freestyle:
@@ -710,19 +712,6 @@ final class WorkoutHomeViewModel {
     }
 
     private func statusDetailText(_ status: TrainingDayStatus, source: WorkoutSource) -> String {
-        let statusTitle = switch status {
-        case .planned:
-            "Запланирована"
-        case .inProgress:
-            "В процессе"
-        case .completed:
-            "Выполнена"
-        case .missed:
-            "Пропущена"
-        case .skipped:
-            "Пропущена намеренно"
-        }
-
         let sourceTitle = switch source {
         case .program:
             "программа"
@@ -732,75 +721,76 @@ final class WorkoutHomeViewModel {
             "шаблон"
         }
 
-        return "\(statusTitle) • \(sourceTitle)"
+        return "\(status.planStatusTitle) • \(sourceTitle)"
     }
 
-    private func resolveLaunchTarget(for plan: TrainingDayPlan) async -> TodayWorkout.LaunchTarget? {
-        if plan.isPendingCustomWorkoutCreation {
+    private func resolveLaunchTarget(for entry: PlanEntry) async -> TodayWorkout.LaunchTarget? {
+        if entry.syncState.isPendingCreateCustomWorkout {
             return nil
         }
 
-        if plan.source == .program,
-           !plan.id.hasPrefix("remote-"),
-           let workoutDetails = plan.workoutDetails
+        if entry.ownership == .localProgramOverlay,
+           let workoutDetails = entry.workoutDetails
         {
             return .preset(
                 PresetWorkoutTarget(
                     workout: workoutDetails,
                     source: .program,
-                    programId: plan.programId,
+                    programId: entry.programId,
+                    planId: entry.id,
                 ),
             )
         }
 
-        if plan.source == .program,
-           let programId = plan.programId?.trimmedNilIfEmpty,
-           let workoutId = plan.workoutId?.trimmedNilIfEmpty
+        if entry.source == .program,
+           let programId = entry.programId?.trimmedNilIfEmpty,
+           let workoutId = entry.workoutId?.trimmedNilIfEmpty
         {
             return .remote(
                 RemoteWorkoutTarget(
                     programId: programId,
                     workoutId: workoutId,
-                    title: plan.title,
+                    title: entry.title,
                 ),
             )
         }
 
-        guard let workoutDetails = await resolveWorkoutDetails(for: plan) else {
+        guard let workoutDetails = await resolveWorkoutDetails(for: entry) else {
             return nil
         }
 
         return .preset(
             PresetWorkoutTarget(
                 workout: workoutDetails,
-                source: plan.source,
-                programId: plan.programId,
+                source: entry.source,
+                programId: entry.programId,
+                planId: entry.id,
             ),
         )
     }
 
-    private func resolveWorkoutDetails(for plan: TrainingDayPlan) async -> WorkoutDetailsModel? {
-        if let workoutDetails = plan.workoutDetails {
+    private func resolveWorkoutDetails(for entry: PlanEntry) async -> WorkoutDetailsModel? {
+        if let workoutDetails = entry.workoutDetails {
             return workoutDetails
         }
 
         if let cached = await cacheStore.get(
-            workoutCacheKey(programId: plan.programId, source: plan.source, workoutId: plan.workoutId),
+            workoutCacheKey(programId: entry.programId, source: entry.source, workoutId: entry.workoutId),
             as: WorkoutDetailsModel.self,
             namespace: userSub,
         ) {
             return cached
         }
 
-        if plan.source == .freestyle,
-           let workoutId = plan.workoutId?.trimmedNilIfEmpty,
+        if entry.source == .freestyle,
+           let workoutId = entry.workoutId?.trimmedNilIfEmpty,
            UUID(uuidString: workoutId) != nil,
            let athleteTrainingClient
         {
             if case let .success(detailsResponse) = await athleteTrainingClient.getWorkoutDetails(workoutInstanceId: workoutId) {
                 let details = detailsResponse.asWorkoutDetailsModel()
                 await cacheStore.set(
-                    workoutCacheKey(programId: plan.programId, source: plan.source, workoutId: plan.workoutId),
+                    workoutCacheKey(programId: entry.programId, source: entry.source, workoutId: entry.workoutId),
                     value: details,
                     namespace: userSub,
                     ttl: 60 * 60 * 24,
@@ -809,10 +799,10 @@ final class WorkoutHomeViewModel {
             }
         }
 
-        if plan.source == .freestyle {
+        if entry.source == .freestyle {
             return WorkoutDetailsModel(
-                id: plan.workoutId?.trimmedNilIfEmpty ?? "quick-\(UUID().uuidString)",
-                title: plan.title,
+                id: entry.workoutId?.trimmedNilIfEmpty ?? "quick-\(UUID().uuidString)",
+                title: entry.title,
                 dayOrder: 0,
                 coachNote: "Быстрая тренировка",
                 exercises: [],
@@ -990,23 +980,6 @@ final class WorkoutHomeViewModel {
         }
 
         return score
-    }
-
-    private func mapStatus(_ status: AthleteWorkoutInstanceStatus?) -> TrainingDayStatus {
-        switch status {
-        case .planned:
-            return .planned
-        case .inProgress:
-            return .inProgress
-        case .none:
-            return .planned
-        case .completed:
-            return .completed
-        case .missed:
-            return .missed
-        case .abandoned:
-            return .skipped
-        }
     }
 
     private func workoutCacheKey(programId: String?, source: WorkoutSource, workoutId: String?) -> String {

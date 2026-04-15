@@ -244,12 +244,7 @@ struct WorkoutExerciseQueueView: View {
             }
             .buttonStyle(.plain)
 
-            Image(systemName: "arrow.up.arrow.down")
-                .font(.system(size: 16, weight: .semibold))
-                .foregroundStyle(FFColors.textSecondary)
-                .frame(width: 36, height: 36)
-                .background(FFColors.background.opacity(0.75))
-                .clipShape(RoundedRectangle(cornerRadius: 10))
+            FFReorderHandle(size: 36, cornerRadius: 10)
                 .contentShape(Rectangle())
         }
         .padding(.horizontal, FFSpacing.xs)
