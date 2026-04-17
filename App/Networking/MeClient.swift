@@ -317,8 +317,18 @@ protocol MeClientProtocol: Sendable {
     func me() async -> Result<MeResponse, APIError>
 }
 
+protocol AccountDeletionClientProtocol: Sendable {
+    func deleteAccount() async -> Result<Void, APIError>
+}
+
 struct UnavailableMeClient: MeClientProtocol {
     func me() async -> Result<MeResponse, APIError> {
+        .failure(.invalidURL)
+    }
+}
+
+struct UnavailableAccountDeletionClient: AccountDeletionClientProtocol {
+    func deleteAccount() async -> Result<Void, APIError> {
         .failure(.invalidURL)
     }
 }

@@ -18,12 +18,15 @@ final class ProfileViewModel {
     private let settingsStore: ProfileSettingsStore
     private let diagnosticsProvider: DiagnosticsProviding
     private let syncCoordinator: SyncCoordinator
+    private let accountDeletionClient: AccountDeletionClientProtocol?
 
     let userSub: String
     var isOnline: Bool
     var loadState: LoadState = .loading
     var isClearingCache = false
+    var isDeletingAccount = false
     var infoMessage: String?
+    var accountDeletionError: UserFacingError?
     var settings: ProfileSettings = .default
 
     var displayName = "Атлет"
@@ -52,6 +55,7 @@ final class ProfileViewModel {
         settingsStore: ProfileSettingsStore = LocalProfileSettingsStore(),
         diagnosticsProvider: DiagnosticsProviding = DiagnosticsProvider(),
         syncCoordinator: SyncCoordinator = .shared,
+        accountDeletionClient: AccountDeletionClientProtocol? = nil,
     ) {
         self.me = me
         self.userSub = userSub
@@ -62,6 +66,7 @@ final class ProfileViewModel {
         self.settingsStore = settingsStore
         self.diagnosticsProvider = diagnosticsProvider
         self.syncCoordinator = syncCoordinator
+        self.accountDeletionClient = accountDeletionClient
     }
 
     var syncStatusTitle: String {
@@ -209,6 +214,29 @@ final class ProfileViewModel {
         infoMessage = "Активная сессия сброшена"
     }
 
+    func deleteAccount() async -> Bool {
+        guard !isDeletingAccount else { return false }
+        guard let accountDeletionClient else {
+            accountDeletionError = UserFacingError(
+                title: "Удаление недоступно",
+                message: "В этой сборке не настроено удаление аккаунта.",
+            )
+            return false
+        }
+
+        isDeletingAccount = true
+        accountDeletionError = nil
+        defer { isDeletingAccount = false }
+
+        switch await accountDeletionClient.deleteAccount() {
+        case .success:
+            return true
+        case let .failure(error):
+            accountDeletionError = userFacingDeleteError(from: error)
+            return false
+        }
+    }
+
     private func buildActiveSession(_ session: ActiveWorkoutSession?) -> ProfileSessionSnapshot? {
         guard let session else { return nil }
         let subtitle = "Обновлено \(session.lastUpdated.formatted(date: .abbreviated, time: .shortened))"
@@ -284,5 +312,30 @@ final class ProfileViewModel {
             return
         }
         syncStatus = (await syncCoordinator.resolveSyncIndicator(namespace: userSub)).title
+    }
+
+    private func userFacingDeleteError(from error: APIError) -> UserFacingError {
+        switch error {
+        case .offline, .timeout:
+            return UserFacingError(
+                title: "Нет соединения",
+                message: "Не удалось удалить аккаунт. Проверьте интернет и повторите попытку.",
+            )
+        case .unauthorized, .forbidden:
+            return UserFacingError(
+                title: "Сессия недоступна",
+                message: "Сессия истекла. Войдите снова и повторите удаление аккаунта.",
+            )
+        case let .httpError(statusCode, _), let .serverError(statusCode, _):
+            return UserFacingError(
+                title: "Удаление не выполнено",
+                message: "Сервер вернул ошибку \(statusCode). Повторите попытку позже.",
+            )
+        default:
+            return UserFacingError(
+                title: "Удаление не выполнено",
+                message: "Не удалось удалить аккаунт. Повторите попытку позже.",
+            )
+        }
     }
 }

@@ -2949,6 +2949,7 @@ private struct ProfileTabView: View {
                 me: me,
                 userSub: userSub,
                 isOnline: isOnline,
+                accountDeletionClient: apiClient as? AccountDeletionClientProtocol,
             ),
         )
     }
@@ -2957,6 +2958,7 @@ private struct ProfileTabView: View {
         ProfileScreen(
             viewModel: viewModel,
             onLogout: onLogout,
+            onDeleteAccount: onLogout,
             onOpenActiveSession: { session in
                 selectedSession = session
             },

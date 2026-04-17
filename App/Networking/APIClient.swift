@@ -121,6 +121,7 @@ extension APIClient: AthleteWorkoutTemplatesAPIClientProtocol {
 protocol APIClientProtocol: Sendable {
     func healthCheck() async -> Result<HealthResponse, APIError>
     func me() async -> Result<MeResponse, APIError>
+    func deleteAccount() async -> Result<Void, APIError>
     func createProfile(_ request: CreateAthleteProfileRequest) async -> Result<CreateAthleteProfileResponse, APIError>
     func createProfile(_ request: CreateInfluencerProfileRequest) async
         -> Result<CreateInfluencerProfileResponse, APIError>
@@ -184,6 +185,11 @@ final class APIClient: APIClientProtocol, MeClientProtocol, AthleteProfileClient
     func me() async -> Result<MeResponse, APIError> {
         let request = APIRequest.get(path: "/v1/me", requiresAuthorization: true)
         return await decodeMeWithRetry(request, allowRetryAfterRefresh: true)
+    }
+
+    func deleteAccount() async -> Result<Void, APIError> {
+        let request = APIRequest(path: "/v1/me", method: .delete, requiresAuthorization: true)
+        return await performWithRetry(request, allowRetryAfterRefresh: true)
     }
 
     func createProfile(_ request: CreateAthleteProfileRequest) async -> Result<CreateAthleteProfileResponse, APIError> {

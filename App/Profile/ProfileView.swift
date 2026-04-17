@@ -3,7 +3,9 @@ import SwiftUI
 struct ProfileScreen: View {
     @State var viewModel: ProfileViewModel
     let onLogout: () -> Void
+    let onDeleteAccount: () -> Void
     let onOpenActiveSession: (ActiveWorkoutSession) -> Void
+    @State private var isDeleteConfirmationPresented = false
 
     var body: some View {
         ScrollView {
@@ -36,6 +38,31 @@ struct ProfileScreen: View {
         .ffScreenBackground()
         .task {
             await viewModel.onAppear()
+        }
+        .alert("Удалить аккаунт?", isPresented: $isDeleteConfirmationPresented) {
+            Button("Удалить", role: .destructive) {
+                Task {
+                    if await viewModel.deleteAccount() {
+                        onDeleteAccount()
+                    }
+                }
+            }
+            Button("Отменить", role: .cancel) {}
+        } message: {
+            Text("Аккаунт будет деактивирован, а вход в этот профиль станет недоступен.")
+        }
+        .alert(
+            viewModel.accountDeletionError?.title ?? "Удаление не выполнено",
+            isPresented: Binding(
+                get: { viewModel.accountDeletionError != nil },
+                set: { if !$0 { viewModel.accountDeletionError = nil } },
+            ),
+        ) {
+            Button("ОК", role: .cancel) {
+                viewModel.accountDeletionError = nil
+            }
+        } message: {
+            Text(viewModel.accountDeletionError?.message ?? "")
         }
     }
 
@@ -79,6 +106,19 @@ struct ProfileScreen: View {
 
                 FFButton(title: "Выйти", variant: .secondary, action: onLogout)
                     .accessibilityLabel("Выйти из аккаунта")
+
+                FFButton(
+                    title: "Удалить аккаунт",
+                    variant: .destructive,
+                    isLoading: viewModel.isDeletingAccount,
+                ) {
+                    isDeleteConfirmationPresented = true
+                }
+                .accessibilityLabel("Удалить аккаунт")
+
+                Text("После удаления вход в этот профиль станет недоступен.")
+                    .font(FFTypography.caption)
+                    .foregroundStyle(FFColors.textSecondary)
             }
         }
     }
@@ -171,6 +211,7 @@ private struct ProfileMenuRow: View {
         ProfileScreen(
             viewModel: viewModel,
             onLogout: {},
+            onDeleteAccount: {},
             onOpenActiveSession: { _ in },
         )
     }
@@ -201,6 +242,7 @@ private struct ProfileMenuRow: View {
         ProfileScreen(
             viewModel: viewModel,
             onLogout: {},
+            onDeleteAccount: {},
             onOpenActiveSession: { _ in },
         )
     }
