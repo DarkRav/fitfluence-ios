@@ -108,6 +108,106 @@ struct PlanEntry: Equatable, Sendable, Identifiable {
     var displayStatus: TrainingDayStatus {
         status.display
     }
+
+    func refreshingDisplayStatus(
+        calendar: Calendar = .current,
+        now: Date = Date(),
+    ) -> PlanEntry {
+        let refreshedDisplay = Self.resolveDisplayStatus(
+            canonicalStatus,
+            day: day,
+            calendar: calendar,
+            now: now,
+        )
+        guard refreshedDisplay != displayStatus else { return self }
+
+        return PlanEntry(
+            id: id,
+            day: day,
+            title: title,
+            source: source,
+            programId: programId,
+            programTitle: programTitle,
+            workoutId: workoutId,
+            workoutDetails: workoutDetails,
+            ownership: ownership,
+            detailsState: detailsState,
+            syncState: syncState,
+            status: PlanEntryStatus(canonical: canonicalStatus, display: refreshedDisplay),
+        )
+    }
+
+    fileprivate static func resolveDisplayStatus(
+        _ canonicalStatus: TrainingDayStatus,
+        day: Date,
+        calendar: Calendar,
+        now: Date,
+    ) -> TrainingDayStatus {
+        let normalizedDay = calendar.startOfDay(for: day)
+        let today = calendar.startOfDay(for: now)
+        if normalizedDay >= today, canonicalStatus.isMissedLike {
+            return .planned
+        }
+        return canonicalStatus
+    }
+}
+
+extension TrainingDayStatus {
+    var planStatusTitle: String {
+        switch self {
+        case .planned:
+            "Запланирована"
+        case .inProgress:
+            "В процессе"
+        case .completed:
+            "Выполнена"
+        case .missed:
+            "Пропущена"
+        case .skipped:
+            "Пропущена намеренно"
+        }
+    }
+}
+
+extension PlanEntry {
+    static func canonicalStatus(from remoteStatus: AthleteWorkoutInstanceStatus?) -> TrainingDayStatus {
+        switch remoteStatus {
+        case .completed:
+            return .completed
+        case .missed:
+            return .missed
+        case .abandoned:
+            return .skipped
+        case .inProgress:
+            return .inProgress
+        case .planned, .none:
+            return .planned
+        }
+    }
+
+    static func source(from remoteSource: AthleteWorkoutSource) -> WorkoutSource {
+        switch remoteSource {
+        case .program:
+            return .program
+        case .custom:
+            return .freestyle
+        }
+    }
+
+    var scheduleReferenceWorkoutId: String? {
+        normalizedNonEmpty(workoutDetails?.id) ?? normalizedNonEmpty(workoutId)
+    }
+
+    var templateAnchorDayOrder: Int? {
+        guard let dayOrder = workoutDetails?.dayOrder, dayOrder > 0 else { return nil }
+        return dayOrder
+    }
+
+    private func normalizedNonEmpty(_ value: String?) -> String? {
+        value?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+            ? value?.trimmingCharacters(in: .whitespacesAndNewlines)
+            : nil
+    }
 }
 
 extension TrainingDayPlan {
@@ -144,18 +244,14 @@ extension TrainingDayPlan {
             syncState: syncState,
             status: PlanEntryStatus(
                 canonical: status,
-                display: displayStatus(calendar: calendar, now: now)
+                display: PlanEntry.resolveDisplayStatus(
+                    status,
+                    day: day,
+                    calendar: calendar,
+                    now: now,
+                )
             ),
         )
-    }
-
-    private func displayStatus(calendar: Calendar, now: Date) -> TrainingDayStatus {
-        let normalizedDay = calendar.startOfDay(for: day)
-        let today = calendar.startOfDay(for: now)
-        if normalizedDay >= today, status.isMissedLike {
-            return .planned
-        }
-        return status
     }
 }
 

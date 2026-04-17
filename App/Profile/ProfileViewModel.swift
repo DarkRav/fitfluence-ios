@@ -236,12 +236,9 @@ final class ProfileViewModel {
     }
 
     private func resolvedDisplayName() -> String {
-        if let email = me.email, !email.isEmpty {
-            let username = email.split(separator: "@").first.map(String.init) ?? email
-            return username.capitalized
-        }
-        if let subject = me.subject, !subject.isEmpty {
-            return "Атлет \(subject.prefix(6))"
+        if let displayName = me.displayName?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !displayName.isEmpty {
+            return displayName
         }
         return "Атлет"
     }

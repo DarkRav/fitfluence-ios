@@ -51,6 +51,7 @@ struct MeResponse: Decodable, Equatable, Sendable {
     struct Identity: Decodable, Equatable, Sendable {
         let sub: String?
         let email: String?
+        let displayName: String?
 
         enum CodingKeys: String, CodingKey {
             case sub
@@ -58,6 +59,7 @@ struct MeResponse: Decodable, Equatable, Sendable {
             case id
             case email
             case username
+            case displayName
         }
 
         init(from decoder: Decoder) throws {
@@ -71,6 +73,7 @@ struct MeResponse: Decodable, Equatable, Sendable {
             sub = subValue ?? userIDValue ?? idValue ?? userIDUUID ?? idUUID
             email = (try? container.decodeIfPresent(String.self, forKey: .email))
                 ?? (try? container.decodeIfPresent(String.self, forKey: .username))
+            displayName = (try? container.decodeIfPresent(String.self, forKey: .displayName)) ?? nil
         }
     }
 
@@ -140,6 +143,7 @@ struct MeResponse: Decodable, Equatable, Sendable {
 
     let subject: String?
     let email: String?
+    let displayName: String?
     let roles: [String]
     let requiresAthleteProfile: Bool
     let requiresInfluencerProfile: Bool
@@ -157,6 +161,7 @@ struct MeResponse: Decodable, Equatable, Sendable {
     enum CodingKeys: String, CodingKey {
         case subject = "sub"
         case email
+        case displayName
         case identity
         case roles
         case profiles
@@ -177,9 +182,11 @@ struct MeResponse: Decodable, Equatable, Sendable {
 
         let subjectValue = (try? container.decodeIfPresent(String.self, forKey: .subject)) ?? nil
         let emailValue = (try? container.decodeIfPresent(String.self, forKey: .email)) ?? nil
+        let displayNameValue = (try? container.decodeIfPresent(String.self, forKey: .displayName)) ?? nil
 
         subject = nestedIdentity?.sub ?? subjectValue
         email = nestedIdentity?.email ?? emailValue
+        displayName = nestedIdentity?.displayName ?? displayNameValue
         roles = Self.decodeRoles(from: container)
 
         let athleteProfileValue =
@@ -209,6 +216,7 @@ struct MeResponse: Decodable, Equatable, Sendable {
     init(
         subject: String?,
         email: String?,
+        displayName: String? = nil,
         roles: [String] = [],
         requiresAthleteProfile: Bool,
         requiresInfluencerProfile: Bool,
@@ -217,6 +225,7 @@ struct MeResponse: Decodable, Equatable, Sendable {
     ) {
         self.subject = subject
         self.email = email
+        self.displayName = displayName
         self.roles = roles
         self.requiresAthleteProfile = requiresAthleteProfile
         self.requiresInfluencerProfile = requiresInfluencerProfile

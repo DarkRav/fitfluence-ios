@@ -66,9 +66,7 @@ struct RootView: View {
                     switch viewStore.sessionState {
                     case .unauthenticated:
                         AuthEntryView {
-                            viewStore.send(.loginTapped(.login))
-                        } onCreateAccount: {
-                            viewStore.send(.loginTapped(.createAccount))
+                            viewStore.send(.loginTapped(.apple))
                         }
 
                     case .authenticating:
@@ -127,7 +125,6 @@ private struct OfflineBannerView: View {
 
 private struct AuthEntryView: View {
     let onLogin: () -> Void
-    let onCreateAccount: () -> Void
 
     var body: some View {
         VStack(spacing: FFSpacing.md) {
@@ -142,9 +139,7 @@ private struct AuthEntryView: View {
                 }
             }
 
-            FFButton(title: "Войти", variant: .primary, action: onLogin)
-
-            FFButton(title: "Создать аккаунт", variant: .secondary, action: onCreateAccount)
+            FFButton(title: "Войти через iCloud", variant: .primary, action: onLogin)
 
             Spacer()
         }

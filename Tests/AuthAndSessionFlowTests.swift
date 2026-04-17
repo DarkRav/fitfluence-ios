@@ -24,7 +24,7 @@ final class AuthAndSessionFlowTests: XCTestCase {
         )
 
         let state = OnboardingFeature.State(context: context)
-        XCTAssertEqual(state.athleteDisplayName, "demo")
+        XCTAssertEqual(state.athleteDisplayName, "")
     }
 
     @MainActor
@@ -111,13 +111,9 @@ final class AuthAndSessionFlowTests: XCTestCase {
     }
 
     @MainActor
-    func testRootFeatureAutomaticallyAttemptsLoginAfterUnauthenticatedBootstrap() async {
+    func testRootFeatureDoesNotAutomaticallyAttemptInteractiveLoginAfterUnauthenticatedBootstrap() async {
         let auth = MockAuthService(tokenSet: sampleTokenSet)
         let manager = MockSessionManager(nextState: .unauthenticated)
-        manager.postLoginState = .authenticated(UserContext(me: sampleMe(
-            requiresAthlete: false,
-            requiresInfluencer: false,
-        )))
 
         let store = TestStore(initialState: RootFeature.State()) {
             RootFeature(
@@ -128,21 +124,7 @@ final class AuthAndSessionFlowTests: XCTestCase {
         }
 
         await store.send(.sessionResolved(.unauthenticated)) {
-            $0.sessionState = .authenticating
-        }
-
-        await store.receive(.automaticLoginTriggered) {
-            $0.hasAttemptedAutomaticLogin = true
-            $0.sessionState = .authenticating
-        }
-
-        let nextState = RootSessionState.authenticated(UserContext(me: sampleMe(
-            requiresAthlete: false,
-            requiresInfluencer: false,
-        )))
-
-        await store.receive(.sessionResolved(nextState)) {
-            $0.sessionState = nextState
+            $0.sessionState = .unauthenticated
         }
     }
 
@@ -179,6 +161,77 @@ final class AuthAndSessionFlowTests: XCTestCase {
         await store.receive(.sessionResolved(.unauthenticated)) {
             $0.sessionState = .unauthenticated
         }
+    }
+
+    @MainActor
+    func testAuthServiceAppleLoginSavesBackendTokenPair() async {
+        let tokenStore = InMemoryTokenStore()
+        let backendAuthClient = MockBackendAuthClient()
+        backendAuthClient.appleLoginResult = .success(
+            BackendAppleAuthResponse(
+                accessToken: "backend-access",
+                accessTokenExpiresAt: Date().addingTimeInterval(1800),
+                refreshToken: "backend-refresh",
+                refreshTokenExpiresAt: Date().addingTimeInterval(86_400),
+            ),
+        )
+
+        let service = AuthService(
+            tokenStore: tokenStore,
+            backendAuthClient: backendAuthClient,
+            appleSignInAuthorizer: MockAppleSignInAuthorizer(
+                result: .success(
+                    AppleAuthorizationPayload(
+                        identityToken: "apple-identity-token",
+                        authorizationCode: "apple-auth-code",
+                        userIdentifier: "apple-user",
+                    ),
+                ),
+            ),
+        )
+
+        let result = await service.login(mode: .apple)
+        guard case let .success(tokenSet) = result else {
+            return XCTFail("Expected successful login")
+        }
+
+        XCTAssertEqual(tokenSet.accessToken, "backend-access")
+        XCTAssertEqual(tokenSet.refreshToken, "backend-refresh")
+        let storedTokenSet = await service.currentTokenSet()
+        XCTAssertEqual(storedTokenSet, tokenSet)
+    }
+
+    func testAuthServiceRefreshUsesBackendRefreshEndpoint() async {
+        let tokenStore = InMemoryTokenStore(initialTokenSet: TokenSet(
+            accessToken: "expired-access",
+            refreshToken: "refresh-token",
+            idToken: nil,
+            tokenType: "Bearer",
+            scope: nil,
+            expiresAt: Date().addingTimeInterval(-5),
+        ))
+        let backendAuthClient = MockBackendAuthClient()
+        backendAuthClient.refreshResult = .success(
+            BackendTokenRefreshResponse(
+                accessToken: "rotated-access",
+                accessTokenExpiresAt: Date().addingTimeInterval(1800),
+                refreshToken: "rotated-refresh",
+                refreshTokenExpiresAt: Date().addingTimeInterval(86_400),
+            ),
+        )
+
+        let service = AuthService(
+            tokenStore: tokenStore,
+            backendAuthClient: backendAuthClient,
+            appleSignInAuthorizer: MockAppleSignInAuthorizer(result: .failure(.cancelled)),
+        )
+
+        let refreshed = await service.refresh()
+        XCTAssertTrue(refreshed)
+        XCTAssertEqual(backendAuthClient.lastRefreshToken, "refresh-token")
+        let refreshedTokenSet = await service.currentTokenSet()
+        XCTAssertEqual(refreshedTokenSet?.accessToken, "rotated-access")
+        XCTAssertEqual(refreshedTokenSet?.refreshToken, "rotated-refresh")
     }
 
     private var sampleTokenSet: TokenSet {
@@ -237,6 +290,58 @@ private final class MockAuthService: AuthServiceProtocol, @unchecked Sendable {
     func currentTokenSet() async -> TokenSet? {
         tokenSet
     }
+}
+
+private final class InMemoryTokenStore: TokenStore, @unchecked Sendable {
+    private var tokenSet: TokenSet?
+
+    init(initialTokenSet: TokenSet? = nil) {
+        tokenSet = initialTokenSet
+    }
+
+    func load() throws -> TokenSet? {
+        tokenSet
+    }
+
+    func save(_ tokenSet: TokenSet) throws {
+        self.tokenSet = tokenSet
+    }
+
+    func clear() throws {
+        tokenSet = nil
+    }
+}
+
+private struct MockAppleSignInAuthorizer: AppleSignInAuthorizing {
+    let result: Result<AppleAuthorizationPayload, APIError>
+
+    @MainActor
+    func authorize() async throws -> AppleAuthorizationPayload {
+        switch result {
+        case let .success(payload):
+            return payload
+        case let .failure(error):
+            throw error
+        }
+    }
+}
+
+private final class MockBackendAuthClient: BackendAuthClientProtocol, @unchecked Sendable {
+    var appleLoginResult: Result<BackendAppleAuthResponse, APIError> = .failure(.unauthorized)
+    var refreshResult: Result<BackendTokenRefreshResponse, APIError> = .failure(.unauthorized)
+    var lastRefreshToken: String?
+
+    func loginWithApple(_ payload: AppleAuthorizationPayload) async -> Result<BackendAppleAuthResponse, APIError> {
+        _ = payload
+        return appleLoginResult
+    }
+
+    func refresh(refreshToken: String) async -> Result<BackendTokenRefreshResponse, APIError> {
+        lastRefreshToken = refreshToken
+        return refreshResult
+    }
+
+    func logout(refreshToken _: String) async {}
 }
 
 private final class MockMeClient: MeClientProtocol, @unchecked Sendable {

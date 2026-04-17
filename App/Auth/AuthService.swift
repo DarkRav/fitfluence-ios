@@ -1,11 +1,9 @@
-import AppAuth
-import AuthenticationServices
 import Foundation
-import UIKit
 
 enum LoginEntryMode: String, Sendable {
     case login
     case createAccount
+    case apple
 }
 
 protocol AuthServiceProtocol: Sendable {
@@ -18,58 +16,177 @@ protocol AuthServiceProtocol: Sendable {
     func currentTokenSet() async -> TokenSet?
 }
 
-final class AuthService: NSObject, AuthServiceProtocol, @unchecked Sendable {
-    private let environment: AppEnvironment
-    private let discoveryService: OIDCDiscoveryServiceProtocol
+protocol BackendAuthClientProtocol: Sendable {
+    func loginWithApple(_ payload: AppleAuthorizationPayload) async -> Result<BackendAppleAuthResponse, APIError>
+    func refresh(refreshToken: String) async -> Result<BackendTokenRefreshResponse, APIError>
+    func logout(refreshToken: String) async
+}
+
+struct BackendAppleAuthResponse: Codable, Equatable, Sendable {
+    let accessToken: String
+    let accessTokenExpiresAt: Date
+    let refreshToken: String
+    let refreshTokenExpiresAt: Date
+}
+
+struct BackendTokenRefreshResponse: Codable, Equatable, Sendable {
+    let accessToken: String
+    let accessTokenExpiresAt: Date
+    let refreshToken: String
+    let refreshTokenExpiresAt: Date
+}
+
+final class BackendAuthClient: BackendAuthClientProtocol {
+    private let session: URLSession
+    private let baseURL: URL
+
+    init(session: URLSession = .shared, baseURL: URL) {
+        self.session = session
+        self.baseURL = baseURL
+    }
+
+    func loginWithApple(_ payload: AppleAuthorizationPayload) async -> Result<BackendAppleAuthResponse, APIError> {
+        await send(
+            path: "v1/auth/apple/native",
+            body: [
+                "identityToken": payload.identityToken,
+                "authorizationCode": payload.authorizationCode,
+            ],
+            responseType: BackendAppleAuthResponse.self,
+        )
+    }
+
+    func refresh(refreshToken: String) async -> Result<BackendTokenRefreshResponse, APIError> {
+        await send(
+            path: "v1/auth/refresh",
+            body: ["refreshToken": refreshToken],
+            responseType: BackendTokenRefreshResponse.self,
+        )
+    }
+
+    func logout(refreshToken: String) async {
+        _ = await send(
+            path: "v1/auth/logout",
+            body: ["refreshToken": refreshToken],
+            responseType: EmptyResponse.self,
+            expectedStatusCodes: [204],
+        )
+    }
+
+    private func send<Response: Decodable>(
+        path: String,
+        body: [String: String],
+        responseType: Response.Type,
+        expectedStatusCodes: Set<Int> = [200],
+    ) async -> Result<Response, APIError> {
+        let sanitizedPath = path.hasPrefix("/") ? String(path.dropFirst()) : path
+        let url = baseURL.appendingPathComponent(sanitizedPath)
+        guard url.host?.isEmpty == false else {
+            return .failure(.invalidURL)
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.timeoutInterval = 20
+
+        do {
+            request.httpBody = try JSONSerialization.data(withJSONObject: body)
+            let (data, response) = try await session.data(for: request)
+            guard let httpResponse = response as? HTTPURLResponse else {
+                return .failure(.unknown)
+            }
+
+            if !expectedStatusCodes.contains(httpResponse.statusCode) {
+                if let apiError = APIError.from(statusCode: httpResponse.statusCode, data: data) {
+                    return .failure(apiError)
+                }
+                return .failure(.unknown)
+            }
+
+            if responseType == EmptyResponse.self {
+                return .success(EmptyResponse() as! Response)
+            }
+
+            let decoder = JSONDecoder()
+            decoder.dateDecodingStrategy = .iso8601
+            return try .success(decoder.decode(Response.self, from: data))
+        } catch let apiError as APIError {
+            return .failure(apiError)
+        } catch let urlError as URLError {
+            return .failure(APIError.from(urlError: urlError))
+        } catch {
+            return .failure(.unknown)
+        }
+    }
+}
+
+private struct EmptyResponse: Codable, Equatable, Sendable {}
+
+actor RefreshCoordinator {
+    private var activeRefreshTask: Task<Bool, Never>?
+
+    func run(operation: @escaping @Sendable () async -> Bool) async -> Bool {
+        if let activeRefreshTask {
+            return await activeRefreshTask.value
+        }
+
+        let task = Task { await operation() }
+        activeRefreshTask = task
+        let result = await task.value
+        activeRefreshTask = nil
+        return result
+    }
+}
+
+final class AuthService: AuthServiceProtocol, @unchecked Sendable {
     private let tokenStore: TokenStore
+    private let backendAuthClient: BackendAuthClientProtocol
+    private let appleSignInAuthorizer: AppleSignInAuthorizing
     private let refreshCoordinator = RefreshCoordinator()
-    @MainActor
-    private var currentAuthorizationFlow: OIDExternalUserAgentSession?
 
     init(
-        environment: AppEnvironment,
-        discoveryService: OIDCDiscoveryServiceProtocol,
         tokenStore: TokenStore = KeychainTokenStore(),
+        backendAuthClient: BackendAuthClientProtocol,
+        appleSignInAuthorizer: AppleSignInAuthorizing = AppleSignInAuthorizer(),
     ) {
-        self.environment = environment
-        self.discoveryService = discoveryService
         self.tokenStore = tokenStore
+        self.backendAuthClient = backendAuthClient
+        self.appleSignInAuthorizer = appleSignInAuthorizer
     }
 
     @MainActor
     func login(mode: LoginEntryMode) async -> Result<TokenSet, APIError> {
-        let configuredScopes = environment.keycloakScopes
-            .split(separator: " ")
-            .map(String.init)
-            .filter { !$0.isEmpty }
-
-        let primaryScopes = configuredScopes.isEmpty ? ["openid"] : configuredScopes
-        let scopeVariants: [[String]] = primaryScopes == ["openid"] ? [primaryScopes] : [primaryScopes, ["openid"]]
-
-        for scopes in scopeVariants {
-            do {
-                return try await .success(performLogin(mode: mode, scopes: scopes))
-            } catch let apiError as APIError {
-                let isInvalidScope = if case let .httpError(statusCode, bodySnippet) = apiError {
-                    statusCode == 400 && bodySnippet?.contains("invalid_scope") == true
-                } else {
-                    false
-                }
-
-                if isInvalidScope, scopes != ["openid"] {
-                    FFLog.info("OIDC login invalid_scope for configured scopes, retry with openid only")
-                    continue
-                }
-
-                FFLog.error("OIDC login failed with APIError: \(String(describing: apiError))")
-                return .failure(apiError)
-            } catch {
-                FFLog.error("OIDC login failed with unexpected error: \(error.localizedDescription)")
-                return .failure(.unknown)
-            }
+        guard mode == .apple else {
+            return .failure(.unauthorized)
         }
 
-        return .failure(.unknown)
+        do {
+            let authorization = try await appleSignInAuthorizer.authorize()
+            let result = await backendAuthClient.loginWithApple(authorization)
+
+            switch result {
+            case let .success(response):
+                let tokenSet = TokenSet(
+                    accessToken: response.accessToken,
+                    refreshToken: response.refreshToken,
+                    idToken: nil,
+                    tokenType: "Bearer",
+                    scope: nil,
+                    expiresAt: response.accessTokenExpiresAt,
+                )
+                try tokenStore.save(tokenSet)
+                return .success(tokenSet)
+
+            case let .failure(error):
+                return .failure(error)
+            }
+        } catch let apiError as APIError {
+            return .failure(apiError)
+        } catch {
+            return .failure(.unknown)
+        }
     }
 
     func refreshIfNeeded() async -> Bool {
@@ -80,45 +197,39 @@ final class AuthService: NSObject, AuthServiceProtocol, @unchecked Sendable {
 
     func refresh() async -> Bool {
         await refreshCoordinator.run { [self] in
-            do {
-                guard let refreshToken = try self.tokenStore.load()?.refreshToken else {
+            guard let refreshToken = try? tokenStore.load()?.refreshToken else {
+                return false
+            }
+
+            let result = await backendAuthClient.refresh(refreshToken: refreshToken)
+            switch result {
+            case let .success(response):
+                let tokenSet = TokenSet(
+                    accessToken: response.accessToken,
+                    refreshToken: response.refreshToken,
+                    idToken: nil,
+                    tokenType: "Bearer",
+                    scope: nil,
+                    expiresAt: response.accessTokenExpiresAt,
+                )
+                do {
+                    try tokenStore.save(tokenSet)
+                    return true
+                } catch {
                     return false
                 }
 
-                let discovery = try await self.discoveryService.discover()
-                let configuration = OIDServiceConfiguration(
-                    authorizationEndpoint: discovery.authorizationEndpoint,
-                    tokenEndpoint: discovery.tokenEndpoint,
-                    issuer: discovery.issuer,
-                    registrationEndpoint: nil,
-                    endSessionEndpoint: discovery.endSessionEndpoint,
-                )
-
-                let tokenRequest = OIDTokenRequest(
-                    configuration: configuration,
-                    grantType: OIDGrantTypeRefreshToken,
-                    authorizationCode: nil,
-                    redirectURL: nil,
-                    clientID: self.environment.keycloakClientId,
-                    clientSecret: nil,
-                    scope: nil,
-                    refreshToken: refreshToken,
-                    codeVerifier: nil,
-                    additionalParameters: nil,
-                )
-
-                let response = try await self.perform(tokenRequest: tokenRequest)
-                let nextTokenSet = self.tokenSet(from: response, fallbackRefreshToken: refreshToken)
-                try self.tokenStore.save(nextTokenSet)
-                return true
-            } catch {
-                try? self.tokenStore.clear()
+            case .failure:
+                try? tokenStore.clear()
                 return false
             }
         }
     }
 
     func logout() async {
+        if let refreshToken = try? tokenStore.load()?.refreshToken {
+            await backendAuthClient.logout(refreshToken: refreshToken)
+        }
         try? tokenStore.clear()
     }
 
@@ -128,210 +239,5 @@ final class AuthService: NSObject, AuthServiceProtocol, @unchecked Sendable {
 
     private func currentTokenSetSync() -> TokenSet? {
         try? tokenStore.load()
-    }
-
-    private func registrationParameters(for mode: LoginEntryMode) -> [String: String]? {
-        guard mode == .createAccount else { return nil }
-        guard environment.keycloakRegistrationHintMode == "kc_action" else { return nil }
-        return ["kc_action": "register"]
-    }
-
-    @MainActor
-    private func performLogin(mode: LoginEntryMode, scopes: [String]) async throws -> TokenSet {
-        let discovery = try await discoveryService.discover()
-
-        guard
-            let redirectURL = environment.keycloakRedirectURI,
-            !environment.keycloakClientId.isEmpty
-        else {
-            throw APIError.invalidURL
-        }
-
-        let configuration = OIDServiceConfiguration(
-            authorizationEndpoint: discovery.authorizationEndpoint,
-            tokenEndpoint: discovery.tokenEndpoint,
-            issuer: discovery.issuer,
-            registrationEndpoint: nil,
-            endSessionEndpoint: discovery.endSessionEndpoint,
-        )
-
-        let authRequest = OIDAuthorizationRequest(
-            configuration: configuration,
-            clientId: environment.keycloakClientId,
-            clientSecret: nil,
-            scopes: scopes,
-            redirectURL: redirectURL,
-            responseType: OIDResponseTypeCode,
-            additionalParameters: registrationParameters(for: mode),
-        )
-
-        guard let presentingViewController = UIApplication.topViewController() else {
-            throw APIError.unknown
-        }
-        let authState = try await present(request: authRequest, from: presentingViewController)
-
-        guard let tokenResponse = authState.lastTokenResponse else {
-            throw APIError.unknown
-        }
-
-        let tokenSet = tokenSet(from: tokenResponse)
-        guard !tokenSet.accessToken.isEmpty else {
-            FFLog.error("OIDC login completed without access token")
-            throw APIError.unauthorized
-        }
-        try tokenStore.save(tokenSet)
-        return tokenSet
-    }
-
-    private func tokenSet(from response: OIDTokenResponse, fallbackRefreshToken: String? = nil) -> TokenSet {
-        TokenSet(
-            accessToken: response.accessToken ?? "",
-            refreshToken: response.refreshToken ?? fallbackRefreshToken,
-            idToken: response.idToken,
-            tokenType: response.tokenType ?? "Bearer",
-            scope: response.scope,
-            expiresAt: response.accessTokenExpirationDate,
-        )
-    }
-
-    @MainActor
-    private func present(
-        request: OIDAuthorizationRequest,
-        from presentingViewController: UIViewController,
-    ) async throws -> OIDAuthState {
-        try await withCheckedThrowingContinuation { continuation in
-            var didResume = false
-            let resumeOnce: (Result<OIDAuthState, APIError>) -> Void = { result in
-                guard !didResume else { return }
-                didResume = true
-                switch result {
-                case let .success(state):
-                    continuation.resume(returning: state)
-                case let .failure(error):
-                    continuation.resume(throwing: error)
-                }
-            }
-
-            let flow = OIDAuthState.authState(byPresenting: request, presenting: presentingViewController) {
-                [weak self] authState, error in
-                Task { @MainActor in
-                    self?.currentAuthorizationFlow = nil
-                }
-
-                if let error = error as NSError? {
-                    FFLog
-                        .error(
-                            "OIDC auth callback error domain=\(error.domain) code=\(error.code) message=\(error.localizedDescription)",
-                        )
-                    if error.domain == OIDOAuthAuthorizationErrorDomain,
-                       error.code == OIDErrorCodeOAuth.accessDenied.rawValue
-                    {
-                        resumeOnce(.failure(.cancelled))
-                        return
-                    }
-
-                    if error.domain == OIDOAuthAuthorizationErrorDomain,
-                       error.code == OIDErrorCodeOAuth.invalidScope.rawValue
-                    {
-                        resumeOnce(.failure(.httpError(statusCode: 400, bodySnippet: "invalid_scope")))
-                        return
-                    }
-
-                    if error.domain == OIDGeneralErrorDomain, error.code == -3 {
-                        resumeOnce(.failure(.cancelled))
-                        return
-                    }
-
-                    if error.domain == ASWebAuthenticationSessionErrorDomain,
-                       error.code == ASWebAuthenticationSessionError.canceledLogin.rawValue
-                    {
-                        resumeOnce(.failure(.cancelled))
-                        return
-                    }
-
-                    if error.domain == NSURLErrorDomain {
-                        let code = URLError.Code(rawValue: error.code)
-                        resumeOnce(.failure(APIError.from(urlError: URLError(code))))
-                        return
-                    }
-
-                    resumeOnce(.failure(.unknown))
-                    return
-                }
-
-                guard let authState else {
-                    resumeOnce(.failure(.unknown))
-                    return
-                }
-
-                resumeOnce(.success(authState))
-            }
-
-            Task { @MainActor in
-                currentAuthorizationFlow = flow
-            }
-
-            _ = flow
-        }
-    }
-
-    private func perform(tokenRequest: OIDTokenRequest) async throws -> OIDTokenResponse {
-        try await withCheckedThrowingContinuation { continuation in
-            OIDAuthorizationService.perform(tokenRequest) { response, error in
-                if let error = error as NSError? {
-                    if error.domain == NSURLErrorDomain {
-                        let code = URLError.Code(rawValue: error.code)
-                        continuation.resume(throwing: APIError.from(urlError: URLError(code)))
-                    } else {
-                        continuation.resume(throwing: APIError.unknown)
-                    }
-                    return
-                }
-
-                guard let response else {
-                    continuation.resume(throwing: APIError.unknown)
-                    return
-                }
-
-                continuation.resume(returning: response)
-            }
-        }
-    }
-}
-
-private extension UIApplication {
-    static func topViewController(
-        base: UIViewController? = UIApplication.shared.connectedScenes
-            .compactMap { $0 as? UIWindowScene }
-            .flatMap(\.windows)
-            .first(where: \.isKeyWindow)?
-            .rootViewController,
-    ) -> UIViewController? {
-        if let navigationController = base as? UINavigationController {
-            return topViewController(base: navigationController.visibleViewController)
-        }
-        if let tabBarController = base as? UITabBarController, let selected = tabBarController.selectedViewController {
-            return topViewController(base: selected)
-        }
-        if let presented = base?.presentedViewController {
-            return topViewController(base: presented)
-        }
-        return base
-    }
-}
-
-actor RefreshCoordinator {
-    private var runningTask: Task<Bool, Never>?
-
-    func run(_ operation: @escaping @Sendable () async -> Bool) async -> Bool {
-        if let runningTask {
-            return await runningTask.value
-        }
-
-        let task = Task { await operation() }
-        runningTask = task
-        let value = await task.value
-        runningTask = nil
-        return value
     }
 }

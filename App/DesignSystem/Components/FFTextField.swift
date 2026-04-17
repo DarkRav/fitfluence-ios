@@ -18,6 +18,9 @@ struct FFTextField: View {
     @Binding var text: String
     var helperText: String?
     var keyboardType: UIKeyboardType = .default
+    var textContentType: UITextContentType?
+    var textInputAutocapitalization: TextInputAutocapitalization = .never
+    var autocorrectionDisabled = true
     var state: FieldState = .normal
     var labelDisplayMode: LabelDisplayMode = .visible
 
@@ -37,8 +40,9 @@ struct FFTextField: View {
                 prompt: Text(placeholder).foregroundStyle(FFColors.gray500),
             )
             .keyboardType(keyboardType)
-            .textInputAutocapitalization(.never)
-            .autocorrectionDisabled()
+            .textContentType(textContentType)
+            .textInputAutocapitalization(textInputAutocapitalization)
+            .autocorrectionDisabled(autocorrectionDisabled)
             .font(FFTypography.body)
             .foregroundStyle(FFColors.textPrimary)
             .tint(FFColors.textPrimary)

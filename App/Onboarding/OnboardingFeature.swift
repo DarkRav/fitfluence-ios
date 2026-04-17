@@ -12,16 +12,7 @@ struct OnboardingFeature {
 
         init(context: OnboardingContext) {
             self.context = context
-            athleteDisplayName = Self.defaultDisplayName(from: context.me.email)
-        }
-
-        private static func defaultDisplayName(from email: String?) -> String {
-            guard let email, !email.isEmpty else { return "" }
-            let local = email.split(separator: "@").first.map(String.init) ?? ""
-            return local
-                .replacingOccurrences(of: ".", with: " ")
-                .replacingOccurrences(of: "_", with: " ")
-                .trimmingCharacters(in: .whitespacesAndNewlines)
+            athleteDisplayName = ""
         }
     }
 

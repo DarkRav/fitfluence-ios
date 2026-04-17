@@ -1,4 +1,5 @@
 import ComposableArchitecture
+import Foundation
 
 @Reducer
 struct RootFeature {
@@ -34,7 +35,7 @@ struct RootFeature {
 
         var hasBootstrapped = false
         var hasAttemptedAutomaticLogin = false
-        var automaticLoginEnabled = true
+        var automaticLoginEnabled = false
         var isOnline = true
         var sessionState: RootSessionState = .authenticating
         var selectedProgram: SelectedProgram?
@@ -115,13 +116,6 @@ struct RootFeature {
                     return .none
 
                 case let .sessionResolved(nextState):
-                    if case .unauthenticated = nextState,
-                       state.automaticLoginEnabled,
-                       !state.hasAttemptedAutomaticLogin
-                    {
-                        state.sessionState = .authenticating
-                        return .send(.automaticLoginTriggered)
-                    }
                     state.sessionState = nextState
                     if case let .needsOnboarding(context) = nextState {
                         state.onboarding = OnboardingFeature.State(context: context)
@@ -212,9 +206,35 @@ private extension APIError {
             if statusCode == 400, bodySnippet?.contains("invalid_scope") == true {
                 return "Сервер авторизации отклонил запрошенные разрешения. Проверьте конфигурацию окружения."
             }
+            if let serverMessage = Self.extractServerMessage(from: bodySnippet) {
+                return serverMessage
+            }
             return "Сервер авторизации вернул ошибку \(statusCode). Проверьте настройки клиента."
+        case let .serverError(_, bodySnippet):
+            if let serverMessage = Self.extractServerMessage(from: bodySnippet) {
+                return serverMessage
+            }
+            return "Сервер авторизации временно недоступен. Повторите попытку позже."
         default:
             return "Не удалось выполнить вход. Проверьте настройки клиента и защищённое соединение с сервером авторизации."
         }
+    }
+
+    private static func extractServerMessage(from bodySnippet: String?) -> String? {
+        guard let bodySnippet, !bodySnippet.isEmpty else { return nil }
+        guard let data = bodySnippet.data(using: .utf8) else { return bodySnippet }
+
+        struct ErrorEnvelope: Decodable {
+            let message: String?
+        }
+
+        if let envelope = try? JSONDecoder().decode(ErrorEnvelope.self, from: data),
+           let message = envelope.message?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !message.isEmpty
+        {
+            return message
+        }
+
+        return bodySnippet
     }
 }

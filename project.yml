@@ -7,9 +7,6 @@ packages:
   ComposableArchitecture:
     url: https://github.com/pointfreeco/swift-composable-architecture
     from: 1.10.0
-  AppAuth:
-    url: https://github.com/openid/AppAuth-iOS
-    from: 1.7.6
 configs:
   Dev: debug
   Stage: release
@@ -30,26 +27,12 @@ targets:
       properties:
         AppEnvironmentName: $(APP_ENVIRONMENT_NAME)
         BaseURL: $(BASE_URL)
-        KeycloakURL: $(KEYCLOAK_URL)
-        KeycloakRealm: $(KEYCLOAK_REALM)
-        KeycloakClientId: $(KEYCLOAK_CLIENT_ID)
-        KeycloakRedirectURI: $(KEYCLOAK_REDIRECT_URI)
-        KeycloakScopes: $(KEYCLOAK_SCOPES)
-        KeycloakRegistrationHintMode: $(KEYCLOAK_REGISTRATION_HINT_MODE)
         NSAppTransportSecurity:
           NSExceptionDomains:
             localhost:
               NSExceptionAllowsInsecureHTTPLoads: true
             127.0.0.1:
               NSExceptionAllowsInsecureHTTPLoads: true
-        NSLocalNetworkUsageDescription: Приложению нужен доступ к локальной сети для подключения к вашему dev-серверу.
-        NSBonjourServices:
-          - _http._tcp
-          - _https._tcp
-        CFBundleURLTypes:
-          - CFBundleURLName: fitfluence.oauth
-            CFBundleURLSchemes:
-              - fitfluence
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
           - UIInterfaceOrientationLandscapeLeft
@@ -73,11 +56,10 @@ targets:
         GENERATE_INFOPLIST_FILE: NO
         DEVELOPMENT_TEAM: ""
         CODE_SIGN_STYLE: Automatic
+        CODE_SIGN_ENTITLEMENTS: App/Fitfluence.entitlements
     dependencies:
       - package: ComposableArchitecture
         product: ComposableArchitecture
-      - package: AppAuth
-        product: AppAuth
   FitfluenceTests:
     type: bundle.unit-test
     platform: iOS

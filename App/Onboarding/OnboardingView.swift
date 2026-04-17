@@ -27,6 +27,8 @@ struct OnboardingView: View {
                             set: { store.send(.athleteDisplayNameChanged($0)) },
                         ),
                         helperText: "Имя можно изменить позже",
+                        textContentType: .name,
+                        textInputAutocapitalization: .words,
                     )
 
                     FFButton(
