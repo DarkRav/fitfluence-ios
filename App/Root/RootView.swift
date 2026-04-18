@@ -139,6 +139,7 @@ private struct AuthEntryView: View {
             }
 
             SignInWithAppleActionButton(action: onLogin)
+                .frame(maxWidth: 375)
                 .frame(height: 52)
 
             Spacer()
@@ -2978,7 +2979,7 @@ private struct ProfileTabView: View {
                 me: me,
                 userSub: userSub,
                 isOnline: isOnline,
-                accountDeletionClient: apiClient as? AccountDeletionClientProtocol,
+                accountDeletionClient: apiClient,
             ),
         )
     }

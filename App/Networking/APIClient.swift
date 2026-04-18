@@ -118,10 +118,8 @@ extension APIClient: AthleteWorkoutTemplatesAPIClientProtocol {
     }
 }
 
-protocol APIClientProtocol: Sendable {
+protocol APIClientProtocol: Sendable, MeClientProtocol, AccountDeletionClientProtocol {
     func healthCheck() async -> Result<HealthResponse, APIError>
-    func me() async -> Result<MeResponse, APIError>
-    func deleteAccount() async -> Result<Void, APIError>
     func createProfile(_ request: CreateAthleteProfileRequest) async -> Result<CreateAthleteProfileResponse, APIError>
     func createProfile(_ request: CreateInfluencerProfileRequest) async
         -> Result<CreateInfluencerProfileResponse, APIError>

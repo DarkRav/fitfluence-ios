@@ -18,7 +18,7 @@ struct OnboardingFeature {
 
     enum Action: Equatable {
         case athleteDisplayNameChanged(String)
-        case createAthleteTapped
+        case createAthleteTapped(String)
         case athleteResponse(Result<CreateAthleteProfileResponse, APIError>)
         case postSubmitStateResolved(RootSessionState)
         case clearMessage
@@ -47,7 +47,8 @@ struct OnboardingFeature {
                 state.athleteDisplayName = value
                 return .none
 
-            case .createAthleteTapped:
+            case let .createAthleteTapped(displayName):
+                state.athleteDisplayName = displayName
                 guard !state.athleteDisplayName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
                     state.errorMessage = "Укажите имя профиля."
                     return .none

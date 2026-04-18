@@ -47,7 +47,7 @@ final class AuthAndSessionFlowTests: XCTestCase {
 
         await store.send(.athleteDisplayNameChanged("Alex")) { $0.athleteDisplayName = "Alex" }
 
-        await store.send(.createAthleteTapped) {
+        await store.send(.createAthleteTapped("Alex")) {
             $0.isSubmitting = true
             $0.errorMessage = nil
         }
