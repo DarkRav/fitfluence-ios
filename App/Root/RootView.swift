@@ -1,3 +1,4 @@
+import AuthenticationServices
 import ComposableArchitecture
 import SwiftUI
 
@@ -56,57 +57,55 @@ struct RootView: View {
     let apiClient: APIClientProtocol?
 
     var body: some View {
-        WithViewStore(store, observe: { $0 }) { viewStore in
-            VStack(spacing: 0) {
-                if !viewStore.isOnline {
-                    OfflineBannerView()
-                }
+        VStack(spacing: 0) {
+            if !store.isOnline {
+                OfflineBannerView()
+            }
 
-                Group {
-                    switch viewStore.sessionState {
-                    case .unauthenticated:
-                        AuthEntryView {
-                            viewStore.send(.loginTapped(.apple))
-                        }
-
-                    case .authenticating:
-                        FFScreenSpinner()
-
-                    case .needsOnboarding:
-                        if let onboardingStore = store.scope(state: \.onboarding, action: \.onboarding) {
-                            OnboardingView(store: onboardingStore)
-                                .padding(.horizontal, FFSpacing.md)
-                        } else {
-                            FFScreenSpinner()
-                        }
-
-                    case let .authenticated(userContext):
-                        MainTabsView(
-                            store: store,
-                            environment: environment,
-                            apiClient: apiClient,
-                            me: userContext.me,
-                            isOnline: viewStore.isOnline,
-                            onLogout: { viewStore.send(.logoutTapped) },
-                        )
-
-                    case let .error(error):
-                        FFErrorState(
-                            title: error.title,
-                            message: error.message,
-                            retryTitle: "Повторить",
-                        ) {
-                            viewStore.send(.retryBootstrapTapped)
-                        }
-                        .padding(.horizontal, FFSpacing.md)
+            Group {
+                switch store.sessionState {
+                case .unauthenticated:
+                    AuthEntryView {
+                        store.send(.loginTapped(.apple))
                     }
+
+                case .authenticating:
+                    FFScreenSpinner()
+
+                case .needsOnboarding:
+                    if let onboardingStore = store.scope(state: \.onboarding, action: \.onboarding) {
+                        OnboardingView(store: onboardingStore)
+                            .padding(.horizontal, FFSpacing.md)
+                    } else {
+                        FFScreenSpinner()
+                    }
+
+                case let .authenticated(userContext):
+                    MainTabsView(
+                        store: store,
+                        environment: environment,
+                        apiClient: apiClient,
+                        me: userContext.me,
+                        isOnline: store.isOnline,
+                        onLogout: { store.send(.logoutTapped) },
+                    )
+
+                case let .error(error):
+                    FFErrorState(
+                        title: error.title,
+                        message: error.message,
+                        retryTitle: "Повторить",
+                    ) {
+                        store.send(.retryBootstrapTapped)
+                    }
+                    .padding(.horizontal, FFSpacing.md)
                 }
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .ffScreenBackground()
-            .onAppear {
-                viewStore.send(.onAppear)
-            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .ffScreenBackground()
+        .onAppear {
+            store.send(.onAppear)
         }
     }
 }
@@ -139,12 +138,47 @@ private struct AuthEntryView: View {
                 }
             }
 
-            FFButton(title: "Войти через iCloud", variant: .primary, action: onLogin)
+            SignInWithAppleActionButton(action: onLogin)
+                .frame(height: 52)
 
             Spacer()
         }
         .padding(.horizontal, FFSpacing.md)
         .padding(.top, FFSpacing.lg)
+    }
+}
+
+private struct SignInWithAppleActionButton: UIViewRepresentable {
+    let action: () -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(action: action)
+    }
+
+    func makeUIView(context: Context) -> ASAuthorizationAppleIDButton {
+        let button = ASAuthorizationAppleIDButton(type: .signIn, style: .black)
+        button.cornerRadius = 16
+        button.addTarget(
+            context.coordinator,
+            action: #selector(Coordinator.handleTap),
+            for: .touchUpInside,
+        )
+        return button
+    }
+
+    func updateUIView(_: ASAuthorizationAppleIDButton, context _: Context) {}
+
+    final class Coordinator: NSObject {
+        private let action: () -> Void
+
+        init(action: @escaping () -> Void) {
+            self.action = action
+        }
+
+        @objc
+        func handleTap() {
+            action()
+        }
     }
 }
 
@@ -935,70 +969,65 @@ private struct CatalogTabContent: View {
     }
 
     var body: some View {
-        WithViewStore(
-            store,
-            observe: \.selectedProgram,
-        ) { viewStore in
-            CatalogScreen(
-                programsViewModel: viewModel,
-                myProgramsViewModel: myProgramsViewModel,
-                athletesShowcaseViewModel: athletesShowcaseViewModel,
-                athletesSearchViewModel: athletesSearchViewModel,
-                followingViewModel: followingViewModel,
-                userSub: userSub,
-                environment: environment,
-                onProgramTap: { programID, displayMode in
-                    store.send(.openProgram(programId: programID, userSub: userSub, displayMode: displayMode))
+        CatalogScreen(
+            programsViewModel: viewModel,
+            myProgramsViewModel: myProgramsViewModel,
+            athletesShowcaseViewModel: athletesShowcaseViewModel,
+            athletesSearchViewModel: athletesSearchViewModel,
+            followingViewModel: followingViewModel,
+            userSub: userSub,
+            environment: environment,
+            onProgramTap: { programID, displayMode in
+                store.send(.openProgram(programId: programID, userSub: userSub, displayMode: displayMode))
+            },
+            onOpenPlan: {
+                onOpenPlanTab()
+            },
+            onOpenWorkoutHub: {
+                onOpenWorkoutHubTab()
+            },
+            onUnauthorized: {
+                store.send(.logoutTapped)
+            },
+        )
+        .navigationDestination(
+            isPresented: Binding(
+                get: { store.selectedProgram != nil },
+                set: { isPresented in
+                    if !isPresented {
+                        store.send(.programDetailsDismissed)
+                    }
                 },
-                onOpenPlan: {
-                    onOpenPlanTab()
-                },
-                onOpenWorkoutHub: {
-                    onOpenWorkoutHubTab()
-                },
-                onUnauthorized: {
-                    store.send(.logoutTapped)
-                },
-            )
-            .navigationDestination(
-                isPresented: Binding(
-                    get: { viewStore.state != nil },
-                    set: { isPresented in
-                        if !isPresented {
-                            store.send(.programDetailsDismissed)
-                        }
+            ),
+        ) {
+            if let selectedProgram = store.selectedProgram {
+                ProgramDetailsScreen(
+                    viewModel: ProgramDetailsViewModel(
+                        programId: selectedProgram.programId,
+                        userSub: selectedProgram.userSub,
+                        programsClient: apiClient as? ProgramsClientProtocol,
+                        athleteTrainingClient: apiClient as? AthleteTrainingClientProtocol,
+                        onUnauthorized: {
+                            store.send(.logoutTapped)
+                        },
+                    ),
+                    apiClient: apiClient,
+                    environment: environment,
+                    displayMode: selectedProgram.displayMode,
+                    onOpenProgramPlan: {
+                        store.send(.programDetailsDismissed)
+                        onOpenPlanTab()
                     },
-                ),
-            ) {
-                if let selectedProgram = viewStore.state {
-                    ProgramDetailsScreen(
-                        viewModel: ProgramDetailsViewModel(
-                            programId: selectedProgram.programId,
-                            userSub: selectedProgram.userSub,
-                            programsClient: apiClient as? ProgramsClientProtocol,
-                            athleteTrainingClient: apiClient as? AthleteTrainingClientProtocol,
-                            onUnauthorized: {
-                                store.send(.logoutTapped)
-                            },
-                        ),
-                        apiClient: apiClient,
-                        environment: environment,
-                        displayMode: selectedProgram.displayMode,
-                        onOpenProgramPlan: {
-                            store.send(.programDetailsDismissed)
-                            onOpenPlanTab()
-                        },
-                        onOpenWorkoutHub: {
-                            store.send(.programDetailsDismissed)
-                            onOpenWorkoutHubTab()
-                        },
-                        onOpenProgram: { programID, displayMode in
-                            store.send(.openProgram(programId: programID, userSub: userSub, displayMode: displayMode))
-                        },
-                    )
-                    .navigationTitle("Программа")
-                    .navigationBarBackButtonHidden(false)
-                }
+                    onOpenWorkoutHub: {
+                        store.send(.programDetailsDismissed)
+                        onOpenWorkoutHubTab()
+                    },
+                    onOpenProgram: { programID, displayMode in
+                        store.send(.openProgram(programId: programID, userSub: userSub, displayMode: displayMode))
+                    },
+                )
+                .navigationTitle("Программа")
+                .navigationBarBackButtonHidden(false)
             }
         }
     }

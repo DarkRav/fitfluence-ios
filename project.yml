@@ -18,6 +18,8 @@ targets:
     deploymentTarget: '17.0'
     sources:
       - App
+    resources:
+      - App/PrivacyInfo.xcprivacy
     configFiles:
       Dev: Configs/Dev.xcconfig
       Stage: Configs/Stage.xcconfig
@@ -54,7 +56,7 @@ targets:
         MARKETING_VERSION: 1.0
         TARGETED_DEVICE_FAMILY: 1,2
         GENERATE_INFOPLIST_FILE: NO
-        DEVELOPMENT_TEAM: ""
+        DEVELOPMENT_TEAM: BA7GZ9H8US
         CODE_SIGN_STYLE: Automatic
         CODE_SIGN_ENTITLEMENTS: App/Fitfluence.entitlements
     dependencies:

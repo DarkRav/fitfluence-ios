@@ -110,6 +110,17 @@ final class AuthAndSessionFlowTests: XCTestCase {
         XCTAssertNil(storedToken)
     }
 
+    func testBootstrapWithRevokedAppleCredentialReturnsUnauthenticated() async {
+        let auth = MockAuthService(tokenSet: sampleTokenSet)
+        auth.validateExternalCredentialResult = false
+        let manager = SessionManager(authService: auth, meClient: MockMeClient(results: []))
+
+        let state = await manager.bootstrap()
+
+        XCTAssertEqual(state, .unauthenticated)
+        XCTAssertEqual(auth.logoutCalls, 0)
+    }
+
     @MainActor
     func testRootFeatureDoesNotAutomaticallyAttemptInteractiveLoginAfterUnauthenticatedBootstrap() async {
         let auth = MockAuthService(tokenSet: sampleTokenSet)
@@ -167,6 +178,7 @@ final class AuthAndSessionFlowTests: XCTestCase {
     func testAuthServiceAppleLoginSavesBackendTokenPair() async {
         let tokenStore = InMemoryTokenStore()
         let backendAuthClient = MockBackendAuthClient()
+        let appleCredentialUserStore = InMemoryAppleCredentialUserStore()
         backendAuthClient.appleLoginResult = .success(
             BackendAppleAuthResponse(
                 accessToken: "backend-access",
@@ -178,6 +190,7 @@ final class AuthAndSessionFlowTests: XCTestCase {
 
         let service = AuthService(
             tokenStore: tokenStore,
+            appleCredentialUserStore: appleCredentialUserStore,
             backendAuthClient: backendAuthClient,
             appleSignInAuthorizer: MockAppleSignInAuthorizer(
                 result: .success(
@@ -199,6 +212,7 @@ final class AuthAndSessionFlowTests: XCTestCase {
         XCTAssertEqual(tokenSet.refreshToken, "backend-refresh")
         let storedTokenSet = await service.currentTokenSet()
         XCTAssertEqual(storedTokenSet, tokenSet)
+        XCTAssertEqual(try? appleCredentialUserStore.loadUserIdentifier(), "apple-user")
     }
 
     func testAuthServiceRefreshUsesBackendRefreshEndpoint() async {
@@ -234,6 +248,44 @@ final class AuthAndSessionFlowTests: XCTestCase {
         XCTAssertEqual(refreshedTokenSet?.refreshToken, "rotated-refresh")
     }
 
+    func testAuthServiceLogoutClearsStoredAppleCredentialUserIdentifier() async {
+        let tokenStore = InMemoryTokenStore(initialTokenSet: sampleTokenSet)
+        let appleCredentialUserStore = InMemoryAppleCredentialUserStore(initialUserIdentifier: "apple-user")
+        let service = AuthService(
+            tokenStore: tokenStore,
+            appleCredentialUserStore: appleCredentialUserStore,
+            backendAuthClient: MockBackendAuthClient(),
+            appleSignInAuthorizer: MockAppleSignInAuthorizer(result: .failure(.cancelled)),
+        )
+
+        await service.logout()
+
+        let storedUserIdentifier = try? appleCredentialUserStore.loadUserIdentifier()
+        let storedTokenSet = await service.currentTokenSet()
+        XCTAssertNil(storedUserIdentifier)
+        XCTAssertNil(storedTokenSet)
+    }
+
+    func testAuthServiceValidateExternalCredentialClearsSessionWhenRevoked() async {
+        let tokenStore = InMemoryTokenStore(initialTokenSet: sampleTokenSet)
+        let appleCredentialUserStore = InMemoryAppleCredentialUserStore(initialUserIdentifier: "apple-user")
+        let service = AuthService(
+            tokenStore: tokenStore,
+            appleCredentialUserStore: appleCredentialUserStore,
+            backendAuthClient: MockBackendAuthClient(),
+            appleSignInAuthorizer: MockAppleSignInAuthorizer(result: .failure(.cancelled)),
+            appleCredentialStateChecker: MockAppleCredentialStateChecker(state: .revoked),
+        )
+
+        let isValid = await service.validateExternalCredentialIfNeeded()
+        let storedTokenSet = await service.currentTokenSet()
+        let storedUserIdentifier = try? appleCredentialUserStore.loadUserIdentifier()
+
+        XCTAssertFalse(isValid)
+        XCTAssertNil(storedTokenSet)
+        XCTAssertNil(storedUserIdentifier)
+    }
+
     private var sampleTokenSet: TokenSet {
         TokenSet(
             accessToken: "access",
@@ -261,6 +313,8 @@ private final class MockAuthService: AuthServiceProtocol, @unchecked Sendable {
     var tokenSet: TokenSet?
     var refreshResult = false
     var refreshCalls = 0
+    var validateExternalCredentialResult = true
+    var logoutCalls = 0
 
     init(tokenSet: TokenSet?) {
         self.tokenSet = tokenSet
@@ -284,11 +338,16 @@ private final class MockAuthService: AuthServiceProtocol, @unchecked Sendable {
     }
 
     func logout() async {
+        logoutCalls += 1
         tokenSet = nil
     }
 
     func currentTokenSet() async -> TokenSet? {
         tokenSet
+    }
+
+    func validateExternalCredentialIfNeeded() async -> Bool {
+        validateExternalCredentialResult
     }
 }
 
@@ -312,6 +371,26 @@ private final class InMemoryTokenStore: TokenStore, @unchecked Sendable {
     }
 }
 
+private final class InMemoryAppleCredentialUserStore: AppleCredentialUserStore, @unchecked Sendable {
+    private var userIdentifier: String?
+
+    init(initialUserIdentifier: String? = nil) {
+        userIdentifier = initialUserIdentifier
+    }
+
+    func loadUserIdentifier() throws -> String? {
+        userIdentifier
+    }
+
+    func saveUserIdentifier(_ userIdentifier: String) throws {
+        self.userIdentifier = userIdentifier
+    }
+
+    func clearUserIdentifier() throws {
+        userIdentifier = nil
+    }
+}
+
 private struct MockAppleSignInAuthorizer: AppleSignInAuthorizing {
     let result: Result<AppleAuthorizationPayload, APIError>
 
@@ -323,6 +402,15 @@ private struct MockAppleSignInAuthorizer: AppleSignInAuthorizing {
         case let .failure(error):
             throw error
         }
+    }
+}
+
+private struct MockAppleCredentialStateChecker: AppleCredentialStateChecking {
+    let state: AppleCredentialState
+
+    @MainActor
+    func credentialState(forUserID _: String) async -> AppleCredentialState {
+        state
     }
 }
 

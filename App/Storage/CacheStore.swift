@@ -1,13 +1,13 @@
 import Foundation
 
 protocol CacheStore: Sendable {
-    func get<T: Codable>(_ key: String, as type: T.Type, namespace: String) async -> T?
-    func set(_ key: String, value: some Codable, namespace: String, ttl: TimeInterval?) async
+    func get<T: Codable & Sendable>(_ key: String, as type: T.Type, namespace: String) async -> T?
+    func set(_ key: String, value: some Codable & Sendable, namespace: String, ttl: TimeInterval?) async
     func remove(_ key: String, namespace: String) async
     func clearAll(namespace: String) async
 }
 
-struct CacheValueEnvelope<T: Codable>: Codable {
+struct CacheValueEnvelope<T: Codable & Sendable>: Codable, Sendable {
     let value: T
     let storedAt: Date
     let expiresAt: Date?
@@ -31,7 +31,7 @@ struct CacheValueEnvelope<T: Codable>: Codable {
 actor MemoryCacheStore: CacheStore {
     private var storage: [String: Data] = [:]
 
-    func get<T: Codable>(_ key: String, as _: T.Type, namespace: String) async -> T? {
+    func get<T: Codable & Sendable>(_ key: String, as _: T.Type, namespace: String) async -> T? {
         let scopedKey = scopedKey(key, namespace: namespace)
         guard let data = storage[scopedKey] else { return nil }
 
@@ -48,7 +48,7 @@ actor MemoryCacheStore: CacheStore {
         return decoded.value
     }
 
-    func set(_ key: String, value: some Codable, namespace: String, ttl: TimeInterval?) async {
+    func set(_ key: String, value: some Codable & Sendable, namespace: String, ttl: TimeInterval?) async {
         let envelope = CacheValueEnvelope(value: value, ttl: ttl)
         guard let data = try? JSONEncoder().encode(envelope) else { return }
         storage[scopedKey(key, namespace: namespace)] = data
@@ -88,10 +88,10 @@ actor DiskCacheStore: CacheStore {
             self.baseURL = root.appendingPathComponent("fitfluence-cache", isDirectory: true)
         }
 
-        ensureRootExists()
+        Self.ensureDirectoryExists(at: self.baseURL, using: fileManager)
     }
 
-    func get<T: Codable>(_ key: String, as _: T.Type, namespace: String) async -> T? {
+    func get<T: Codable & Sendable>(_ key: String, as _: T.Type, namespace: String) async -> T? {
         let url = fileURL(for: key, namespace: namespace)
         guard let data = try? Data(contentsOf: url) else { return nil }
 
@@ -108,7 +108,7 @@ actor DiskCacheStore: CacheStore {
         return decoded.value
     }
 
-    func set(_ key: String, value: some Codable, namespace: String, ttl: TimeInterval?) async {
+    func set(_ key: String, value: some Codable & Sendable, namespace: String, ttl: TimeInterval?) async {
         let envelope = CacheValueEnvelope(value: value, ttl: ttl)
         guard let data = try? JSONEncoder().encode(envelope) else { return }
 
@@ -139,9 +139,9 @@ actor DiskCacheStore: CacheStore {
         try? fileManager.removeItem(at: namespaceDirectoryURL(namespace))
     }
 
-    private func ensureRootExists() {
-        if !fileManager.fileExists(atPath: baseURL.path) {
-            try? fileManager.createDirectory(at: baseURL, withIntermediateDirectories: true)
+    nonisolated private static func ensureDirectoryExists(at url: URL, using fileManager: FileManager) {
+        if !fileManager.fileExists(atPath: url.path) {
+            try? fileManager.createDirectory(at: url, withIntermediateDirectories: true)
         }
     }
 
@@ -173,7 +173,7 @@ actor CompositeCacheStore: CacheStore {
         self.disk = disk
     }
 
-    func get<T: Codable>(_ key: String, as _: T.Type, namespace: String) async -> T? {
+    func get<T: Codable & Sendable>(_ key: String, as _: T.Type, namespace: String) async -> T? {
         if let inMemory: T = await memory.get(key, as: T.self, namespace: namespace) {
             return inMemory
         }
@@ -186,7 +186,7 @@ actor CompositeCacheStore: CacheStore {
         return fromDisk
     }
 
-    func set(_ key: String, value: some Codable, namespace: String, ttl: TimeInterval?) async {
+    func set(_ key: String, value: some Codable & Sendable, namespace: String, ttl: TimeInterval?) async {
         await memory.set(key, value: value, namespace: namespace, ttl: ttl)
         await disk.set(key, value: value, namespace: namespace, ttl: ttl)
     }

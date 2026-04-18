@@ -1,4 +1,2 @@
-#include "Base.xcconfig"
-SLASH = /
-BASE_URL = https:$(SLASH)$(SLASH)fitfluence.ru$(SLASH)api
+#include "Backend.xcconfig"
 APP_ENVIRONMENT_NAME = PROD

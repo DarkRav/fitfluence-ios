@@ -15,11 +15,13 @@ struct FitfluenceApp: App {
         Self.configureNavigationBarAppearance()
 
         let tokenStore = KeychainTokenStore()
+        let appleCredentialUserStore = KeychainAppleCredentialUserStore()
         let authBaseURL = environment.backendBaseURL ?? URL(string: "https://invalid.fitfluence.local")!
         let backendAuthClient = BackendAuthClient(baseURL: authBaseURL)
 
         authService = AuthService(
             tokenStore: tokenStore,
+            appleCredentialUserStore: appleCredentialUserStore,
             backendAuthClient: backendAuthClient,
         )
 

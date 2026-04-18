@@ -5,60 +5,58 @@ struct DiagnosticsView: View {
     let store: StoreOf<DiagnosticsFeature>
 
     var body: some View {
-        WithViewStore(store, observe: { $0 }) { viewStore in
-            VStack(spacing: FFSpacing.md) {
+        VStack(spacing: FFSpacing.md) {
+            FFCard {
+                VStack(alignment: .leading, spacing: FFSpacing.xs) {
+                    Text("Диагностика сервера")
+                        .font(FFTypography.h2)
+                        .foregroundStyle(FFColors.textPrimary)
+                    Text("Проверка выполняет безопасный запрос `/v1/programs/published/search`.")
+                        .font(FFTypography.body)
+                        .foregroundStyle(FFColors.textSecondary)
+                }
+            }
+
+            FFButton(title: "Проверить соединение", variant: .primary) {
+                store.send(.checkConnectionTapped)
+            }
+
+            switch store.phase {
+            case .idle:
+                FFEmptyState(
+                    title: "Ожидаем проверку",
+                    message: "Нажмите кнопку, чтобы проверить доступность сервера",
+                )
+
+            case .loading:
+                FFLoadingState(title: "Выполняем запрос к серверу")
+
+            case let .success(response):
                 FFCard {
                     VStack(alignment: .leading, spacing: FFSpacing.xs) {
-                        Text("Диагностика сервера")
+                        FFBadge(status: .published)
+                        Text("Соединение установлено")
                             .font(FFTypography.h2)
                             .foregroundStyle(FFColors.textPrimary)
-                        Text("Проверка выполняет безопасный запрос `/v1/programs/published/search`.")
+                        Text("Статус сервиса: \(response.status)")
                             .font(FFTypography.body)
                             .foregroundStyle(FFColors.textSecondary)
                     }
                 }
 
-                FFButton(title: "Проверить соединение", variant: .primary) {
-                    viewStore.send(.checkConnectionTapped)
+            case let .failure(error):
+                FFErrorState(
+                    title: "Проверка не пройдена",
+                    message: error.userMessage,
+                    retryTitle: "Повторить",
+                ) {
+                    store.send(.checkConnectionTapped)
                 }
-
-                switch viewStore.phase {
-                case .idle:
-                    FFEmptyState(
-                        title: "Ожидаем проверку",
-                        message: "Нажмите кнопку, чтобы проверить доступность сервера",
-                    )
-
-                case .loading:
-                    FFLoadingState(title: "Выполняем запрос к серверу")
-
-                case let .success(response):
-                    FFCard {
-                        VStack(alignment: .leading, spacing: FFSpacing.xs) {
-                            FFBadge(status: .published)
-                            Text("Соединение установлено")
-                                .font(FFTypography.h2)
-                                .foregroundStyle(FFColors.textPrimary)
-                            Text("Статус сервиса: \(response.status)")
-                                .font(FFTypography.body)
-                                .foregroundStyle(FFColors.textSecondary)
-                        }
-                    }
-
-                case let .failure(error):
-                    FFErrorState(
-                        title: "Проверка не пройдена",
-                        message: error.userMessage,
-                        retryTitle: "Повторить",
-                    ) {
-                        viewStore.send(.checkConnectionTapped)
-                    }
-                }
-
-                Spacer()
             }
-            .padding(.top, FFSpacing.md)
+
+            Spacer()
         }
+        .padding(.top, FFSpacing.md)
     }
 }
 

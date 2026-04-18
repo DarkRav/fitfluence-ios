@@ -3,7 +3,7 @@
 	archiveVersion = 1;
 	classes = {
 	};
-	objectVersion = 63;
+	objectVersion = 77;
 	objects = {
 
 /* Begin PBXBuildFile section */
@@ -12,6 +12,7 @@
 		037DA4B0A17D3A336DF64827 /* TrainingHubView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2168C23890FEB64360E40A5 /* TrainingHubView.swift */; };
 		06931F2CD054F4E2CB1A73B4 /* Logging.swift in Sources */ = {isa = PBXBuildFile; fileRef = B0CE9CC0E1302819C8010358 /* Logging.swift */; };
 		07E691D96D97DC67191332E6 /* ProfileViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = D566BB28F7146B5858070BD2 /* ProfileViewModel.swift */; };
+		0A8CB4420769E427946BF460 /* AppleCredentialStateChecker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8C25983E2827DB82CB465EAE /* AppleCredentialStateChecker.swift */; };
 		0AF9ACEEACEF5516F5A125FC /* APIRequest.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E4CF13A2531205E9575D66B /* APIRequest.swift */; };
 		0BD75B053CAE785680A0D197 /* DataAndOfflineView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0D6D04C74DE23C15A1CF9745 /* DataAndOfflineView.swift */; };
 		0CFE26D86AB1FDFEB7ADDBB6 /* QuickWorkoutBuilderView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D7ADF6ADDAF5414D4B59CDCA /* QuickWorkoutBuilderView.swift */; };
@@ -31,6 +32,7 @@
 		2851AA0973690B0993812C26 /* WorkoutInProgressBanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B251CFA71A948090A2A48A3 /* WorkoutInProgressBanner.swift */; };
 		28A1BACADED54018734A2488 /* AuthTokenProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 73D40B15217387B49B13527A /* AuthTokenProvider.swift */; };
 		29B89F66630D53FDF9B00030 /* SyncWorker.swift in Sources */ = {isa = PBXBuildFile; fileRef = EF34A4AE4A992ECE90DD03CE /* SyncWorker.swift */; };
+		2B9C7A4CF84B30D7FC363D5B /* AppleCredentialStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 484760434D6576B300D613B7 /* AppleCredentialStore.swift */; };
 		2C1FC3EF8C6F16B005027DF1 /* ProgramDetailsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 075C9ED6113F50057E609DD0 /* ProgramDetailsView.swift */; };
 		2C4111B8D8967BF6BDB28601 /* ExercisePickerFeatureTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5109F9DDBDECB48237971F66 /* ExercisePickerFeatureTests.swift */; };
 		2C6662FAA83457116C974BDB /* AppleSignInAuthorizer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B41257E60BEA4FC9F680C07 /* AppleSignInAuthorizer.swift */; };
@@ -109,6 +111,7 @@
 		DE67CA63B6CB763CE7FF9FD8 /* DiagnosticsFeature.swift in Sources */ = {isa = PBXBuildFile; fileRef = F985AA318869C8870BDA6187 /* DiagnosticsFeature.swift */; };
 		E7DE4113C9179659C6D98A8F /* SyncOperation.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3CFBC879865A7070DA0BC19D /* SyncOperation.swift */; };
 		E8CB1B79DDA298F65380DAC4 /* ProgramProgressCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = E57133D28607426285EF799D /* ProgramProgressCard.swift */; };
+		EAB5998A1B0B810DABB926E6 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 182A3818C5F8EE591DF0CF89 /* PrivacyInfo.xcprivacy */; };
 		F11A2211D6FE44BA4DE0A40E /* QuickActionCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 30BBB37A691100CC5A0AE895 /* QuickActionCard.swift */; };
 		F128A068B4197FBB8CFCD9B0 /* CatalogAndProgramDetailsFeatureTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FE69D7DA6EBA76E277ABD6C7 /* CatalogAndProgramDetailsFeatureTests.swift */; };
 		F12AF47E2E6A7061D391E5F6 /* FFCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4D6772D2C40BCF7FEB3C45C /* FFCard.swift */; };
@@ -142,13 +145,14 @@
 		1203A36F8050A4BC9C2E299F /* OnboardingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingView.swift; sourceTree = "<group>"; };
 		14C19E971649693B43AC91DB /* HTTPClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HTTPClient.swift; sourceTree = "<group>"; };
 		151CCFD42F23601C4661B789 /* FFErrorState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFErrorState.swift; sourceTree = "<group>"; };
+		182A3818C5F8EE591DF0CF89 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		183A7453FC9AB700E68CC9C4 /* SyncEngineTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SyncEngineTests.swift; sourceTree = "<group>"; };
 		1A5EE0FB696AC968E52E7C79 /* TemplateLibraryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TemplateLibraryView.swift; sourceTree = "<group>"; };
 		1DF0A3CEDC288774F1F9441A /* TodayWorkoutDraftGeneratorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TodayWorkoutDraftGeneratorTests.swift; sourceTree = "<group>"; };
 		2270FB6531858BD9EB2C428E /* WorkoutStructureEditingComponents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkoutStructureEditingComponents.swift; sourceTree = "<group>"; };
 		2406C59ACFAD49D5F8BF8FC2 /* FitfluenceApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FitfluenceApp.swift; sourceTree = "<group>"; };
 		2470CD8E28F4838E9A6B693B /* SyncCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SyncCoordinator.swift; sourceTree = "<group>"; };
-		274454899BAE117E3568041E /* FitfluenceApp.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = FitfluenceApp.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		274454899BAE117E3568041E /* FitfluenceApp.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = FitfluenceApp.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		2C14F95287E487CD42E63859 /* SyncOutboxStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SyncOutboxStore.swift; sourceTree = "<group>"; };
 		2C571FBEBDFDA288B1E05B14 /* FFLoadingState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FFLoadingState.swift; sourceTree = "<group>"; };
 		2E16BBE6F885A8F976874EE8 /* TrainingInsightsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrainingInsightsView.swift; sourceTree = "<group>"; };
@@ -163,6 +167,7 @@
 		3F0DFD48B79D4EC127D5DC30 /* WorkoutHomeCardStyle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkoutHomeCardStyle.swift; sourceTree = "<group>"; };
 		415ABAB15959835E84390C9B /* ProgressStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProgressStore.swift; sourceTree = "<group>"; };
 		44A1273CE966730AE3C9922B /* Environment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Environment.swift; sourceTree = "<group>"; };
+		484760434D6576B300D613B7 /* AppleCredentialStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppleCredentialStore.swift; sourceTree = "<group>"; };
 		491FFA62A600D1871EB304BB /* WorkoutHomeButtons.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkoutHomeButtons.swift; sourceTree = "<group>"; };
 		4BB48B9AF4D57EE8E899CC9E /* Stage.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Stage.xcconfig; sourceTree = "<group>"; };
 		4E282B8F338673539A3669DB /* AuthAndSessionFlowTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthAndSessionFlowTests.swift; sourceTree = "<group>"; };
@@ -172,7 +177,7 @@
 		59F8273C6875008A5C9A3300 /* NetworkingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NetworkingTests.swift; sourceTree = "<group>"; };
 		5B41257E60BEA4FC9F680C07 /* AppleSignInAuthorizer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppleSignInAuthorizer.swift; sourceTree = "<group>"; };
 		64143FD02B2501B96BD88680 /* HelpAndDiagnosticsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HelpAndDiagnosticsView.swift; sourceTree = "<group>"; };
-		65EE21EADAEB1C46C1227CF6 /* FitfluenceTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = FitfluenceTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		65EE21EADAEB1C46C1227CF6 /* FitfluenceTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = FitfluenceTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		6738DCE7C58830BB8D53065B /* ResumeWorkoutCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ResumeWorkoutCard.swift; sourceTree = "<group>"; };
 		73D40B15217387B49B13527A /* AuthTokenProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthTokenProvider.swift; sourceTree = "<group>"; };
 		74E11F1CB909C74B1DC174BE /* QuickActionsSection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QuickActionsSection.swift; sourceTree = "<group>"; };
@@ -191,6 +196,7 @@
 		88082B057D7E001AA79962A9 /* AuthService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthService.swift; sourceTree = "<group>"; };
 		890738F0516ABEA7A9678977 /* RecentWorkoutRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecentWorkoutRow.swift; sourceTree = "<group>"; };
 		8B5464E69784604F0C29B39C /* Prod.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Prod.xcconfig; sourceTree = "<group>"; };
+		8C25983E2827DB82CB465EAE /* AppleCredentialStateChecker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppleCredentialStateChecker.swift; sourceTree = "<group>"; };
 		8E5B8D56EED74266DE911846 /* RecentWorkoutsSection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecentWorkoutsSection.swift; sourceTree = "<group>"; };
 		90BC544EFE5FAA3410BBA69A /* WorkoutSetLoggingComponents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkoutSetLoggingComponents.swift; sourceTree = "<group>"; };
 		90D8BD884B7687B1DD855331 /* ExerciseCatalog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExerciseCatalog.swift; sourceTree = "<group>"; };
@@ -398,6 +404,8 @@
 		80ACD2B45A2E912217541181 /* Auth */ = {
 			isa = PBXGroup;
 			children = (
+				8C25983E2827DB82CB465EAE /* AppleCredentialStateChecker.swift */,
+				484760434D6576B300D613B7 /* AppleCredentialStore.swift */,
 				5B41257E60BEA4FC9F680C07 /* AppleSignInAuthorizer.swift */,
 				88082B057D7E001AA79962A9 /* AuthService.swift */,
 				F4BA13F15E04E7DE0985E8C3 /* SessionManager.swift */,
@@ -415,6 +423,7 @@
 				7BF8995A0E5B715E35BA68AA /* Fitfluence.entitlements */,
 				2406C59ACFAD49D5F8BF8FC2 /* FitfluenceApp.swift */,
 				D45116A2BFE9402EC531FE76 /* Info.plist */,
+				182A3818C5F8EE591DF0CF89 /* PrivacyInfo.xcprivacy */,
 				80ACD2B45A2E912217541181 /* Auth */,
 				52D229C7FDCB08BD69A6AAFA /* Catalog */,
 				AAAC776BF68BD9D9EAA0E275 /* DesignSystem */,
@@ -623,6 +632,7 @@
 				LastUpgradeCheck = 1430;
 				TargetAttributes = {
 					97EC3E4C23CB2A83536869EE = {
+						DevelopmentTeam = BA7GZ9H8US;
 						ProvisioningStyle = Automatic;
 					};
 				};
@@ -640,6 +650,7 @@
 			packageReferences = (
 				1B554A44E2195B8050B95C49 /* XCRemoteSwiftPackageReference "swift-composable-architecture" */,
 			);
+			preferredProjectObjectVersion = 77;
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
@@ -655,6 +666,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				8A98A907B47F082A0A6F188F /* Assets.xcassets in Resources */,
+				EAB5998A1B0B810DABB926E6 /* PrivacyInfo.xcprivacy in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -669,6 +681,8 @@
 				A7468B42E0564F56E4DEA037 /* APIError.swift in Sources */,
 				553A3B4DA2F534094E3AA5C8 /* APILogger.swift in Sources */,
 				0AF9ACEEACEF5516F5A125FC /* APIRequest.swift in Sources */,
+				0A8CB4420769E427946BF460 /* AppleCredentialStateChecker.swift in Sources */,
+				2B9C7A4CF84B30D7FC363D5B /* AppleCredentialStore.swift in Sources */,
 				2C6662FAA83457116C974BDB /* AppleSignInAuthorizer.swift in Sources */,
 				AB5CB6D21AA03EE03C7DF1D1 /* AthleteProfileClient.swift in Sources */,
 				0032E7A6426CBD61763F0439 /* AthleteTrainingClient.swift in Sources */,

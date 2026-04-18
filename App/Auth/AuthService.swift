@@ -14,6 +14,7 @@ protocol AuthServiceProtocol: Sendable {
     func refresh() async -> Bool
     func logout() async
     func currentTokenSet() async -> TokenSet?
+    func validateExternalCredentialIfNeeded() async -> Bool
 }
 
 protocol BackendAuthClientProtocol: Sendable {
@@ -142,18 +143,24 @@ actor RefreshCoordinator {
 
 final class AuthService: AuthServiceProtocol, @unchecked Sendable {
     private let tokenStore: TokenStore
+    private let appleCredentialUserStore: AppleCredentialUserStore
     private let backendAuthClient: BackendAuthClientProtocol
     private let appleSignInAuthorizer: AppleSignInAuthorizing
+    private let appleCredentialStateChecker: AppleCredentialStateChecking
     private let refreshCoordinator = RefreshCoordinator()
 
     init(
         tokenStore: TokenStore = KeychainTokenStore(),
+        appleCredentialUserStore: AppleCredentialUserStore = KeychainAppleCredentialUserStore(),
         backendAuthClient: BackendAuthClientProtocol,
         appleSignInAuthorizer: AppleSignInAuthorizing = AppleSignInAuthorizer(),
+        appleCredentialStateChecker: AppleCredentialStateChecking = AppleCredentialStateChecker(),
     ) {
         self.tokenStore = tokenStore
+        self.appleCredentialUserStore = appleCredentialUserStore
         self.backendAuthClient = backendAuthClient
         self.appleSignInAuthorizer = appleSignInAuthorizer
+        self.appleCredentialStateChecker = appleCredentialStateChecker
     }
 
     @MainActor
@@ -177,6 +184,7 @@ final class AuthService: AuthServiceProtocol, @unchecked Sendable {
                     expiresAt: response.accessTokenExpiresAt,
                 )
                 try tokenStore.save(tokenSet)
+                try? appleCredentialUserStore.saveUserIdentifier(authorization.userIdentifier)
                 return .success(tokenSet)
 
             case let .failure(error):
@@ -230,14 +238,36 @@ final class AuthService: AuthServiceProtocol, @unchecked Sendable {
         if let refreshToken = try? tokenStore.load()?.refreshToken {
             await backendAuthClient.logout(refreshToken: refreshToken)
         }
-        try? tokenStore.clear()
+        clearLocalSession()
     }
 
     func currentTokenSet() async -> TokenSet? {
         currentTokenSetSync()
     }
 
+    func validateExternalCredentialIfNeeded() async -> Bool {
+        guard currentTokenSetSync() != nil else { return true }
+        let storedUserIdentifier = try? appleCredentialUserStore.loadUserIdentifier()
+        guard let userIdentifier = storedUserIdentifier ?? nil, !userIdentifier.isEmpty else {
+            return true
+        }
+
+        let credentialState = await appleCredentialStateChecker.credentialState(forUserID: userIdentifier)
+        switch credentialState {
+        case .authorized, .unknown:
+            return true
+        case .revoked, .notFound, .transferred:
+            clearLocalSession()
+            return false
+        }
+    }
+
     private func currentTokenSetSync() -> TokenSet? {
         try? tokenStore.load()
+    }
+
+    private func clearLocalSession() {
+        try? tokenStore.clear()
+        try? appleCredentialUserStore.clearUserIdentifier()
     }
 }

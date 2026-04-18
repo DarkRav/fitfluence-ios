@@ -40,6 +40,10 @@ final class SessionManager: SessionManaging, @unchecked Sendable {
             return .unauthenticated
         }
 
+        guard await authService.validateExternalCredentialIfNeeded() else {
+            return .unauthenticated
+        }
+
         guard await authService.refreshIfNeeded() else {
             await authService.logout()
             return .unauthenticated

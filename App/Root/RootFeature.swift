@@ -1,3 +1,4 @@
+import AuthenticationServices
 import ComposableArchitecture
 import Foundation
 
@@ -48,6 +49,7 @@ struct RootFeature {
         case retryBootstrapTapped
         case loginTapped(LoginEntryMode)
         case logoutTapped
+        case appleCredentialRevoked
         case networkStatusChanged(Bool)
         case sessionResolved(RootSessionState)
         case onboarding(OnboardingFeature.Action)
@@ -57,6 +59,7 @@ struct RootFeature {
 
     private enum CancelID {
         case networkMonitoring
+        case appleCredentialMonitoring
     }
 
     var body: some ReducerOf<Self> {
@@ -78,6 +81,14 @@ struct RootFeature {
                             }
                         }
                         .cancellable(id: CancelID.networkMonitoring, cancelInFlight: true),
+                        .run { send in
+                            for await _ in NotificationCenter.default.notifications(
+                                named: ASAuthorizationAppleIDProvider.credentialRevokedNotification
+                            ) {
+                                await send(.appleCredentialRevoked)
+                            }
+                        }
+                        .cancellable(id: CancelID.appleCredentialMonitoring, cancelInFlight: true),
                     )
 
                 case .automaticLoginTriggered:
@@ -101,6 +112,17 @@ struct RootFeature {
                     return loginEffect(mode: mode)
 
                 case .logoutTapped:
+                    let namespace = cacheNamespace(for: state)
+                    state.automaticLoginEnabled = false
+                    state.sessionState = .authenticating
+                    state.selectedProgram = nil
+                    return .run { [sessionManager, cacheStore] send in
+                        await cacheStore.clearAll(namespace: namespace)
+                        let nextState = await sessionManager.logout()
+                        await send(.sessionResolved(nextState))
+                    }
+
+                case .appleCredentialRevoked:
                     let namespace = cacheNamespace(for: state)
                     state.automaticLoginEnabled = false
                     state.sessionState = .authenticating

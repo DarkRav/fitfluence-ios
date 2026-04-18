@@ -622,6 +622,10 @@ final class WorkoutsFeatureAndProgressStoreTests: XCTestCase {
     }
 
     func testWorkoutHomeViewModelUsesHomeSummaryAsRemoteSourceOfTruth() async {
+        let suite = "fitfluence.tests.workout-home.remote-source.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+
         let client = MockWorkoutHomeAthleteTrainingClient(
             homeSummaryResult: .success(
                 AthleteHomeSummaryResponse(
@@ -723,9 +727,9 @@ final class WorkoutsFeatureAndProgressStoreTests: XCTestCase {
 
         let viewModel = WorkoutHomeViewModel(
             userSub: "u1",
-            trainingStore: LocalTrainingStore(),
+            trainingStore: LocalTrainingStore(defaults: defaults),
             progressStore: MockWorkoutProgressStore(statuses: [:]),
-            resumeStore: LocalWorkoutResumeStore(),
+            resumeStore: LocalWorkoutResumeStore(defaults: defaults),
             cacheStore: MemoryCacheStore(),
             networkMonitor: StaticNetworkMonitor(currentStatus: true),
             athleteTrainingClient: client,

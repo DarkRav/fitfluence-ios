@@ -273,7 +273,7 @@ final class CatalogAndProgramDetailsFeatureTests: XCTestCase {
         await viewModel.onAppear()
 
         XCTAssertFalse(viewModel.canAccessProgramWorkouts)
-        XCTAssertEqual(viewModel.primaryProgramActionTitle, "Начать программу")
+        XCTAssertEqual(viewModel.primaryProgramActionTitle, "Начать")
 
         viewModel.openWorkouts()
         viewModel.workoutPicked("workout-1")
@@ -326,7 +326,7 @@ final class CatalogAndProgramDetailsFeatureTests: XCTestCase {
         await viewModel.onAppear()
 
         XCTAssertTrue(viewModel.canAccessProgramWorkouts)
-        XCTAssertEqual(viewModel.primaryProgramActionTitle, "Открыть тренировку программы")
+        XCTAssertEqual(viewModel.primaryProgramActionTitle, "Начать")
 
         viewModel.openWorkouts()
         viewModel.workoutPicked("workout-2")
@@ -380,8 +380,8 @@ final class CatalogAndProgramDetailsFeatureTests: XCTestCase {
 
         XCTAssertTrue(viewModel.canAccessProgramWorkouts)
         XCTAssertTrue(viewModel.hasResumableWorkout)
-        XCTAssertEqual(viewModel.primaryProgramActionTitle, "Продолжить программу")
-        XCTAssertEqual(viewModel.primaryProgramActionHint, "Вернёт к текущей тренировке: День 1.")
+        XCTAssertEqual(viewModel.primaryProgramActionTitle, "Продолжить")
+        XCTAssertEqual(viewModel.primaryProgramActionHint, "День 1")
     }
 
     func testProgramDetailsEnrollmentSuccessOpensConfirmationAndFallbackLaunch() async {
@@ -442,7 +442,7 @@ final class CatalogAndProgramDetailsFeatureTests: XCTestCase {
         await viewModel.onAppear()
         await viewModel.handlePrimaryProgramAction()
 
-        XCTAssertEqual(viewModel.primaryProgramActionTitle, "Распланировать программу")
+        XCTAssertEqual(viewModel.primaryProgramActionTitle, "Распланировать")
         XCTAssertFalse(viewModel.canAccessProgramWorkouts)
         XCTAssertEqual(viewModel.enrollmentConfirmation?.firstWorkoutTitle, "День 1")
         XCTAssertFalse(viewModel.enrollmentConfirmation?.canStartFirstWorkout ?? true)
@@ -498,8 +498,8 @@ final class CatalogAndProgramDetailsFeatureTests: XCTestCase {
         await viewModel.onAppear()
 
         XCTAssertTrue(viewModel.canAccessProgramWorkouts)
-        XCTAssertEqual(viewModel.primaryProgramActionTitle, "Открыть тренировку программы")
-        XCTAssertEqual(viewModel.primaryProgramActionHint, "Откроет текущую доступную тренировку: День сегодня.")
+        XCTAssertEqual(viewModel.primaryProgramActionTitle, "Начать сегодня")
+        XCTAssertEqual(viewModel.primaryProgramActionHint, "День сегодня")
     }
 
     func testProgramDetailsScheduleProgramWorkoutsCreatesLocalPlan() async {
@@ -527,7 +527,13 @@ final class CatalogAndProgramDetailsFeatureTests: XCTestCase {
 
         await viewModel.onAppear()
 
-        let startDate = Calendar.current.date(from: DateComponents(year: 2026, month: 3, day: 23))!
+        let calendar = Calendar.current
+        let today = calendar.startOfDay(for: Date())
+        let nextMonth = calendar.date(byAdding: .month, value: 1, to: today) ?? today
+        let nextMonthStart = calendar.date(from: calendar.dateComponents([.year, .month], from: nextMonth)) ?? nextMonth
+        let startDate = stride(from: 0, through: 6, by: 1)
+            .compactMap { calendar.date(byAdding: .day, value: $0, to: nextMonthStart) }
+            .first(where: { calendar.component(.weekday, from: $0) == 2 }) ?? nextMonthStart
         let firstDay = await viewModel.scheduleProgramWorkouts(
             startDate: startDate,
             weekdays: [.monday, .wednesday, .friday],

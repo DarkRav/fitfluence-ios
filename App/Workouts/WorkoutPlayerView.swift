@@ -454,11 +454,9 @@ final class RestTimerModel {
             completionMessage = "Отдых завершён. Можно возвращаться к подходу."
         }
         completionMessageTask?.cancel()
-        completionMessageTask = Task { [weak self] in
+        completionMessageTask = Task { @MainActor [weak self] in
             try? await Task.sleep(for: .seconds(10))
-            await MainActor.run {
-                self?.completionMessage = nil
-            }
+            self?.completionMessage = nil
         }
         onCompleted?()
     }

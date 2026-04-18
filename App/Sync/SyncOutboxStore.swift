@@ -39,7 +39,7 @@ actor SyncOutboxStore {
             self.baseURL = root.appendingPathComponent("fitfluence-sync-outbox", isDirectory: true)
         }
 
-        ensureRootExists()
+        Self.ensureDirectoryExists(at: self.baseURL, using: fileManager)
     }
 
     func enqueue(_ operation: SyncOperation, namespace: String) async -> SyncOutboxMutationResult {
@@ -451,9 +451,9 @@ actor SyncOutboxStore {
         }
     }
 
-    private func ensureRootExists() {
-        if !fileManager.fileExists(atPath: baseURL.path) {
-            try? fileManager.createDirectory(at: baseURL, withIntermediateDirectories: true)
+    nonisolated private static func ensureDirectoryExists(at url: URL, using fileManager: FileManager) {
+        if !fileManager.fileExists(atPath: url.path) {
+            try? fileManager.createDirectory(at: url, withIntermediateDirectories: true)
         }
     }
 

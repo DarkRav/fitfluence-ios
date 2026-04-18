@@ -1,3 +1,2 @@
-#include "Base.xcconfig"
-BASE_URL =
+#include "Backend.xcconfig"
 APP_ENVIRONMENT_NAME = STAGE
